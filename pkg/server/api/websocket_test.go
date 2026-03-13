@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 )
 
@@ -26,49 +27,45 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 }
 
 func TestHandleRegister_MissingParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
 	handler := NewWebSocketHandler(mockManager)
 
+	// 创建 gin engine 并注册路由
+	router := gin.New()
+	router.GET("/register", handler.HandleRegister)
+
 	// 测试缺少 group 参数
-	req := httptest.NewRequest(http.MethodGet, "/register?clientId=test", nil)
-	w := httptest.NewRecorder()
+	w := performRequest(router, http.MethodGet, "/register?clientId=test", nil)
 
-	handler.HandleRegister(w, req)
-
-	resp := w.Result()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", resp.StatusCode)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 
 	// 测试缺少 clientId 参数
-	req = httptest.NewRequest(http.MethodGet, "/register?group=test", nil)
-	w = httptest.NewRecorder()
+	w = performRequest(router, http.MethodGet, "/register?group=test", nil)
 
-	handler.HandleRegister(w, req)
-
-	resp = w.Result()
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Errorf("Expected status 400, got %d", resp.StatusCode)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
 func TestHandleRegister_ValidParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
 	handler := NewWebSocketHandler(mockManager)
 
+	// 创建 gin engine 并注册路由
+	router := gin.New()
+	router.GET("/register", handler.HandleRegister)
+
 	// 测试有效参数（但不是真正的 WebSocket 升级）
-	req := httptest.NewRequest(http.MethodGet, "/register?group=test&clientId=testClient", nil)
-	req.Header.Set("Upgrade", "websocket")
-	w := httptest.NewRecorder()
+	w := performRequest(router, http.MethodGet, "/register?group=test&clientId=testClient", nil)
 
-	// 注意：httptest 不支持真正的 WebSocket 升级，这里只测试参数验证
-	handler.HandleRegister(w, req)
-
-	// WebSocket 升级会失败，因为 httptest 不支持
-	resp := w.Result()
+	// 由于 httptest 不支持真正的 WebSocket 升级，会返回 500 或成功
+	// 这里只验证参数验证通过
 	body := w.Body.String()
-	if resp.StatusCode == http.StatusBadRequest && strings.Contains(body, "websocket") {
-		// 预期的错误
-		return
+	if w.Code == http.StatusBadRequest && strings.Contains(body, "parameters required") {
+		t.Error("Expected valid params to pass validation")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
@@ -29,6 +30,29 @@ type clientManagerIface interface {
 	GetClient(group, clientID string) *client.SekiroClient
 }
 
+// InvokeRequest represents the invoke request body
+type InvokeRequest struct {
+	Group          string      `json:"group"`
+	ClientID       string      `json:"clientId,omitempty"`
+	ConstantInvoke string      `json:"constantInvoke,omitempty"`
+	Timeout        int         `json:"timeout,omitempty"`
+	Action         string      `json:"action"`
+	Params         interface{} `json:"params,omitempty"`
+}
+
+// ExecJSRequest represents the execjs request body
+type ExecJSRequest struct {
+	Group    string `json:"group" form:"group"`
+	ClientID string `json:"clientId,omitempty" form:"clientId"`
+	Code     string `json:"code" form:"code"`
+}
+
+// GetCookieRequest represents the getCookie request body
+type GetCookieRequest struct {
+	Group    string `json:"group" form:"group"`
+	ClientID string `json:"clientId,omitempty" form:"clientId"`
+}
+
 // NewAPIHandler creates a new APIHandler
 func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager) *APIHandler {
 	return &APIHandler{
@@ -39,32 +63,22 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 }
 
 // HandleGroupList handles /business/groupList request
-func (h *APIHandler) HandleGroupList(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+// GET /business/groupList
+func (h *APIHandler) HandleGroupList(c *gin.Context) {
 	groups := h.clientManager.GetAllGroups()
-	response := map[string]interface{}{
+	c.JSON(http.StatusOK, gin.H{
 		"status":  0,
 		"message": "success",
 		"data":    groups,
-	}
-
-	h.sendJSONResponse(w, response)
+	})
 }
 
 // HandleClientQueue handles /business/clientQueue request
-func (h *APIHandler) HandleClientQueue(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	group := r.URL.Query().Get("group")
+// GET /business/clientQueue?group=xxx
+func (h *APIHandler) HandleClientQueue(c *gin.Context) {
+	group := c.Query("group")
 	if group == "" {
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "group parameter required",
 		})
@@ -77,56 +91,40 @@ func (h *APIHandler) HandleClientQueue(w http.ResponseWriter, r *http.Request) {
 		clientIDs[i] = c.ClientID
 	}
 
-	response := map[string]interface{}{
+	c.JSON(http.StatusOK, gin.H{
 		"status":  0,
 		"message": "success",
 		"data":    clientIDs,
-	}
-
-	h.sendJSONResponse(w, response)
+	})
 }
 
 // HandleInvoke handles /business/invoke request
-func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
-	// 支持 GET 和 POST 方法
-	if r.Method != http.MethodPost && r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+// POST/GET /business/invoke
+func (h *APIHandler) HandleInvoke(c *gin.Context) {
+	var req InvokeRequest
 
-	// 解析请求体
-	var req struct {
-		Group          string      `json:"group"`
-		ClientID       string      `json:"clientId,omitempty"`
-		ConstantInvoke string      `json:"constantInvoke,omitempty"`
-		Timeout        int         `json:"timeout,omitempty"`
-		Action         string      `json:"action"`
-		Params         interface{} `json:"params"`
-	}
-
-	if r.Method == http.MethodPost {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.sendJSONResponse(w, map[string]interface{}{
-				"status":  -1,
-				"message": "Invalid JSON: " + err.Error(),
-			})
-			return
+	// 根据请求方法绑定数据
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			// JSON 绑定失败，尝试从查询参数获取
+			req.Group = c.Query("group")
+			req.ClientID = c.Query("clientId")
+			req.ConstantInvoke = c.Query("constantInvoke")
+			req.Action = c.Query("action")
 		}
-	}
-
-	// GET 方法从查询参数获取
-	if r.Method == http.MethodGet {
-		req.Group = r.URL.Query().Get("group")
-		req.ClientID = r.URL.Query().Get("clientId")
-		req.ConstantInvoke = r.URL.Query().Get("constantInvoke")
-		req.Action = r.URL.Query().Get("action")
+	} else {
+		// GET 方法从查询参数获取
+		req.Group = c.Query("group")
+		req.ClientID = c.Query("clientId")
+		req.ConstantInvoke = c.Query("constantInvoke")
+		req.Action = c.Query("action")
 	}
 
 	logger.Infof("Invoke request: group=%s, clientId=%s, action=%s", req.Group, req.ClientID, req.Action)
 
 	// 参数验证
 	if req.Group == "" {
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "group parameter required",
 		})
@@ -134,7 +132,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Action == "" {
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "action parameter required",
 		})
@@ -150,7 +148,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if targetClient == nil {
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "no client available",
 		})
@@ -163,9 +161,9 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		"params": req.Params,
 	}
 
-	reqDataJSON, err := json.Marshal(reqData)
+	reqDataJSON, err := marshalJSON(reqData)
 	if err != nil {
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "Failed to marshal request data: " + err.Error(),
 		})
@@ -187,7 +185,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	conn, ok := targetClient.Connection.(*websocket.Conn)
 	if !ok {
 		h.timeoutManager.Remove(sequence)
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "Invalid client connection",
 		})
@@ -200,7 +198,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		h.timeoutManager.Remove(sequence)
 		// Mark client failure on send error
 		targetClient.MarkFailure()
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "Failed to send request: " + err.Error(),
 		})
@@ -210,7 +208,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	logger.Infof("Invoke request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
 
 	// 等待响应
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
 	responseChan := make(chan *forwarder.InvokeResponse, 1)
@@ -218,7 +216,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		resp, err := h.timeoutManager.Wait(sequence)
 		if err != nil {
 			responseChan <- &forwarder.InvokeResponse{
-				Error: err.Error(),
+				Error:  err.Error(),
 				Status: -1,
 			}
 		} else {
@@ -231,7 +229,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		h.timeoutManager.Remove(sequence)
 		// Mark client failure on timeout
 		targetClient.MarkFailure()
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "Request timeout",
 		})
@@ -245,7 +243,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if resp.Error != "" {
-			h.sendJSONResponse(w, map[string]interface{}{
+			c.JSON(http.StatusOK, gin.H{
 				"status":  resp.Status,
 				"message": resp.Error,
 			})
@@ -254,7 +252,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 
 		// 解析响应数据
 		var responseData interface{}
-		if err := json.Unmarshal(resp.Data, &responseData); err != nil {
+		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
 			// 如果响应不是有效 JSON，当作字符串处理
 			responseData = string(resp.Data)
 		}
@@ -265,7 +263,7 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 			message = "unknown error"
 		}
 
-		h.sendJSONResponse(w, map[string]interface{}{
+		c.JSON(http.StatusOK, gin.H{
 			"status":  resp.Status,
 			"message": message,
 			"data":    responseData,
@@ -273,11 +271,475 @@ func (h *APIHandler) HandleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *APIHandler) sendJSONResponse(w http.ResponseWriter, data map[string]interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		logger.Errorf("Failed to encode JSON response: %v", err)
+// marshalJSON is a helper function for JSON marshaling
+func marshalJSON(v interface{}) ([]byte, error) {
+	return json.Marshal(v)
+}
+
+// unmarshalJSON is a helper function for JSON unmarshaling
+func unmarshalJSON(data []byte, v interface{}) error {
+	return json.Unmarshal(data, v)
+}
+
+// HandleExecJS handles /business/execjs request
+// POST/GET /business/execjs
+func (h *APIHandler) HandleExecJS(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("ExecJS handler panic recovered: %v", r)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  -1,
+				"message": "服务器内部错误",
+			})
+		}
+	}()
+
+	var req ExecJSRequest
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			req.Group = c.Query("group")
+			req.ClientID = c.Query("clientId")
+			req.Code = c.Query("code")
+		}
+	} else {
+		req.Group = c.Query("group")
+		req.ClientID = c.Query("clientId")
+		req.Code = c.Query("code")
+	}
+
+	logger.Infof("ExecJS request: group=%s, clientId=%s", req.Group, req.ClientID)
+
+	// 参数验证
+	if req.Group == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "group parameter required",
+		})
+		return
+	}
+
+	if req.Code == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "code parameter required",
+		})
+		return
+	}
+
+	// 分配客户端
+	var targetClient *client.SekiroClient
+	if req.ClientID != "" {
+		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
+	} else {
+		targetClient = h.clientManager.AllocateClient(req.Group)
+	}
+
+	if targetClient == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "no client available",
+		})
+		return
+	}
+
+	// 构建 Sekiro 请求数据 - 使用_execjs action
+	reqData := map[string]interface{}{
+		"action": "_execjs",
+		"params": req.Code,
+	}
+
+	reqDataJSON, err := marshalJSON(reqData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to marshal request data: " + err.Error(),
+		})
+		return
+	}
+
+	// 生成唯一的 sequence ID
+	sequence := fmt.Sprintf("%s-_execjs-%d", req.Group, time.Now().UnixNano())
+
+	// 创建 invoke 记录
+	timeout := 30 * time.Second // 默认 30 秒超时
+	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	invokeRecord.Timeout = timeout
+
+	// 获取 WebSocket 连接并发送请求
+	conn, ok := targetClient.Connection.(*websocket.Conn)
+	if !ok {
+		h.timeoutManager.Remove(sequence)
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Invalid client connection",
+		})
+		return
+	}
+
+	// 发送 invoke 请求
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	if err != nil {
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to send request: " + err.Error(),
+		})
+		return
+	}
+
+	logger.Infof("ExecJS request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
+
+	// 等待响应
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+
+	responseChan := make(chan *forwarder.InvokeResponse, 1)
+	go func() {
+		resp, err := h.timeoutManager.Wait(sequence)
+		if err != nil {
+			responseChan <- &forwarder.InvokeResponse{
+				Error:  err.Error(),
+				Status: -1,
+			}
+		} else {
+			responseChan <- resp
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Request timeout",
+		})
+		return
+	case resp := <-responseChan:
+		if resp.Status >= 0 && resp.Error == "" {
+			targetClient.MarkSuccess()
+		} else {
+			targetClient.MarkFailure()
+		}
+
+		if resp.Error != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  resp.Status,
+				"message": resp.Error,
+			})
+			return
+		}
+
+		// 直接返回响应数据作为字符串
+		c.JSON(http.StatusOK, gin.H{
+			"status":   resp.Status,
+			"message":  "success",
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
+			"data":     string(resp.Data),
+		})
+	}
+}
+
+// HandleGetCookie handles /business/cookie request
+// GET /business/cookie
+func (h *APIHandler) HandleGetCookie(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("GetCookie handler panic recovered: %v", r)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  -1,
+				"message": "服务器内部错误",
+			})
+		}
+	}()
+
+	var req GetCookieRequest
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			req.Group = c.Query("group")
+			req.ClientID = c.Query("clientId")
+		}
+	} else {
+		req.Group = c.Query("group")
+		req.ClientID = c.Query("clientId")
+	}
+
+	logger.Infof("GetCookie request: group=%s, clientId=%s", req.Group, req.ClientID)
+
+	// 参数验证
+	if req.Group == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "group parameter required",
+		})
+		return
+	}
+
+	// 分配客户端
+	var targetClient *client.SekiroClient
+	if req.ClientID != "" {
+		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
+	} else {
+		targetClient = h.clientManager.AllocateClient(req.Group)
+	}
+
+	if targetClient == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "no client available",
+		})
+		return
+	}
+
+	// 构建 Sekiro 请求数据 - 执行 document.cookie
+	reqData := map[string]interface{}{
+		"action": "_execjs",
+		"params": "document.cookie",
+	}
+
+	reqDataJSON, err := marshalJSON(reqData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to marshal request data: " + err.Error(),
+		})
+		return
+	}
+
+	// 生成唯一的 sequence ID
+	sequence := fmt.Sprintf("%s-_cookie-%d", req.Group, time.Now().UnixNano())
+
+	// 创建 invoke 记录
+	timeout := 30 * time.Second // 默认 30 秒超时
+	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	invokeRecord.Timeout = timeout
+
+	// 获取 WebSocket 连接并发送请求
+	conn, ok := targetClient.Connection.(*websocket.Conn)
+	if !ok {
+		h.timeoutManager.Remove(sequence)
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Invalid client connection",
+		})
+		return
+	}
+
+	// 发送 invoke 请求
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	if err != nil {
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to send request: " + err.Error(),
+		})
+		return
+	}
+
+	logger.Infof("GetCookie request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
+
+	// 等待响应
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+
+	responseChan := make(chan *forwarder.InvokeResponse, 1)
+	go func() {
+		resp, err := h.timeoutManager.Wait(sequence)
+		if err != nil {
+			responseChan <- &forwarder.InvokeResponse{
+				Error:  err.Error(),
+				Status: -1,
+			}
+		} else {
+			responseChan <- resp
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Request timeout",
+		})
+		return
+	case resp := <-responseChan:
+		if resp.Status >= 0 && resp.Error == "" {
+			targetClient.MarkSuccess()
+		} else {
+			targetClient.MarkFailure()
+		}
+
+		if resp.Error != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  resp.Status,
+				"message": resp.Error,
+			})
+			return
+		}
+
+		// 返回 cookie 数据
+		c.JSON(http.StatusOK, gin.H{
+			"status":   resp.Status,
+			"message":  "success",
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
+			"data":     string(resp.Data),
+		})
+	}
+}
+
+// HandleGetHtml handles /business/html request
+// GET /business/html
+func (h *APIHandler) HandleGetHtml(c *gin.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Errorf("GetHtml handler panic recovered: %v", r)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"status":  -1,
+				"message": "服务器内部错误",
+			})
+		}
+	}()
+
+	var req GetCookieRequest
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			req.Group = c.Query("group")
+			req.ClientID = c.Query("clientId")
+		}
+	} else {
+		req.Group = c.Query("group")
+		req.ClientID = c.Query("clientId")
+	}
+
+	logger.Infof("GetHtml request: group=%s, clientId=%s", req.Group, req.ClientID)
+
+	// 参数验证
+	if req.Group == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "group parameter required",
+		})
+		return
+	}
+
+	// 分配客户端
+	var targetClient *client.SekiroClient
+	if req.ClientID != "" {
+		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
+	} else {
+		targetClient = h.clientManager.AllocateClient(req.Group)
+	}
+
+	if targetClient == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "no client available",
+		})
+		return
+	}
+
+	// 构建 Sekiro 请求数据 - 执行 document.documentElement.outerHTML
+	reqData := map[string]interface{}{
+		"action": "_execjs",
+		"params": "document.documentElement.outerHTML",
+	}
+
+	reqDataJSON, err := marshalJSON(reqData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to marshal request data: " + err.Error(),
+		})
+		return
+	}
+
+	// 生成唯一的 sequence ID
+	sequence := fmt.Sprintf("%s-_html-%d", req.Group, time.Now().UnixNano())
+
+	// 创建 invoke 记录
+	timeout := 30 * time.Second // 默认 30 秒超时
+	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	invokeRecord.Timeout = timeout
+
+	// 获取 WebSocket 连接并发送请求
+	conn, ok := targetClient.Connection.(*websocket.Conn)
+	if !ok {
+		h.timeoutManager.Remove(sequence)
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Invalid client connection",
+		})
+		return
+	}
+
+	// 发送 invoke 请求
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	if err != nil {
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to send request: " + err.Error(),
+		})
+		return
+	}
+
+	logger.Infof("GetHtml request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
+
+	// 等待响应
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+
+	responseChan := make(chan *forwarder.InvokeResponse, 1)
+	go func() {
+		resp, err := h.timeoutManager.Wait(sequence)
+		if err != nil {
+			responseChan <- &forwarder.InvokeResponse{
+				Error:  err.Error(),
+				Status: -1,
+			}
+		} else {
+			responseChan <- resp
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Request timeout",
+		})
+		return
+	case resp := <-responseChan:
+		if resp.Status >= 0 && resp.Error == "" {
+			targetClient.MarkSuccess()
+		} else {
+			targetClient.MarkFailure()
+		}
+
+		if resp.Error != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"status":  resp.Status,
+				"message": resp.Error,
+			})
+			return
+		}
+
+		// 返回 HTML 数据
+		c.JSON(http.StatusOK, gin.H{
+			"status":   resp.Status,
+			"message":  "success",
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
+			"data":     string(resp.Data),
+		})
 	}
 }

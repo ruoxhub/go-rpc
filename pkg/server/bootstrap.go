@@ -9,15 +9,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
@@ -115,16 +116,21 @@ func (s *Server) Start() error {
 	// Initialize API handler with WebSocket handler and timeout manager
 	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager)
 
-	// Create HTTP server
+	// Create HTTP server with gin
+	mode := gin.ReleaseMode
+	if s.config.Debug {
+		mode = gin.DebugMode
+	}
 	httpCfg := &api.Config{
 		Host:         s.config.Host,
 		Port:         s.config.Port,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
+		Mode:         mode,
 	}
 	s.httpServer = api.NewHTTPServer(httpCfg)
 
-	// Build middleware chain
+	// Apply middleware
 	corsEnabled := s.yamlConfig != nil && s.yamlConfig.Cors
 	routeReplaceEnabled := s.yamlConfig != nil && s.yamlConfig.RouterReplace.IsEnable
 	routePrefix := ""
@@ -132,17 +138,14 @@ func (s *Server) Start() error {
 		routePrefix = s.yamlConfig.RouterReplace.ReplaceRoute
 	}
 
-	// Apply middleware to the server
-	s.httpServer.Server().Handler = middleware.Chain(
-		middleware.CORS(corsEnabled),
-		middleware.RouteReplace(routeReplaceEnabled, routePrefix),
-	)(s.httpServer.Server().Handler)
+	// Register gin middleware
+	s.httpServer.Use(
+		ginCorsMiddleware(corsEnabled),
+		ginRouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
+	)
 
-	// Register HTTP handlers
-	s.httpServer.RegisterHandler("/business/groupList", s.apiHandler.HandleGroupList)
-	s.httpServer.RegisterHandler("/business/clientQueue", s.apiHandler.HandleClientQueue)
-	s.httpServer.RegisterHandler("/business/invoke", s.apiHandler.HandleInvoke)
-	s.httpServer.RegisterHandler("/business/register", s.handleRegister)
+	// Register routes using gin
+	s.registerRoutes()
 
 	// Create listener
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
@@ -171,20 +174,47 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// handleRegister handles WebSocket register requests
-func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
-	group := r.URL.Query().Get("group")
-	clientID := r.URL.Query().Get("clientId")
+// registerRoutes registers all HTTP routes
+func (s *Server) registerRoutes() {
+	// Business group
+	business := s.httpServer.Group("/business")
+	{
+		// API routes
+		business.GET("/groupList", s.apiHandler.HandleGroupList)
+		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
+		business.Any("/invoke", s.apiHandler.HandleInvoke)
+
+		// JS execution routes
+		business.GET("/execjs", s.apiHandler.HandleExecJS)
+		business.POST("/execjs", s.apiHandler.HandleExecJS)
+		business.GET("/cookie", s.apiHandler.HandleGetCookie)
+		business.POST("/cookie", s.apiHandler.HandleGetCookie)
+		business.GET("/html", s.apiHandler.HandleGetHtml)
+
+		// WebSocket register route
+		business.GET("/register", s.handleRegister)
+	}
+}
+
+// HandleRegister is a wrapper for backward compatibility
+func (s *Server) handleRegister(c *gin.Context) {
+	group := c.Query("group")
+	clientID := c.Query("clientId")
 
 	if group == "" || clientID == "" {
-		http.Error(w, "group and clientId parameters required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "group and clientId parameters required",
+		})
 		return
 	}
 
 	// WebSocket upgrade
-	wsConn, err := s.httpServer.WSUpgrader().Upgrade(w, r, nil)
+	wsConn, err := s.httpServer.WSUpgrader().Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logger.Errorf("WebSocket upgrade error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "WebSocket upgrade failed",
+		})
 		return
 	}
 
@@ -231,4 +261,57 @@ func (s *Server) Shutdown() {
 // GetClientManager returns the client manager
 func (s *Server) GetClientManager() *client.ClientManager {
 	return s.clientManager
+}
+
+// ginCorsMiddleware returns a gin CORS middleware
+func ginCorsMiddleware(enabled bool) gin.HandlerFunc {
+	if !enabled {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
+	return func(c *gin.Context) {
+		origin := c.GetHeader("Origin")
+		if origin != "" {
+			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
+			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+
+		// Handle preflight requests
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusOK)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// ginRouteReplaceMiddleware returns a gin route replacement middleware
+func ginRouteReplaceMiddleware(enabled bool, prefix string) gin.HandlerFunc {
+	if !enabled || prefix == "" {
+		return func(c *gin.Context) {
+			c.Next()
+		}
+	}
+
+	return func(c *gin.Context) {
+		// Replace the prefix
+		newPath := strings.TrimPrefix(c.Request.URL.Path, prefix)
+		if newPath == c.Request.URL.Path {
+			// Prefix not found, pass through
+			c.Next()
+			return
+		}
+		if newPath == "" {
+			newPath = "/"
+		}
+		// Modify request path
+		c.Request.URL.Path = newPath
+		c.Next()
+	}
 }
