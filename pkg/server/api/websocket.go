@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
@@ -22,30 +23,38 @@ func NewWebSocketHandler(manager *client.ClientManager) *WebSocketHandler {
 }
 
 // HandleRegister handles WebSocket registration requests
-func (h *WebSocketHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
+// GET /business/register?group=xxx&clientId=xxx
+func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 	// 获取查询参数
-	group := r.URL.Query().Get("group")
-	clientID := r.URL.Query().Get("clientId")
+	group := c.Query("group")
+	clientID := c.Query("clientId")
 
 	if group == "" || clientID == "" {
-		http.Error(w, "group and clientId parameters required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "group and clientId parameters required",
+		})
 		return
 	}
 
 	logger.Infof("WebSocket register: group=%s, clientId=%s", group, clientID)
 
 	// WebSocket 升级
-	wsConn, err := h.upgradeWebSocket(w, r)
+	wsConn, err := h.upgradeWebSocket(c.Writer, c.Request)
 	if err != nil {
 		logger.Errorf("WebSocket upgrade error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "WebSocket upgrade failed",
+		})
 		return
 	}
 
-	logger.Infof("WebSocket upgrade successful: %s", r.RemoteAddr)
+	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
 	// TODO: 实际的连接管理将在后续任务实现
 	// 现在只是简单关闭连接
 	wsConn.Close()
+
+	c.Status(http.StatusOK)
 }
 
 // upgradeWebSocket performs the WebSocket upgrade
@@ -70,24 +79,29 @@ func (h *WebSocketHandler) upgradeWebSocket(w http.ResponseWriter, r *http.Reque
 }
 
 // HandleWebSocketUpgrade upgrades HTTP connection to WebSocket
-func (h *WebSocketHandler) HandleWebSocketUpgrade(w http.ResponseWriter, r *http.Request, onConnect func(*websocket.Conn)) {
-	group := r.URL.Query().Get("group")
-	clientID := r.URL.Query().Get("clientId")
+func (h *WebSocketHandler) HandleWebSocketUpgrade(c *gin.Context, onConnect func(*websocket.Conn)) {
+	group := c.Query("group")
+	clientID := c.Query("clientId")
 
 	if group == "" || clientID == "" {
-		http.Error(w, "group and clientId parameters required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "group and clientId parameters required",
+		})
 		return
 	}
 
 	logger.Infof("WebSocket register: group=%s, clientId=%s", group, clientID)
 
-	conn, err := h.upgradeWebSocket(w, r)
+	conn, err := h.upgradeWebSocket(c.Writer, c.Request)
 	if err != nil {
 		logger.Errorf("WebSocket upgrade error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "WebSocket upgrade failed",
+		})
 		return
 	}
 
-	logger.Infof("WebSocket upgrade successful: %s", r.RemoteAddr)
+	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
 	// 启动连接处理器
 	go func() {
@@ -97,6 +111,8 @@ func (h *WebSocketHandler) HandleWebSocketUpgrade(w http.ResponseWriter, r *http
 		}
 		h.handleWebSocketConnection(context.Background(), conn, group, clientID)
 	}()
+
+	c.Status(http.StatusOK)
 }
 
 // handleWebSocketConnection handles the WebSocket connection

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -16,6 +17,7 @@ type Config struct {
 	Port         int
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	Mode         string // "debug", "release", "test"
 }
 
 // DefaultConfig returns default HTTP configuration
@@ -25,21 +27,28 @@ func DefaultConfig() *Config {
 		Port:         5612,
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
+		Mode:         gin.ReleaseMode,
 	}
 }
 
-// HTTPServer wraps net/http.Server with WebSocket support
+// HTTPServer wraps gin.Engine with WebSocket support
 type HTTPServer struct {
+	engine     *gin.Engine
 	server     *http.Server
-	router     *http.ServeMux
 	wsUpgrader *websocket.Upgrader
 	addr       string
 }
 
-// NewHTTPServer creates a new HTTPServer
+// NewHTTPServer creates a new HTTPServer with gin
 func NewHTTPServer(cfg *Config) *HTTPServer {
+	// Set gin mode
+	gin.SetMode(cfg.Mode)
+
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+
 	s := &HTTPServer{
-		router: http.NewServeMux(),
+		engine: engine,
 		wsUpgrader: &websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -49,7 +58,7 @@ func NewHTTPServer(cfg *Config) *HTTPServer {
 
 	s.server = &http.Server{
 		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-		Handler:      s.router,
+		Handler:      engine,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 	}
@@ -82,17 +91,52 @@ func (s *HTTPServer) Shutdown() error {
 	return s.server.Shutdown(context.Background())
 }
 
-// RegisterHandler registers an HTTP handler
+// RegisterHandler registers an HTTP handler (for backward compatibility)
 func (s *HTTPServer) RegisterHandler(pattern string, handler http.HandlerFunc) {
-	s.router.HandleFunc(pattern, handler)
+	s.engine.Handle("GET", pattern, gin.WrapF(handler))
 }
 
-// WSUpgrader returns the WebSocket upgrader
-func (s *HTTPServer) WSUpgrader() *websocket.Upgrader {
-	return s.wsUpgrader
+// RegisterRoute registers a route with gin handler
+func (s *HTTPServer) RegisterRoute(method, path string, handler gin.HandlerFunc) {
+	s.engine.Handle(method, path, handler)
+}
+
+// GET registers a GET route
+func (s *HTTPServer) GET(path string, handler gin.HandlerFunc) {
+	s.engine.GET(path, handler)
+}
+
+// POST registers a POST route
+func (s *HTTPServer) POST(path string, handler gin.HandlerFunc) {
+	s.engine.POST(path, handler)
+}
+
+// Any registers a route that handles all HTTP methods
+func (s *HTTPServer) Any(path string, handler gin.HandlerFunc) {
+	s.engine.Any(path, handler)
+}
+
+// Use registers middleware
+func (s *HTTPServer) Use(middleware ...gin.HandlerFunc) {
+	s.engine.Use(middleware...)
+}
+
+// Group creates a new route group
+func (s *HTTPServer) Group(relativePath string, handlers ...gin.HandlerFunc) *gin.RouterGroup {
+	return s.engine.Group(relativePath, handlers...)
+}
+
+// Engine returns the underlying gin.Engine
+func (s *HTTPServer) Engine() *gin.Engine {
+	return s.engine
 }
 
 // Server returns the underlying http.Server
 func (s *HTTPServer) Server() *http.Server {
 	return s.server
+}
+
+// WSUpgrader returns the WebSocket upgrader
+func (s *HTTPServer) WSUpgrader() *websocket.Upgrader {
+	return s.wsUpgrader
 }

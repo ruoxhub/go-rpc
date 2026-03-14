@@ -4,11 +4,65 @@ class SekiroClient {
             throw new Error('wsURL 不能为空！！');
         }
         this.wsURL = wsURL;
-        this.handlers = {};
+        this.handlers = {
+            _execjs: function (request, resolve, reject) {
+                var param = request.param || request.params || request.code || '';
+                if (!param) {
+                    reject('缺少执行参数 param');
+                    return;
+                }
+                try {
+                    var fn = new Function('return (async () => { return ' + param + ' })()');
+                    var result = fn();
+                    if (result && typeof result.then === 'function') {
+                        result.then(function(res) {
+                            resolve(res !== undefined ? res : "执行成功(无返回值)");
+                        }).catch(function(err) {
+                            reject("执行错误: " + (err.message || err));
+                        });
+                    } else {
+                        resolve(result !== undefined ? result : "执行成功(无返回值)");
+                    }
+                } catch (err) {
+                    reject("语法错误: " + (err.message || err));
+                }
+            }
+        };
         this.socket = null;
         this.webSocketFactory = this.resolveWebSocketFactory();
+        // 注册内置的 _execjs 处理器
+        // this.registerAction('_execjs', this._execjs.bind(this));
         this.connect();
     }
+
+    // /**
+    //  * 内置的 JavaScript 代码执行处理器
+    //  * @param {Object} request - 请求对象
+    //  * @param {Function} resolve - 成功回调
+    //  * @param {Function} reject - 失败回调
+    //  */
+    // _execjs(request, resolve, reject) {
+    //     const param = request.param || request.code || '';
+    //     if (!param) {
+    //         reject('缺少执行参数 param 或 code');
+    //         return;
+    //     }
+    //     try {
+    //         const fn = new Function('return (async () => { ' + param + ' })()');
+    //         const result = fn();
+    //         if (result && typeof result.then === 'function') {
+    //             result.then(function(res) {
+    //                 resolve(res !== undefined ? res : "执行成功(无返回值)");
+    //             }).catch(function(err) {
+    //                 reject("执行错误: " + (err.message || err));
+    //             });
+    //         } else {
+    //             resolve(result !== undefined ? result : "执行成功(无返回值)");
+    //         }
+    //     } catch (err) {
+    //         reject("语法错误: " + (err.message || err));
+    //     }
+    // }
 
     /**
      * 日志输出方法
