@@ -431,13 +431,18 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 			return
 		}
 
-		// 直接返回响应数据作为字符串
+		// 解析响应数据
+		var responseData interface{}
+		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
+			responseData = string(resp.Data)
+		}
+
 		c.JSON(http.StatusOK, gin.H{
 			"status":   resp.Status,
 			"message":  "success",
 			"group":    req.Group,
 			"clientId": targetClient.ClientID,
-			"data":     string(resp.Data),
+			"data":     responseData,
 		})
 	}
 }
@@ -582,13 +587,19 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 			return
 		}
 
+		// 解析响应数据
+		var responseData interface{}
+		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
+			responseData = string(resp.Data)
+		}
+
 		// 返回 cookie 数据
 		c.JSON(http.StatusOK, gin.H{
 			"status":   resp.Status,
 			"message":  "success",
 			"group":    req.Group,
 			"clientId": targetClient.ClientID,
-			"data":     string(resp.Data),
+			"data":     responseData,
 		})
 	}
 }
@@ -733,13 +744,19 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 			return
 		}
 
+		// 解析响应数据
+		var responseData interface{}
+		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
+			responseData = string(resp.Data)
+		}
+
 		// 返回 HTML 数据
 		c.JSON(http.StatusOK, gin.H{
 			"status":   resp.Status,
 			"message":  "success",
 			"group":    req.Group,
 			"clientId": targetClient.ClientID,
-			"data":     string(resp.Data),
+			"data":     responseData,
 		})
 	}
 }
