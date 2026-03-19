@@ -23,6 +23,7 @@ type Config struct {
 	Mode           string        `yaml:"Mode"`           // Running mode (debug, release)
 	Cors           bool          `yaml:"Cors"`           // Enable CORS
 	RouterReplace  RouterReplace `yaml:"RouterReplace"`  // Route prefix replacement
+	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
 }
 
 // HttpsConfig holds HTTPS related configuration
@@ -39,6 +40,16 @@ type RouterReplace struct {
 	ReplaceRoute string `yaml:"ReplaceRoute"` // Route prefix to replace
 }
 
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Host     string `yaml:"Host"`     // Database host
+	Port     int    `yaml:"Port"`     // Database port
+	User     string `yaml:"User"`     // Database user
+	Password string `yaml:"Password"` // Database password
+	DBName   string `yaml:"DBName"`   // Database name
+	SSLMode  string `yaml:"SSLMode"`  // SSL mode
+}
+
 // DefaultConfig returns default configuration
 func DefaultConfig() *Config {
 	return &Config{
@@ -53,6 +64,14 @@ func DefaultConfig() *Config {
 		RouterReplace: RouterReplace{
 			IsEnable:     false,
 			ReplaceRoute: "",
+		},
+		Database: DatabaseConfig{
+			Host:     "localhost",
+			Port:     5432,
+			User:     "postgres",
+			Password: "postgres",
+			DBName:   "sekiro",
+			SSLMode:  "disable",
 		},
 		Cors:     true,
 		Mode:     "release",

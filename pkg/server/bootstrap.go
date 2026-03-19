@@ -16,9 +16,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/sekiro-go/sekiro-go/pkg/server/handlers"
 	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
@@ -110,6 +112,19 @@ func (s *Server) Start() error {
 	// Initialize logger
 	logger.InitLogger(s.config.Debug)
 
+	// Initialize database connection
+	if err := database.InitFromConfig(
+		s.yamlConfig.Database.Host,
+		s.yamlConfig.Database.Port,
+		s.yamlConfig.Database.User,
+		s.yamlConfig.Database.Password,
+		s.yamlConfig.Database.DBName,
+		s.yamlConfig.Database.SSLMode,
+	); err != nil {
+		logger.Errorf("Failed to initialize database: %v", err)
+		return fmt.Errorf("failed to initialize database: %w", err)
+	}
+
 	// Initialize WebSocket handler
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 
@@ -194,6 +209,9 @@ func (s *Server) registerRoutes() {
 		// WebSocket register route
 		business.GET("/register", s.handleRegister)
 	}
+
+	// Setup Web management routes
+	handlers.SetupWebRoutes(s.httpServer.Engine())
 }
 
 // HandleRegister is a wrapper for backward compatibility

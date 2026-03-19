@@ -35,3 +35,12 @@ HttpsServices:
 RouterReplace:
   IsEnable: false
   ReplaceRoute: "/sekiro"
+
+# Database configuration
+Database:
+  Host: "localhost"
+  Port: 5432
+  User: "postgres"
+  Password: "postgres"
+  DBName: "sekiro"
+  SSLMode: "disable"

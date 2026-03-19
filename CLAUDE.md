@@ -6,6 +6,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sekiro RPC - Go 语言实现，是一个多语言、分布式、网络拓扑无关的服务发布平台。这是 Java 版本 Sekiro 的 Go 语言实现。
 
+**核心特性：**
+- 多语言支持（Go、Java 客户端）
+- 分布式架构，支持多节点部署
+- 网络拓扑无关，支持内网穿透
+- WebSocket 长连接通信
+- 分组管理和负载均衡
+- QPS 流量控制
+- 实时监控指标
+
 ## 常用命令
 
 ```bash
@@ -44,50 +53,86 @@ go test ./pkg/server/api/...
 go test -run TestSekiroPacket ./pkg/protocol/...
 ```
 
+### Web 前端命令
+
+```bash
+cd web
+
+# 安装依赖
+npm install
+
+# 开发模式
+npm run dev
+
+# 构建生产版本
+npm run build
+
+# 代码检查
+npm run lint
+```
+
 ## 项目架构
 
 ```
-pkg/
-├── client/           # 客户端 SDK (SekiroClient, SekiroInvoker)
-├── compress/         # 压缩算法 (Gzip, Snappy, None)
-├── eventbus/         # 事件总线
-├── protocol/         # 通信协议层 (数据包编解码)
-└── server/           # 服务器端核心
-    ├── api/          # HTTP API 处理器 (Gin 框架)
-    ├── client/       # 客户端管理 (分组、轮询)
-    ├── detector/     # 协议检测器
-    ├── flow/         # 流量控制 (延迟退避)
-    ├── forwarder/    # 请求转发和超时管理
-    ├── router/       # 路由策略 (轮询、一致性 Hash)
-    └── websocket/    # WebSocket 消息处理
-
-cmd/
-├── server/           # 服务器端启动程序
-├── client/           # 客户端示例
-└── invoker/          # 调用端示例
-
-internal/
-├── config/           # YAML 配置管理
-└── utils/
-    └── logger/       # zap 日志工具
+sekiro-go/
+├── cmd/
+│   ├── server/           # 服务器端启动程序
+│   ├── client/           # 客户端示例
+│   └── invoker/          # 调用端示例
+├── internal/
+│   ├── config/           # YAML 配置管理
+│   └── utils/
+│       └── logger/       # zap 日志工具
+├── pkg/
+│   ├── client/           # 客户端 SDK (SekiroClient, SekiroInvoker)
+│   ├── compress/         # 压缩算法 (Gzip, Snappy, None)
+│   ├── database/         # 数据库连接管理 (GORM + PostgreSQL)
+│   ├── eventbus/         # 事件总线
+│   ├── model/            # 数据模型定义
+│   ├── protocol/         # 通信协议层 (数据包编解码)
+│   └── server/           # 服务器端核心
+│       ├── api/          # HTTP API 处理器 (Gin 框架)
+│       ├── client/       # 客户端管理 (分组、轮询、健康检查)
+│       ├── detector/     # 协议检测器
+│       ├── flow/         # 流量控制 (延迟退避)
+│       ├── forwarder/    # 请求转发和超时管理
+│       ├── handlers/     # Web 管理界面 handlers
+│       ├── middleware/   # Gin 中间件
+│       ├── router/       # 路由策略 (轮询、一致性 Hash)
+│       └── websocket/    # WebSocket 消息处理
+├── deploy/
+│   └── postgres/         # 数据库部署脚本
+├── web/                  # React 前端 (Vite + Ant Design)
+└── sample/               # 示例代码
 ```
 
 ## 核心模块
 
 ### 服务器端 (pkg/server)
 
-- **bootstrap.go**: 服务器启动入口，使用 Gin 框架处理 HTTP 和 WebSocket
-- **api/handlers.go**: HTTP API 处理器 (`/business/invoke`, `/business/groupList`, `/business/clientQueue`)
-- **client/manager.go**: 客户端分组管理，支持轮询和指定客户端路由
-- **router/strategy.go**: 三种路由策略（轮询、指定客户端、一致性 Hash）
-- **forwarder/timeout.go**: 请求超时管理和追踪
-- **flow/backoff.go**: 空队列延迟退避机制
-- **websocket/handler.go**: WebSocket 消息处理和客户端注册
+| 文件 | 说明 |
+|------|------|
+| **bootstrap.go** | 服务器启动入口，加载配置、初始化数据库、启动 HTTP/WebSocket |
+| **api/handlers.go** | HTTP API 处理器 (`/business/invoke`, `/business/groupList`, `/business/clientQueue`, `/business/execjs`, `/business/cookie`, `/business/html`) |
+| **api/http_server.go** | Gin HTTP 服务器封装 |
+| **api/websocket.go** | WebSocket 升级配置 |
+| **client/manager.go** | 客户端分组管理，支持轮询和指定客户端路由 |
+| **client/client.go** | SekiroClient 定义，包含健康检查机制 |
+| **client/group.go** | 分组管理逻辑 |
+| **router/strategy.go** | 三种路由策略（轮询、指定客户端、一致性 Hash） |
+| **forwarder/timeout.go** | 请求超时管理和追踪 |
+| **flow/backoff.go** | 空队列延迟退避机制 |
+| **websocket/handler.go** | WebSocket 消息处理和客户端注册 |
+| **detector/** | HTTP 协议检测器 |
+| **handlers/** | Web 管理界面处理器 (user.go, group.go, metric.go, sysconfig.go, anonymous.go) |
+| **middleware/cors.go** | CORS 中间件 |
 
 ### 客户端 SDK (pkg/client)
 
-- **client.go**: SekiroClient - WebSocket 客户端，支持注册和请求处理
-- **invoker.go**: SekiroInvoker - 调用端，支持向服务器发送 RPC 调用
+| 文件 | 说明 |
+|------|------|
+| **client.go** | SekiroClient - WebSocket 客户端，支持注册和请求处理 |
+| **invoker.go** | SekiroInvoker - 调用端，支持向服务器发送 RPC 调用 |
 
 ### 协议层 (pkg/protocol)
 
@@ -97,14 +142,34 @@ internal/
 ```
 
 包类型：
-- HEARTBEAT (0): 心跳包
-- C_REGISTER (16): 客户端注册
-- C_INVOKE_RESPONSE (17): 调用响应
-- C_OFFLINE (18): 客户端下线
-- S_INVOKE (32): 服务器调用
-- I_INVOKE (49): 调用端请求
+| 类型 | 值 | 说明 |
+|------|-----|------|
+| HEARTBEAT | 0 | 心跳包 |
+| C_REGISTER | 16 | 客户端注册 |
+| C_INVOKE_RESPONSE | 17 | 调用响应 |
+| C_OFFLINE | 18 | 客户端下线 |
+| S_INVOKE | 32 | 服务器调用 |
+| I_INVOKE | 49 | 调用端请求 |
+
+### 数据模型 (pkg/model)
+
+| 模型 | 表名 | 说明 |
+|------|------|------|
+| UserInfo | user_info | 用户信息 |
+| SysConfig | sys_config | 系统配置 |
+| SysLog | sys_log | 系统日志 |
+| ServerNode | server_node | 服务器节点 |
+| GroupConfig | group_config | 分组配置 |
+| GroupAction | group_actions | 分组 Action |
+| GroupDevice | group_device | 分组设备 |
+| MetricTag | metric_tag | 指标标签 |
+| MetricMinute | metric_minute | 分钟级指标 |
+| MetricHour | metric_hour | 小时级指标 |
+| MetricDay | metric_day | 天级指标 |
 
 ## API 端点
+
+### 核心 API
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
@@ -116,25 +181,229 @@ internal/
 | `/business/cookie` | POST/GET | 获取 Cookie |
 | `/business/html` | GET | 获取 HTML |
 
+### Web 管理 API
+
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/api/users` | GET/POST/DELETE | 用户管理 |
+| `/api/users/qps` | PUT | 更新用户 QPS |
+| `/api/current` | GET | 获取当前用户 |
+| `/api/current/password` | POST | 修改密码 |
+| `/api/current/token/refresh` | POST | 刷新 Token |
+| `/api/groups` | GET/POST/DELETE | 分组管理 |
+| `/api/groups/:groupName` | GET | 获取分组详情 |
+| `/api/groups/qps` | PUT | 更新分组 QPS |
+| `/api/groups/:groupName/devices` | GET/DELETE | 设备管理 |
+| `/api/groups/:groupName/actions` | GET | 获取分组 Actions |
+| `/api/anonymous-groups` | GET | 匿名分组列表 |
+| `/api/sysconfig` | GET/PUT | 系统配置 |
+| `/api/sysconfig/nodes` | GET | 服务器节点 |
+| `/api/sysconfig/logs` | GET | 系统日志 |
+| `/api/metrics` | GET | 监控指标 |
+| `/api/metrics/list` | GET | 指标列表 |
+| `/api/metrics/dashboard` | GET | 仪表盘数据 |
+
 ## 配置
 
-支持 YAML 配置文件 (`config.yaml`)：
+### YAML 配置文件 (`config.yaml`)
 
 ```yaml
+# 基础监听配置
 BasicListen: ":5612"
 Host: "0.0.0.0"
 Port: 5612
+
+# 默认超时 (秒)
 DefaultTimeOut: 30
-Mode: "release"  # debug/release
-Cors: true
+
+# 日志配置
 CloseLog: false
 CloseWebLog: false
+
+# 运行模式 (debug/release)
+Mode: release
+
+# CORS 配置
+Cors: true
+
+# HTTPS 配置
+HttpsServices:
+  IsEnable: false
+  HttpsListen: ":5643"
+  PemPath: "certs/server.pem"
+  KeyPath: "certs/server.key"
+
+# 路由前缀替换 (反向代理用)
+RouterReplace:
+  IsEnable: false
+  ReplaceRoute: "/sekiro"
+
+# 数据库配置
+Database:
+  Host: "localhost"
+  Port: 5432
+  User: "postgres"
+  Password: "postgres"
+  DBName: "sekiro"
+  SSLMode: "disable"
 ```
+
+### 配置结构 (internal/config/config.go)
+
+```go
+type Config struct {
+    BasicListen    string         // 监听地址
+    Host           string         // 监听主机
+    Port           int            // 监听端口
+    HttpsServices  HttpsConfig    // HTTPS 配置
+    DefaultTimeOut int            // 默认超时
+    CloseLog       bool           // 关闭日志
+    CloseWebLog    bool           // 关闭 Web 日志
+    Mode           string         // 运行模式
+    Cors           bool           // CORS 开关
+    RouterReplace  RouterReplace  // 路由替换
+    Database       DatabaseConfig // 数据库配置
+}
+```
+
+### 启动参数
+
+```bash
+# 服务器启动参数
+-port int        # 服务器端口 (默认 5612)
+-host string     # 服务器主机 (默认 "0.0.0.0")
+-debug           # 启用调试日志
+-local-debug     # 启用本地调试模式
+-c string        # 指定配置文件路径 (默认 "config.yaml")
+```
+
+## 数据库
+
+### PostgreSQL 表结构
+
+数据库迁移脚本位于 `deploy/postgres/migration.sql`
+
+**主要表：**
+- `user_info` - 用户信息
+- `sys_config` - 系统配置
+- `sys_log` - 系统日志
+- `server_node` - 服务器节点
+- `group_config` - 分组配置
+- `group_actions` - 分组动作
+- `group_device` - 分组设备
+- `metric_minute/hour/day` - 监控指标
+- `metric_tag` - 指标标签
+
+### 数据库初始化
+
+```go
+// 从配置初始化数据库
+database.InitFromConfig(
+    config.Database.Host,
+    config.Database.Port,
+    config.Database.User,
+    config.Database.Password,
+    config.Database.DBName,
+    config.Database.SSLMode,
+)
+```
+
+## Web 前端
+
+### 技术栈
+
+- **框架**: React 18
+- **构建工具**: Vite 5
+- **UI 库**: Ant Design 5
+- **路由**: React Router 6
+- **HTTP 客户端**: Axios
+- **工具库**: ahooks
+
+### 前端页面
+
+| 页面 | 路径 | 说明 |
+|------|------|------|
+| Dashboard | `/` | 仪表盘 |
+| UserList | `/users` | 用户列表 |
+| GroupList | `/groups` | 分组列表 |
+| GroupDetail | `/groups/:name` | 分组详情 |
+| AnonymousGroup | `/anonymous` | 匿名分组 |
+| Monitor | `/monitor` | 监控页面 |
+| SystemPanel | `/system` | 系统面板 |
 
 ## 开发注意事项
 
-- 项目使用 Gin 框架处理 HTTP 路由和中间件
-- WebSocket 使用 gorilla/websocket 库
-- 日志使用 uber-go/zap
-- 压缩支持 Gzip 和 Snappy
-- 当前 branch `feat/refactor-api-with-gin` 已完成从原生 net/http 到 Gin 的迁移
+### 技术栈
+
+- **Web 框架**: Gin (HTTP + WebSocket)
+- **WebSocket**: gorilla/websocket
+- **ORM**: GORM v2
+- **数据库**: PostgreSQL
+- **日志**: uber-go/zap
+- **配置**: gopkg.in/yaml.v3
+- **压缩**: Gzip, Snappy
+
+### 代码规范
+
+- 使用 `github.com/sekiro-go/sekiro-go` 作为模块路径
+- 错误处理使用 `fmt.Errorf` 和 `errors.Wrap`
+- 日志使用 `logger.Infof/Errorf/Warningf`
+- JSON 标签使用 `json:"field_name"`
+- GORM 标签使用 `gorm:"column_name"`
+
+### 健康检查机制
+
+客户端 (SekiroClient) 实现了健康检查：
+- `MarkSuccess()` - 标记成功，重置失败计数
+- `MarkFailure()` - 标记失败，累加计数
+- 连续 3 次失败标记为不健康
+- 路由时优先选择健康客户端
+
+### 超时管理
+
+- 默认超时 30 秒
+- 使用 `forwarder.TimeoutManager` 管理请求追踪
+- 支持自定义超时时间
+- 超时后自动清理记录
+
+### 中间件
+
+- **CORS 中间件**: `pkg/server/middleware/cors.go`
+- **路由替换中间件**: 支持反向代理前缀
+
+## 部署
+
+### 服务器部署
+
+```bash
+# 1. 编译
+go build -o sekiro-server ./cmd/server
+
+# 2. 配置 config.yaml
+cp config.yaml.example config.yaml
+# 编辑配置文件
+
+# 3. 初始化数据库
+psql -h localhost -U postgres -d sekiro < deploy/postgres/migration.sql
+
+# 4. 启动服务
+./sekiro-server -c config.yaml
+```
+
+### Docker 部署 (待定)
+
+### 前端部署
+
+```bash
+cd web
+npm install
+npm run build
+# 将 dist/ 目录部署到静态服务器
+```
+
+## 相关资源
+
+- [Sekiro Java 原版](https://github.com/yint-tech/sekiro)
+- [Gin 框架文档](https://gin-gonic.com/)
+- [GORM 文档](https://gorm.io/)
+- [PostgreSQL 文档](https://www.postgresql.org/docs/)

@@ -1,0 +1,59 @@
+.app-container {
+  min-height: 100vh;
+}
+
+.main-layout {
+  min-height: 100vh;
+}
+
+.sidebar-header {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #001529;
+}
+
+.sidebar-logo {
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+}
+
+.sidebar-title {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.main-content {
+  background: #f0f2f5;
+  min-height: calc(100vh - 64px);
+}
+
+.page-container {
+  background: #fff;
+  border-radius: 4px;
+  padding: 24px;
+  min-height: calc(100vh - 88px);
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #262626;
+}
+
+.footer {
+  text-align: center;
+  padding: 24px;
+  color: rgba(0, 0, 0, 0.45);
+  font-size: 14px;
+}
