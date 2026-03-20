@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +34,9 @@ type GroupInfoVO struct {
 	CreateTime        string  `json:"createTime"`
 	AvailableClients  int64   `json:"availableClients"`
 	DisabledClients   int64   `json:"disabledClients"`
+	// 兼容旧版字段
+	AvailableClientSize int64 `json:"availableClientSize"`
+	DisableClientSize   int64 `json:"disableClientSize"`
 }
 
 // List 获取分组列表
@@ -60,6 +64,9 @@ func (h *GroupHandler) List(c *gin.Context) {
 			CreateTime:        g.CreateDate.Format("2006-01-02 15:04:05"),
 			AvailableClients:  availableCount,
 			DisabledClients:   disabledCount,
+			// 兼容旧版字段
+			AvailableClientSize: availableCount,
+			DisableClientSize:   disabledCount,
 		})
 	}
 
@@ -86,10 +93,16 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// TODO: 从上下文中获取当前用户名
+	// 从认证中间件获取当前用户信息
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		return
+	}
+
 	group := model.GroupConfig{
 		GroupName:         req.GroupName,
-		UserName:          "current_user", // 临时写死
+		UserName:          user.UserName,
 		QuotaQpsGroup:     req.QuotaQpsGroup,
 		QuotaQpsPerDevice: req.QuotaQpsPerDevice,
 		CreateDate:        time.Now(),
@@ -288,4 +301,112 @@ func (h *GroupHandler) GetActions(c *gin.Context) {
 		"message": "success",
 		"data":    actions,
 	})
+}
+
+// AddActionRequest 添加 Action 请求
+type AddActionRequest struct {
+	GroupName  string `json:"groupName" binding:"required"`
+	ActionName string `json:"actionName" binding:"required"`
+}
+
+// AddAction 添加 Action
+func (h *GroupHandler) AddAction(c *gin.Context) {
+	var req AddActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	// 检查分组是否存在
+	var group model.GroupConfig
+	if err := database.GetDB().Where("group_name = ?", req.GroupName).First(&group).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "message": "group not found"})
+		return
+	}
+
+	// 检查 action 是否已存在
+	var existing model.GroupAction
+	if err := database.GetDB().Where("group_name = ? AND action_name = ?", req.GroupName, req.ActionName).First(&existing).Error; err == nil {
+		c.JSON(409, gin.H{"code": 409, "message": "action already exists"})
+		return
+	}
+
+	action := model.GroupAction{
+		GroupName:  req.GroupName,
+		ActionName: req.ActionName,
+		CreateDate: time.Now(),
+	}
+
+	if err := database.GetDB().Create(&action).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    action.ID,
+	})
+}
+
+// DeleteActionRequest 删除 Action 请求
+type DeleteActionRequest struct {
+	GroupName  string `json:"groupName" binding:"required"`
+	ActionName string `json:"actionName" binding:"required"`
+}
+
+// DeleteAction 删除 Action
+func (h *GroupHandler) DeleteAction(c *gin.Context) {
+	var req DeleteActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	if err := database.GetDB().Where("group_name = ? AND action_name = ?", req.GroupName, req.ActionName).
+		Delete(&model.GroupAction{}).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{"code": 0, "message": "success"})
+}
+
+// DisableDeviceRequest 禁用/启用设备请求
+type DisableDeviceRequest struct {
+	GroupName string `json:"groupName" binding:"required"`
+	DeviceID  string `json:"deviceId" binding:"required"`
+	Disable   bool   `json:"disable"` // true=禁用，false=启用
+}
+
+// DisableDevice 禁用/启用设备
+func (h *GroupHandler) DisableDevice(c *gin.Context) {
+	var req DisableDeviceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	// 检查设备是否存在
+	var device model.GroupDevice
+	if err := database.GetDB().Where("group_name = ? AND device_id = ?", req.GroupName, req.DeviceID).First(&device).Error; err != nil {
+		c.JSON(404, gin.H{"code": 404, "message": "device not found"})
+		return
+	}
+
+	if req.Disable {
+		// 禁用设备：将最后活跃时间设置为过去
+		if err := database.GetDB().Model(&device).Update("last_active_time", time.Now().Add(-24*time.Hour)).Error; err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+			return
+		}
+	} else {
+		// 启用设备：更新最后活跃时间为当前
+		if err := database.GetDB().Model(&device).Update("last_active_time", time.Now()).Error; err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+			return
+		}
+	}
+
+	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }

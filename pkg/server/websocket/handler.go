@@ -127,8 +127,12 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 			// Read message
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				// 区分正常关闭和异常断开
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 					logger.Debugf("WebSocket read error: %v", err)
+				} else {
+					// 正常关闭（如 CloseNormalClosure, CloseGoingAway）不记录为错误
+					logger.Debugf("WebSocket normal close: %v", err)
 				}
 				return
 			}

@@ -33,6 +33,13 @@ class SekiroClient {
         // 注册内置的 _execjs 处理器
         // this.registerAction('_execjs', this._execjs.bind(this));
         this.connect();
+
+        // 注册页面卸载时的清理函数，避免无意义重连
+        if (typeof window !== 'undefined') {
+            window.addEventListener('beforeunload', function() {
+                this.disconnect();
+            }.bind(this));
+        }
     }
 
     // /**

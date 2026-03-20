@@ -13,6 +13,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5612',
         changeOrigin: true
+      },
+      '/sekiro-api': {
+        target: 'http://localhost:5612',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/sekiro-api/, '/api')
       }
     }
   }

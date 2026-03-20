@@ -122,14 +122,22 @@ func (h *MetricHandler) GetDashboardData(c *gin.Context) {
 	var onlineDevices int64
 	database.GetDB().Table("group_device").Where("last_active_time > ?", time.Now().Add(-5*time.Minute)).Count(&onlineDevices)
 
+	// 获取分组总数
+	var totalGroups int64
+	database.GetDB().Table("group_config").Count(&totalGroups)
+
+	// 获取用户总数
+	var totalUsers int64
+	database.GetDB().Table("user_info").Count(&totalUsers)
+
 	c.JSON(200, gin.H{
 		"code":    0,
 		"message": "success",
 		"data": gin.H{
-			"totalCalls":      totalCalls,
-			"onlineDevices":   onlineDevices,
-			"totalGroups":     0,
-			"totalUsers":      0,
+			"totalCalls":    totalCalls,
+			"onlineDevices": onlineDevices,
+			"totalGroups":   totalGroups,
+			"totalUsers":    totalUsers,
 		},
 	})
 }

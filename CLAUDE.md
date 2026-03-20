@@ -126,6 +126,8 @@ sekiro-go/
 | **detector/** | HTTP 协议检测器 |
 | **handlers/** | Web 管理界面处理器 (user.go, group.go, metric.go, sysconfig.go, anonymous.go) |
 | **middleware/cors.go** | CORS 中间件 |
+| **middleware/auth.go** | Token 认证中间件，从 Authorization header 解析用户信息 |
+| **handlers/login.go** | 登录 API 处理器 (`/sekiro-api/user-info/login`) |
 
 ### 客户端 SDK (pkg/client)
 
@@ -202,6 +204,28 @@ sekiro-go/
 | `/api/metrics` | GET | 监控指标 |
 | `/api/metrics/list` | GET | 指标列表 |
 | `/api/metrics/dashboard` | GET | 仪表盘数据 |
+
+### 前端兼容 API (`/sekiro-api` 前缀)
+
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/sekiro-api/user-info/login` | POST | 用户登录 |
+| `/sekiro-api/user-info/userInfo` | GET | 获取当前用户信息 |
+| `/sekiro-api/user-info/changePassword` | POST | 修改密码 |
+| `/sekiro-api/user-info/refreshToken` | POST | 刷新 Token |
+| `/sekiro-api/user-info/logout` | POST | 用户登出 |
+| `/sekiro-api/frontend/listGroup` | GET | 分组列表 |
+| `/sekiro-api/system/systemNotice` | GET | 系统通知 |
+| `/sekiro-api/system/systemInfo` | GET | 系统信息 |
+| `/sekiro-api/groupConfig/create` | POST | 创建分组 |
+| `/sekiro-api/groupConfig/delete` | POST | 删除分组 |
+| `/sekiro-api/groupConfig/updateQps` | POST | 更新分组 QPS |
+| `/sekiro-api/groupClient/list` | GET | 设备列表 |
+| `/sekiro-api/groupClient/remove` | POST | 删除设备 |
+| `/sekiro-api/groupClient/forbidden` | POST | 禁用设备 |
+| `/sekiro-api/groupActions/list` | GET | Action 列表 |
+| `/sekiro-api/groupActions/create` | POST | 创建 Action |
+| `/sekiro-api/groupActions/delete` | POST | 删除 Action |
 
 ## 配置
 
@@ -323,13 +347,23 @@ database.InitFromConfig(
 
 | 页面 | 路径 | 说明 |
 |------|------|------|
-| Dashboard | `/` | 仪表盘 |
+| Login | `/login` | 登录页面 |
+| Dashboard | `/` | 仪表盘（用户概览） |
 | UserList | `/users` | 用户列表 |
 | GroupList | `/groups` | 分组列表 |
-| GroupDetail | `/groups/:name` | 分组详情 |
+| GroupDetail | `/groups/:name` | 分组详情（含设备、Action、监控标签页） |
 | AnonymousGroup | `/anonymous` | 匿名分组 |
 | Monitor | `/monitor` | 监控页面 |
 | SystemPanel | `/system` | 系统面板 |
+
+### 前端核心组件
+
+| 组件 | 路径 | 说明 |
+|------|------|------|
+| AuthGuard | `web/src/components/AuthGuard.jsx` | 路由守卫，检查 token 并重定向到登录页 |
+| GroupMonitor | `web/src/components/GroupMonitor.jsx` | 监控图表组件（ECharts），展示调用趋势、QPS、设备状态 |
+| GroupAction | `web/src/components/GroupAction.jsx` | Action 管理组件 |
+| GroupDeviceList | `web/src/components/GroupDeviceList.jsx` | 设备列表组件 |
 
 ## 开发注意事项
 
@@ -370,6 +404,19 @@ database.InitFromConfig(
 
 - **CORS 中间件**: `pkg/server/middleware/cors.go`
 - **路由替换中间件**: 支持反向代理前缀
+- **认证中间件**: `pkg/server/middleware/auth.go` - 从 `Authorization: Bearer <token>` 解析用户信息到 context
+
+### 认证流程
+
+1. 用户登录 (`POST /sekiro-api/user-info/login`) 验证用户名密码
+2. 成功后返回 `apiToken` 和 `loginToken` 保存到 localStorage
+3. 后续请求通过 `Authorization: Bearer <apiToken>` header 传递 token
+4. 认证中间件解析 token 获取用户信息，存入 `c.Set("currentUserName", ...)` 和 `c.Set("userId", ...)`
+5. Handlers 通过 `c.GetString("currentUserName")` 和 `c.GetInt("userId")` 获取当前用户
+
+### 前端依赖
+
+- **echarts-for-react**: React 图表库，用于 GroupMonitor 监控组件
 
 ## 部署
 
@@ -386,20 +433,29 @@ cp config.yaml.example config.yaml
 # 3. 初始化数据库
 psql -h localhost -U postgres -d sekiro < deploy/postgres/migration.sql
 
-# 4. 启动服务
+# 4. 创建初始用户（可选，使用默认密码）
+# 用户名：ruoxing, 密码：mrx123456
+# 可通过数据库直接插入或使用 GORM 脚本
+
+# 5. 启动服务
 ./sekiro-server -c config.yaml
 ```
 
-### Docker 部署 (待定)
-
-### 前端部署
+### 前端构建
 
 ```bash
 cd web
 npm install
 npm run build
-# 将 dist/ 目录部署到静态服务器
+# 将 dist/ 目录部署到静态服务器或直接由 Gin 服务
 ```
+
+### 静态文件服务
+
+服务器启动时会自动从 `web/dist` 目录提供静态文件服务：
+- 前端构建产物需放置在 `web/dist` 目录
+- 支持 SPA 路由（NoRoute 重定向到 index.html）
+- 生产环境可直接运行 `./sekiro-server` 访问 Web 界面
 
 ## 相关资源
 

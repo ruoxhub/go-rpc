@@ -3,7 +3,10 @@ package database
 import (
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/google/uuid"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -68,4 +71,53 @@ func InitFromConfig(host string, port int, user, password, dbName, sslMode strin
 // GetDB 获取数据库实例
 func GetDB() *gorm.DB {
 	return DB
+}
+
+// AutoMigrate 自动迁移数据库表
+func AutoMigrate() error {
+	if DB == nil {
+		return fmt.Errorf("database not initialized")
+	}
+
+	err := DB.AutoMigrate(
+		&model.UserInfo{},
+		&model.SysConfig{},
+		&model.SysLog{},
+		&model.ServerNode{},
+		&model.GroupConfig{},
+		&model.GroupAction{},
+		&model.GroupDevice{},
+		&model.MetricTag{},
+		&model.MetricMinute{},
+		&model.MetricHour{},
+		&model.MetricDay{},
+	)
+	if err != nil {
+		return err
+	}
+
+	// 创建默认管理员用户
+	return createDefaultAdminUser()
+}
+
+// createDefaultAdminUser 创建默认管理员用户
+func createDefaultAdminUser() error {
+	var count int64
+	DB.Model(&model.UserInfo{}).Where("user_name = ?", "admin").Count(&count)
+	if count == 0 {
+		now := time.Now()
+		adminUser := model.UserInfo{
+			UserName:   "admin",
+			Password:   "admin123",
+			IsAdmin:    true,
+			QuotaQps:   1000,
+			ApiToken:   "admin-token-" + uuid.New().String(),
+			LoginToken: uuid.New().String(),
+			CreateTime: now,
+			LastActive: now,
+			UpdateTime: &now,
+		}
+		return DB.Create(&adminUser).Error
+	}
+	return nil
 }

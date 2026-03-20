@@ -3,6 +3,7 @@ package handlers
 import (
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -149,10 +150,15 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// TODO: 从上下文中获取当前用户 ID
-	// 这里简化处理，假设用户已登录
+	// 从认证中间件获取当前用户信息
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		return
+	}
+
 	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("id = ?", 1). // 临时写死，实际应该从 token 中解析
+		Where("id = ?", user.ID).
 		Update("password", req.NewPassword).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
@@ -163,11 +169,17 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 
 // RefreshToken 刷新 API Token
 func (h *UserHandler) RefreshToken(c *gin.Context) {
-	// TODO: 从上下文中获取当前用户 ID
+	// 从认证中间件获取当前用户信息
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		return
+	}
+
 	newToken := uuid.New().String()
 
 	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("id = ?", 1). // 临时写死
+		Where("id = ?", user.ID).
 		Update("api_token", newToken).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
@@ -182,10 +194,10 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 
 // GetCurrentUser 获取当前用户信息
 func (h *UserHandler) GetCurrentUser(c *gin.Context) {
-	// TODO: 从 token 中解析用户信息
-	var user model.UserInfo
-	if err := database.GetDB().First(&user, 1).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "user not found"})
+	// 从认证中间件获取当前用户信息
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
 		return
 	}
 

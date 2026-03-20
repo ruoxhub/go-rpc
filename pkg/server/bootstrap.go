@@ -125,6 +125,13 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
 
+	// Run auto migration to create tables
+	if err := database.AutoMigrate(); err != nil {
+		logger.Errorf("Failed to run database migration: %v", err)
+		return fmt.Errorf("failed to run database migration: %w", err)
+	}
+	logger.Info("Database migration completed successfully")
+
 	// Initialize WebSocket handler
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 
@@ -191,6 +198,23 @@ func (s *Server) Start() error {
 
 // registerRoutes registers all HTTP routes
 func (s *Server) registerRoutes() {
+	// Serve static files from web/dist directory
+	// Use absolute path for Windows compatibility
+	s.httpServer.Engine().Static("/assets", "./web/dist/assets")
+	s.httpServer.Engine().StaticFile("/favicon.ico", "./web/dist/favicon.ico")
+
+	// Serve index.html for all other routes (SPA routing)
+	s.httpServer.Engine().NoRoute(func(c *gin.Context) {
+		// Skip API routes
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/sekiro-api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/business/") {
+			c.JSON(404, gin.H{"error": "Not found"})
+			return
+		}
+		c.File("./web/dist/index.html")
+	})
+
 	// Business group
 	business := s.httpServer.Group("/business")
 	{
@@ -210,8 +234,34 @@ func (s *Server) registerRoutes() {
 		business.GET("/register", s.handleRegister)
 	}
 
-	// Setup Web management routes
+	// Setup Web management routes with /api prefix
 	handlers.SetupWebRoutes(s.httpServer.Engine())
+
+	// Also add /sekiro-api prefix for compatibility with Java Sekiro frontend
+	// This maps /sekiro-api/xxx to the same handlers as /api/xxx
+	sekiroAPI := s.httpServer.Group("/sekiro-api")
+	{
+		// User info routes (login, register, etc.)
+		userInfo := sekiroAPI.Group("/user-info")
+		{
+			userInfo.POST("/login", handlers.HandleLogin)
+			userInfo.POST("/register", handlers.HandleRegister)
+			userInfo.GET("/userInfo", handlers.HandleGetUserInfo)
+		}
+
+		// System routes
+		system := sekiroAPI.Group("/system")
+		{
+			system.GET("/systemNotice", handlers.HandleSystemNotice)
+			system.GET("/systemInfo", handlers.HandleSystemInfo)
+		}
+
+		// Frontend routes
+		frontend := sekiroAPI.Group("/frontend")
+		{
+			frontend.GET("/listGroup", handlers.HandleFrontendListGroup)
+		}
+	}
 }
 
 // HandleRegister is a wrapper for backward compatibility

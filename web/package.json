@@ -10,22 +10,24 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0",
-    "antd": "^5.20.0",
     "@ant-design/icons": "^5.4.0",
     "ahooks": "^3.8.0",
-    "axios": "^1.7.4"
+    "antd": "^5.20.0",
+    "axios": "^1.7.4",
+    "echarts": "^6.0.0",
+    "echarts-for-react": "^3.0.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.0",
     "eslint": "^8.57.0",
     "eslint-plugin-react": "^7.34.3",
     "eslint-plugin-react-hooks": "^4.6.2",
-    "eslint-plugin-react-refresh": "^0.4.7"
+    "eslint-plugin-react-refresh": "^0.4.7",
+    "vite": "^5.4.0"
   }
 }

@@ -1,35 +1,29 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Table, Input, Space, Tag, Button, Popconfirm, message } from 'antd'
 import { SearchOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { groupApi } from '../utils/api'
 
-// 模拟数据
-const mockDevices = [
-  {
-    id: '0.7338219124976066',
-    deviceIp: '127.0.0.1',
-    registerTime: '2026-03-19T08:38:45',
-    lastActiveTime: '2026-03-19T19:53:27',
-    status: 'online'
-  },
-  {
-    id: '0.9951795669479898',
-    deviceIp: '172.21.0.1',
-    registerTime: '2026-03-19T08:38:45',
-    lastActiveTime: '2026-03-19T08:58:45',
-    status: 'offline'
-  },
-  {
-    id: '0.6075113234751223',
-    deviceIp: '172.21.0.1',
-    registerTime: '2026-03-18T12:18:32',
-    lastActiveTime: '2026-03-19T00:16:13',
-    status: 'offline'
-  }
-]
-
-function GroupDeviceList({ groupName }) {
-  const [devices] = useState(mockDevices)
+function GroupDeviceList({ groupName, onRefresh }) {
+  const [devices, setDevices] = useState([])
+  const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
+
+  // 加载设备列表
+  const loadDevices = async () => {
+    setLoading(true)
+    try {
+      const result = await groupApi.getDevices(groupName)
+      setDevices(result.data || [])
+    } catch (error) {
+      message.error('加载设备列表失败：' + (error.message || '未知错误'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDevices()
+  }, [groupName])
 
   const columns = [
     {
@@ -40,11 +34,11 @@ function GroupDeviceList({ groupName }) {
     },
     {
       title: '设备 ID',
-      dataIndex: 'id',
-      key: 'id'
+      dataIndex: 'deviceId',
+      key: 'deviceId'
     },
     {
-      title: '设备 ip',
+      title: '设备 IP',
       dataIndex: 'deviceIp',
       key: 'deviceIp'
     },
@@ -75,7 +69,7 @@ function GroupDeviceList({ groupName }) {
         <Space>
           <Popconfirm
             title="确定删除该设备吗？"
-            onConfirm={() => handleDelete(record.id)}
+            onConfirm={() => handleDelete(record.deviceId)}
             okText="确定"
             cancelText="取消"
           >
@@ -84,9 +78,16 @@ function GroupDeviceList({ groupName }) {
             </Button>
           </Popconfirm>
           {record.status === 'online' && (
-            <Button size="small" icon={<ExclamationCircleOutlined />}>
-              移除可用队列
-            </Button>
+            <Popconfirm
+              title="确定将该设备移出可用队列吗？"
+              onConfirm={() => handleDisable(record.deviceId)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button size="small" icon={<ExclamationCircleOutlined />}>
+                移除可用
+              </Button>
+            </Popconfirm>
           )}
         </Space>
       )
@@ -94,13 +95,30 @@ function GroupDeviceList({ groupName }) {
   ]
 
   const filteredDevices = devices.filter((device) =>
-    device.id.toLowerCase().includes(searchText.toLowerCase()) ||
+    device.deviceId.toLowerCase().includes(searchText.toLowerCase()) ||
     device.deviceIp.toLowerCase().includes(searchText.toLowerCase())
   )
 
-  const handleDelete = (id) => {
-    // TODO: 调用 API 删除设备
-    message.success('设备删除成功')
+  const handleDelete = async (deviceId) => {
+    try {
+      await groupApi.deleteDevice({ groupName, deviceId })
+      message.success('设备删除成功')
+      loadDevices()
+      onRefresh && onRefresh()
+    } catch (error) {
+      message.error('删除设备失败：' + (error.message || '未知错误'))
+    }
+  }
+
+  const handleDisable = async (deviceId) => {
+    try {
+      await groupApi.disableDevice({ groupName, deviceId, disable: true })
+      message.success('设备已移出可用队列')
+      loadDevices()
+      onRefresh && onRefresh()
+    } catch (error) {
+      message.error('操作失败：' + (error.message || '未知错误'))
+    }
   }
 
   return (
@@ -118,7 +136,8 @@ function GroupDeviceList({ groupName }) {
       <Table
         columns={columns}
         dataSource={filteredDevices}
-        rowKey="id"
+        rowKey="deviceId"
+        loading={loading}
         pagination={{
           current: 1,
           pageSize: 10,

@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // SetupWebRoutes 设置 Web 管理界面路由
 func SetupWebRoutes(r *gin.Engine) {
+	// 创建认证中间件实例
+	authMiddleware := middleware.NewAuthMiddleware()
+
 	// 创建处理器实例
 	userHandler := NewUserHandler()
 	groupHandler := NewGroupHandler()
@@ -13,8 +17,9 @@ func SetupWebRoutes(r *gin.Engine) {
 	anonymousHandler := NewAnonymousGroupHandler()
 	metricHandler := NewMetricHandler()
 
-	// API 路由组
+	// API 路由组（需要认证）
 	api := r.Group("/api")
+	api.Use(authMiddleware.Authenticate()) // 应用认证中间件
 	{
 		// 用户管理
 		users := api.Group("/users")
@@ -43,7 +48,10 @@ func SetupWebRoutes(r *gin.Engine) {
 			groups.PUT("/qps", groupHandler.UpdateQps)
 			groups.GET("/:groupName/devices", groupHandler.GetDevices)
 			groups.DELETE("/devices", groupHandler.DeleteDevice)
+			groups.PUT("/devices/disable", groupHandler.DisableDevice)
 			groups.GET("/:groupName/actions", groupHandler.GetActions)
+			groups.POST("/actions", groupHandler.AddAction)
+			groups.DELETE("/actions", groupHandler.DeleteAction)
 		}
 
 		// 匿名分组

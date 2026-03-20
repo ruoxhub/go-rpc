@@ -1,26 +1,40 @@
-import { useState } from 'react'
-import { Table, Input, Button, Space, Popconfirm, message, Tag } from 'antd'
+import { useState, useEffect } from 'react'
+import { Table, Input, Button, Space, Popconfirm, message, Tag, Modal, Form, InputNumber } from 'antd'
 import { SearchOutlined, PlusOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
-
-// 模拟数据
-const mockGroups = [
-  {
-    id: 1,
-    groupName: 'github',
-    userName: 'ruoxing',
-    quotaQpsGroup: 10,
-    quotaQpsPerDevice: 100,
-    createTime: '2026-03-19T19:44:01',
-    availableClients: 1,
-    disabledClients: 0
-  }
-]
+import { groupApi } from '../utils/api'
 
 function GroupList() {
   const navigate = useNavigate()
-  const [groups] = useState(mockGroups)
+  const [groups, setGroups] = useState([])
+  const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
+  const [createModalVisible, setCreateModalVisible] = useState(false)
+  const [createForm] = Form.useForm()
+
+  // 加载分组列表
+  const loadGroups = async () => {
+    setLoading(true)
+    try {
+      const result = await groupApi.list()
+      setGroups(result.data || [])
+    } catch (error) {
+      // 如果是 401 错误，清除 token 并重定向到登录页
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        localStorage.removeItem('api_token')
+        localStorage.removeItem('login_token')
+        window.location.href = '/login'
+        return
+      }
+      message.error('加载分组列表失败：' + (error.message || '未知错误'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadGroups()
+  }, [])
 
   const columns = [
     {
@@ -51,12 +65,14 @@ function GroupList() {
     {
       title: '可用客户端',
       dataIndex: 'availableClients',
-      key: 'availableClients'
+      key: 'availableClients',
+      render: (count) => <Tag color="green">{count}</Tag>
     },
     {
       title: '禁用客户端',
       dataIndex: 'disabledClients',
-      key: 'disabledClients'
+      key: 'disabledClients',
+      render: (count) => <Tag color="red">{count}</Tag>
     },
     {
       title: '操作',
@@ -72,7 +88,7 @@ function GroupList() {
           </Button>
           <Popconfirm
             title="确定删除该分组吗？"
-            onConfirm={() => handleDelete(record.id)}
+            onConfirm={() => handleDelete(record)}
             okText="确定"
             cancelText="取消"
           >
@@ -90,14 +106,47 @@ function GroupList() {
     group.userName.toLowerCase().includes(searchText.toLowerCase())
   )
 
-  const handleDelete = (id) => {
-    // TODO: 调用 API 删除分组
-    message.success('分组删除成功')
+  const handleDelete = async (record) => {
+    try {
+      await groupApi.delete({ groupName: record.groupName })
+      message.success('分组删除成功')
+      loadGroups()
+    } catch (error) {
+      message.error('删除分组失败：' + (error.message || '未知错误'))
+    }
   }
 
   const handleCreateGroup = () => {
-    // TODO: 打开创建分组对话框
-    message.info('创建分组功能待实现')
+    setCreateModalVisible(true)
+    createForm.resetFields()
+  }
+
+  const handleCreateModalOk = async () => {
+    try {
+      const values = await createForm.validateFields()
+      await groupApi.create({
+        groupName: values.groupName,
+        quotaQpsGroup: values.quotaQpsGroup || 100,
+        quotaQpsPerDevice: values.quotaQpsPerDevice || -1
+      })
+      message.success('分组创建成功')
+      setCreateModalVisible(false)
+      loadGroups()
+    } catch (error) {
+      if (error.response?.status === 409) {
+        message.error('分组名称已存在')
+      } else if (error.errors) {
+        // 表单验证错误
+        return
+      } else {
+        message.error('创建分组失败：' + (error.message || '未知错误'))
+      }
+    }
+  }
+
+  const handleCreateModalCancel = () => {
+    setCreateModalVisible(false)
+    createForm.resetFields()
   }
 
   return (
@@ -123,6 +172,7 @@ function GroupList() {
         columns={columns}
         dataSource={filteredGroups}
         rowKey="id"
+        loading={loading}
         pagination={{
           current: 1,
           pageSize: 10,
@@ -131,6 +181,39 @@ function GroupList() {
           showTotal: (total) => `共 ${total} 条`
         }}
       />
+
+      <Modal
+        title="创建分组"
+        open={createModalVisible}
+        onOk={handleCreateModalOk}
+        onCancel={handleCreateModalCancel}
+        okText="确定"
+        cancelText="取消"
+      >
+        <Form form={createForm} layout="vertical" initialValues={{ quotaQpsGroup: 100, quotaQpsPerDevice: -1 }}>
+          <Form.Item
+            name="groupName"
+            label="分组名称"
+            rules={[{ required: true, message: '请输入分组名称' }]}
+          >
+            <Input placeholder="请输入分组名称" />
+          </Form.Item>
+          <Form.Item
+            name="quotaQpsGroup"
+            label="分组 QPS 限制"
+            rules={[{ required: true, message: '请输入 QPS 限制' }]}
+          >
+            <InputNumber min={1} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="quotaQpsPerDevice"
+            label="设备 QPS 限制"
+            tooltip="设置为 -1 表示不限制"
+          >
+            <InputNumber min={-1} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   )
 }
