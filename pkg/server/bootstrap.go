@@ -17,6 +17,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
 	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
@@ -57,6 +58,7 @@ type Server struct {
 	wsHandler      *websocket.Handler
 	timeoutManager *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
+	alertEvaluator   *alert.Evaluator
 }
 
 // NewServer creates a new Server
@@ -143,6 +145,12 @@ func (s *Server) Start() error {
 
 	// Initialize metrics collector (flush interval: 1 minute)
 	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
+
+	// Initialize alert evaluator (eval interval: 1 minute)
+	metricsReader := alert.NewDefaultMetricsReader()
+	s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
+	// Start alert evaluator after database is initialized
+	s.alertEvaluator.Start(context.Background())
 
 	// Create HTTP server with gin
 	mode := gin.ReleaseMode
@@ -327,6 +335,11 @@ func (s *Server) Shutdown() {
 	// Shutdown WebSocket handler
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
+	}
+
+	// Shutdown alert evaluator
+	if s.alertEvaluator != nil {
+		s.alertEvaluator.Stop()
 	}
 
 	// Cleanup all clients
