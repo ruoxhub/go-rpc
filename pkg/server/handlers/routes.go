@@ -76,6 +76,7 @@ func SetupWebRoutes(r *gin.Engine) {
 			metrics.GET("", metricHandler.GetMetrics)
 			metrics.GET("/list", metricHandler.GetMetricList)
 			metrics.GET("/dashboard", metricHandler.GetDashboardData)
+			metrics.GET("/latency/percentiles", metricHandler.GetLatencyPercentiles)
 		}
 
 		// 追踪查询

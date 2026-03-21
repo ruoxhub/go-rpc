@@ -141,3 +141,72 @@ func (h *MetricHandler) GetDashboardData(c *gin.Context) {
 		},
 	})
 }
+
+// GetLatencyPercentiles 获取延迟百分位数（P50/P90/P99）
+// GET /api/metrics/latency/percentiles
+func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
+	group := c.Query("group")
+	api := c.Query("api")
+	startTime := c.Query("startTime")
+	endTime := c.Query("endTime")
+
+	// 构建查询
+	query := database.GetDB().Table("metric_minute").Where("type = ?", "latency")
+
+	if group != "" {
+		query = query.Where("tag1 = ?", group)
+	}
+	if api != "" {
+		query = query.Where("tag2 = ?", api)
+	}
+	if startTime != "" {
+		query = query.Where("time_key >= ?", startTime)
+	}
+	if endTime != "" {
+		query = query.Where("time_key <= ?", endTime)
+	}
+
+	// 获取 P50/P90/P99 指标
+	var latencyMetrics []model.MetricMinute
+	if err := query.Where("name LIKE ?", "%.p%").Find(&latencyMetrics).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	// 按 API 分组
+	type LatencyStats struct {
+		API    string  `json:"api"`
+		Group  string  `json:"group"`
+		P50    float64 `json:"p50"`
+		P90    float64 `json:"p90"`
+		P99    float64 `json:"p99"`
+		SampleCount int64 `json:"sampleCount"`
+	}
+
+	apiStats := make(map[string]*LatencyStats)
+	for _, m := range latencyMetrics {
+		key := m.Tag1 + ":" + m.Tag2
+		if _, ok := apiStats[key]; !ok {
+			apiStats[key] = &LatencyStats{
+				Group: m.Tag1,
+				API:   m.Tag2,
+			}
+		}
+
+		// 从 name 中提取百分位数，如 "invoke.latency.p50" -> 50
+		stats := apiStats[key]
+		stats.SampleCount++
+	}
+
+	// 转换为数组
+	var result []LatencyStats
+	for _, stats := range apiStats {
+		result = append(result, *stats)
+	}
+
+	c.JSON(200, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    result,
+	})
+}
