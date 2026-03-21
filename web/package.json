@@ -10,6 +10,7 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@ant-design/charts": "^2.6.7",
     "@ant-design/icons": "^5.4.0",
     "ahooks": "^3.8.0",
     "antd": "^5.20.0",

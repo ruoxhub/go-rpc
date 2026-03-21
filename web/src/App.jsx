@@ -5,7 +5,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import GroupList from './pages/GroupList'
 import AnonymousGroup from './pages/AnonymousGroup'
-import Monitor from './pages/Monitor'
+import MonitorDashboard from './pages/MonitorDashboard'
 import UserList from './pages/UserList'
 import SystemPanel from './pages/SystemPanel'
 import GroupDetail from './pages/GroupDetail'
@@ -35,7 +35,7 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="groups" element={<GroupList />} />
           <Route path="anonymous-groups" element={<AnonymousGroup />} />
-          <Route path="monitor" element={<Monitor />} />
+          <Route path="monitor" element={<MonitorDashboard />} />
           <Route path="users" element={<UserList />} />
           <Route path="system" element={<SystemPanel />} />
           <Route path="group/:groupName" element={<GroupDetail />} />
