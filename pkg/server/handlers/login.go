@@ -8,6 +8,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 )
 
 // LoginRequest 登录请求
@@ -30,7 +31,16 @@ func HandleLogin(c *gin.Context) {
 
 	// 查询用户
 	var user model.UserInfo
-	if err := database.GetDB().Where("user_name = ? AND password = ?", req.UserName, req.Password).First(&user).Error; err != nil {
+	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&user).Error; err != nil {
+		c.JSON(401, gin.H{
+			"status":  -1,
+			"message": "用户名或密码错误",
+		})
+		return
+	}
+
+	// 验证密码
+	if !password.CheckPassword(req.Password, user.Password) {
 		c.JSON(401, gin.H{
 			"status":  -1,
 			"message": "用户名或密码错误",
@@ -43,20 +53,19 @@ func HandleLogin(c *gin.Context) {
 
 	// 返回用户信息（包含 loginToken 和 apiToken）
 	c.JSON(200, gin.H{
-		"status": 0,
+		"status":  0,
 		"message": "success",
 		"data": gin.H{
-			"id":           user.ID,
-			"userName":     user.UserName,
-			"password":     user.Password, // 保留明文密码（兼容旧版）
-			"lastActive":   user.LastActive.Format("2006-01-02T15:04:05"),
-			"createTime":   user.CreateTime.Format("2006-01-02T15:04:05"),
-			"loginToken":   user.LoginToken,
-			"apiToken":     user.ApiToken,
-			"isAdmin":      user.IsAdmin,
-			"updateTime":   user.UpdateTime.Format("2006-01-02T15:04:05"),
-			"permission":   user.Permission,
-			"quotaQps":     user.QuotaQps,
+			"id":         user.ID,
+			"userName":   user.UserName,
+			"lastActive": user.LastActive.Format("2006-01-02T15:04:05"),
+			"createTime": user.CreateTime.Format("2006-01-02T15:04:05"),
+			"loginToken": user.LoginToken,
+			"apiToken":   user.ApiToken,
+			"isAdmin":    user.IsAdmin,
+			"updateTime": user.UpdateTime.Format("2006-01-02T15:04:05"),
+			"permission": user.Permission,
+			"quotaQps":   user.QuotaQps,
 		},
 	})
 }
@@ -87,7 +96,7 @@ func HandleGetUserInfo(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"status": 0,
+		"status":  0,
 		"message": "success",
 		"data": gin.H{
 			"id":       user.ID,
@@ -197,9 +206,20 @@ func HandleRegister(c *gin.Context) {
 	}
 
 	now := time.Now()
+
+	// 哈希密码
+	hashedPassword, err := password.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  -1,
+			"message": "密码加密失败",
+		})
+		return
+	}
+
 	user := model.UserInfo{
 		UserName:   req.UserName,
-		Password:   req.Password,
+		Password:   hashedPassword,
 		QuotaQps:   100, // 默认 QPS
 		IsAdmin:    false,
 		ApiToken:   uuid.New().String(),
@@ -239,9 +259,20 @@ func HandleUserAdd(c *gin.Context) {
 	}
 
 	now := time.Now()
+
+	// 哈希密码
+	hashedPassword, err := password.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  -1,
+			"message": "密码加密失败",
+		})
+		return
+	}
+
 	user := model.UserInfo{
 		UserName:   req.UserName,
-		Password:   req.Password,
+		Password:   hashedPassword,
 		QuotaQps:   req.QuotaQps,
 		IsAdmin:    req.IsAdmin,
 		ApiToken:   uuid.New().String(),

@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -106,9 +107,16 @@ func createDefaultAdminUser() error {
 	DB.Model(&model.UserInfo{}).Where("user_name = ?", "admin").Count(&count)
 	if count == 0 {
 		now := time.Now()
+
+		// 哈希默认密码
+		hashedPassword, err := password.HashPassword("admin123")
+		if err != nil {
+			return err
+		}
+
 		adminUser := model.UserInfo{
 			UserName:   "admin",
-			Password:   "admin123",
+			Password:   hashedPassword,
 			IsAdmin:    true,
 			QuotaQps:   1000,
 			ApiToken:   "admin-token-" + uuid.New().String(),
