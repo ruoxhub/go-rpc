@@ -12,6 +12,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
 	ws "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
@@ -20,6 +21,7 @@ type APIHandler struct {
 	clientManager  clientManagerIface
 	wsHandler      *ws.Handler
 	timeoutManager *forwarder.TimeoutManager
+	metricsCollector metrics.MetricCollector
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -54,11 +56,12 @@ type GetCookieRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector) *APIHandler {
 	return &APIHandler{
 		clientManager:  manager,
 		wsHandler:      wsHandler,
 		timeoutManager: timeoutMgr,
+		metricsCollector: metricsCollector,
 	}
 }
 
@@ -101,6 +104,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 // HandleInvoke handles /business/invoke request
 // POST/GET /business/invoke
 func (h *APIHandler) HandleInvoke(c *gin.Context) {
+	startTime := time.Now() // 记录开始时间用于延迟统计
 	var req InvokeRequest
 
 	// 根据请求方法绑定数据
@@ -229,6 +233,11 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		h.timeoutManager.Remove(sequence)
 		// Mark client failure on timeout
 		targetClient.MarkFailure()
+		// 记录超时指标
+		if h.metricsCollector != nil {
+			h.metricsCollector.Incr("invoke.total", map[string]string{"group": req.Group, "api": req.Action, "status": "timeout"}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": req.Group, "api": req.Action}, float64(time.Since(startTime).Milliseconds()))
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
 			"message": "Request timeout",
@@ -240,6 +249,16 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			targetClient.MarkSuccess()
 		} else {
 			targetClient.MarkFailure()
+		}
+
+		// 记录调用指标
+		if h.metricsCollector != nil {
+			status := "success"
+			if resp.Status < 0 || resp.Error != "" {
+				status = "failure"
+			}
+			h.metricsCollector.Incr("invoke.total", map[string]string{"group": req.Group, "api": req.Action, "status": status}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": req.Group, "api": req.Action}, float64(time.Since(startTime).Milliseconds()))
 		}
 
 		if resp.Error != "" {

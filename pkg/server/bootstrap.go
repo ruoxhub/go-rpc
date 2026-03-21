@@ -139,7 +139,7 @@ func (s *Server) Start() error {
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 
 	// Initialize API handler with WebSocket handler and timeout manager
-	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager)
+	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector)
 
 	// Initialize metrics collector (flush interval: 1 minute)
 	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
