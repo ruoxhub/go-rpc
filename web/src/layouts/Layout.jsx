@@ -8,7 +8,8 @@ import {
   LineChartOutlined,
   UserOutlined,
   SettingOutlined,
-  ArrowLeftOutlined
+  ArrowLeftOutlined,
+  ApartmentOutlined
 } from '@ant-design/icons'
 
 const { Sider, Content, Footer } = Layout
@@ -33,6 +34,11 @@ const menuItems = [
     key: '/monitor',
     icon: <LineChartOutlined />,
     label: '监控指标'
+  },
+  {
+    key: '/traces',
+    icon: <ApartmentOutlined />,
+    label: '调用追踪'
   },
   {
     key: '/users',

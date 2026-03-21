@@ -9,6 +9,8 @@ import Monitor from './pages/Monitor'
 import UserList from './pages/UserList'
 import SystemPanel from './pages/SystemPanel'
 import GroupDetail from './pages/GroupDetail'
+import TraceList from './pages/TraceList'
+import TraceDetail from './pages/TraceDetail'
 import AuthGuard from './components/AuthGuard'
 import './App.css'
 
@@ -37,6 +39,8 @@ function App() {
           <Route path="users" element={<UserList />} />
           <Route path="system" element={<SystemPanel />} />
           <Route path="group/:groupName" element={<GroupDetail />} />
+          <Route path="traces" element={<TraceList />} />
+          <Route path="trace/:traceId" element={<TraceDetail />} />
         </Route>
 
         {/* 兜底路由：未匹配的路径跳转到首页 */}
