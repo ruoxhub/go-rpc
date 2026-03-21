@@ -21,6 +21,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/handlers"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
@@ -168,6 +169,9 @@ func (s *Server) Start() error {
 
 	// Register routes using gin
 	s.registerRoutes()
+
+	// Apply trace middleware after routes are registered
+	s.httpServer.Use(middleware.TraceMiddleware())
 
 	// Create listener
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
