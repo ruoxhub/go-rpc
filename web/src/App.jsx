@@ -11,6 +11,8 @@ import SystemPanel from './pages/SystemPanel'
 import GroupDetail from './pages/GroupDetail'
 import TraceList from './pages/TraceList'
 import TraceDetail from './pages/TraceDetail'
+import AlertRules from './pages/AlertRules'
+import AlertHistory from './pages/AlertHistory'
 import AuthGuard from './components/AuthGuard'
 import './App.css'
 
@@ -41,6 +43,8 @@ function App() {
           <Route path="group/:groupName" element={<GroupDetail />} />
           <Route path="traces" element={<TraceList />} />
           <Route path="trace/:traceId" element={<TraceDetail />} />
+          <Route path="alerts" element={<AlertRules />} />
+          <Route path="alert-history" element={<AlertHistory />} />
         </Route>
 
         {/* 兜底路由：未匹配的路径跳转到首页 */}

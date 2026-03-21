@@ -9,7 +9,9 @@ import {
   UserOutlined,
   SettingOutlined,
   ArrowLeftOutlined,
-  ApartmentOutlined
+  ApartmentOutlined,
+  BellOutlined,
+  HistoryOutlined
 } from '@ant-design/icons'
 
 const { Sider, Content, Footer } = Layout
@@ -39,6 +41,16 @@ const menuItems = [
     key: '/traces',
     icon: <ApartmentOutlined />,
     label: '调用追踪'
+  },
+  {
+    key: '/alerts',
+    icon: <BellOutlined />,
+    label: '告警规则'
+  },
+  {
+    key: '/alert-history',
+    icon: <HistoryOutlined />,
+    label: '告警历史'
   },
   {
     key: '/users',
