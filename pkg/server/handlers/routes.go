@@ -16,6 +16,7 @@ func SetupWebRoutes(r *gin.Engine) {
 	sysConfigHandler := NewSysConfigHandler()
 	anonymousHandler := NewAnonymousGroupHandler()
 	metricHandler := NewMetricHandler()
+	traceHandler := NewTraceHandler()
 
 	// API 路由组（需要认证）
 	api := r.Group("/api")
@@ -75,6 +76,16 @@ func SetupWebRoutes(r *gin.Engine) {
 			metrics.GET("", metricHandler.GetMetrics)
 			metrics.GET("/list", metricHandler.GetMetricList)
 			metrics.GET("/dashboard", metricHandler.GetDashboardData)
+		}
+
+		// 追踪查询
+		traces := api.Group("/traces")
+		{
+			traces.GET("", traceHandler.GetTraces)
+			traces.GET("/stats", traceHandler.GetTraceStats)
+			traces.GET("/timeline", traceHandler.GetTraceTimeline)
+			traces.GET("/:traceId", traceHandler.GetTraceDetail)
+			traces.GET("/:traceId/extra", traceHandler.GetTraceExtraData)
 		}
 	}
 }
