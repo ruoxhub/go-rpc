@@ -1,6 +1,7 @@
 import axios from 'axios'
+import { message } from 'antd'
 
-// 创建两个 API 实例：一个用于 business 接口，一个用于管理 API
+// 创建三个 API 实例：business、管理 API、以及通用 API
 const businessApi = axios.create({
   baseURL: '/business',
   timeout: 30000,
@@ -18,55 +19,56 @@ const adminApi = axios.create({
   }
 })
 
-// 请求拦截器 - businessApi
-businessApi.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('api_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+// 通用 API 实例（用于追踪、告警等新功能）
+const apiClient = axios.create({
+  baseURL: '/api',
+  timeout: 30000,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+})
+
+// 统一的请求拦截器
+const setupRequestInterceptor = (apiInstance) => {
+  apiInstance.interceptors.request.use(
+    (config) => {
+      const token = localStorage.getItem('api_token')
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+      }
+      return config
+    },
+    (error) => {
+      return Promise.reject(error)
     }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+  )
+}
 
-// 请求拦截器 - adminApi
-adminApi.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('api_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+// 统一的响应拦截器
+const setupResponseInterceptor = (apiInstance) => {
+  apiInstance.interceptors.response.use(
+    (response) => {
+      return response.data
+    },
+    (error) => {
+      const errorMsg = error.response?.data?.message || error.message || '请求失败'
+      console.error('API Error:', errorMsg)
+      // 非静默请求显示错误提示
+      if (!error.config?.silent) {
+        message.error(errorMsg)
+      }
+      return Promise.reject(error)
     }
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
+  )
+}
 
-// 响应拦截器 - businessApi
-businessApi.interceptors.response.use(
-  (response) => {
-    return response.data
-  },
-  (error) => {
-    console.error('API Error:', error)
-    throw error
-  }
-)
-
-// 响应拦截器 - adminApi
-adminApi.interceptors.response.use(
-  (response) => {
-    return response.data
-  },
-  (error) => {
-    console.error('API Error:', error)
-    throw error
-  }
-)
+// 为所有实例设置拦截器
+setupRequestInterceptor(businessApi)
+setupResponseInterceptor(businessApi)
+setupRequestInterceptor(adminApi)
+setupResponseInterceptor(adminApi)
+setupRequestInterceptor(apiClient)
+setupResponseInterceptor(apiClient)
 
 // 分组管理 API
 export const groupApi = {
@@ -120,9 +122,31 @@ export const anonymousGroupApi = {
 
 // 监控指标 API
 export const metricApi = {
-  getMetrics: () => adminApi.get('/metrics'),
+  getMetrics: (params) => adminApi.get('/metrics', { params }),
   getMetricList: () => adminApi.get('/metrics/list'),
-  getDashboard: () => adminApi.get('/metrics/dashboard')
+  getDashboard: () => adminApi.get('/metrics/dashboard'),
+  getLatencyPercentiles: (params) => adminApi.get('/metrics/latency/percentiles', { params })
+}
+
+// 追踪查询 API
+export const traceApi = {
+  getTraces: (params) => apiClient.get('/traces', { params }),
+  getTraceDetail: (traceId) => apiClient.get(`/traces/${traceId}`),
+  getTraceStats: (params) => apiClient.get('/traces/stats', { params }),
+  getTraceTimeline: (params) => apiClient.get('/traces/timeline', { params }),
+  getTraceExtraData: (traceId) => apiClient.get(`/traces/${traceId}/extra`)
+}
+
+// 告警管理 API
+export const alertApi = {
+  // 告警规则
+  getRules: (params) => apiClient.get('/alerts/rules', { params }),
+  getRule: (id) => apiClient.get(`/alerts/rules/${id}`),
+  createRule: (data) => apiClient.post('/alerts/rules', data),
+  updateRule: (id, data) => apiClient.put(`/alerts/rules/${id}`, data),
+  deleteRule: (id) => apiClient.delete(`/alerts/rules/${id}`),
+  // 告警历史
+  getHistory: (params) => apiClient.get('/alerts/history', { params })
 }
 
 export default businessApi

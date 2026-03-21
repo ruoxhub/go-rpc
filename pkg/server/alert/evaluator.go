@@ -12,6 +12,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// 告警防抖时间常量（防止重复告警）
+const AlertDedupeWindow = 5 * time.Minute
+
 // Evaluator 告警评估引擎
 type Evaluator struct {
 	mu            sync.RWMutex
@@ -180,7 +183,7 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 	// 检查是否最近已触发过（防抖，5 分钟内不重复触发）
 	var recentCount int64
 	database.GetDB().Table("alert_history").
-		Where("rule_id = ? AND triggered_at > ?", time.Now().Add(-5*time.Minute)).
+		Where("rule_id = ? AND triggered_at > ?", time.Now().Add(-AlertDedupeWindow)).
 		Count(&recentCount)
 
 	if recentCount > 0 {

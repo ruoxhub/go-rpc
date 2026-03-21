@@ -1,11 +1,12 @@
 package handlers
 
 import (
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 )
 
 // MetricHandler 监控指标处理器
@@ -180,7 +181,6 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 		P50    float64 `json:"p50"`
 		P90    float64 `json:"p90"`
 		P99    float64 `json:"p99"`
-		SampleCount int64 `json:"sampleCount"`
 	}
 
 	apiStats := make(map[string]*LatencyStats)
@@ -193,9 +193,15 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 			}
 		}
 
-		// 从 name 中提取百分位数，如 "invoke.latency.p50" -> 50
+		// 从 name 中提取百分位数并赋值，如 "invoke.latency.p50" -> p50
 		stats := apiStats[key]
-		stats.SampleCount++
+		if strings.Contains(m.Name, ".p50") {
+			stats.P50 = m.Value
+		} else if strings.Contains(m.Name, ".p90") {
+			stats.P90 = m.Value
+		} else if strings.Contains(m.Name, ".p99") {
+			stats.P99 = m.Value
+		}
 	}
 
 	// 转换为数组

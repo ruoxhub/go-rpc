@@ -23,6 +23,29 @@ func NewAlertHandler(evaluator AlertEvaluator) *AlertHandler {
 	}
 }
 
+// isValidOperator 验证操作符是否合法
+func isValidOperator(op string) bool {
+	switch op {
+	case model.OpGreaterThan, model.OpLessThan, model.OpGreaterThanOrEqual,
+		model.OpLessThanOrEqual, model.OpEqual, model.OpNotEqual:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateAlertOperator 验证告警操作符
+func validateAlertOperator(c *gin.Context, op string) bool {
+	if !isValidOperator(op) {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "非法的操作符，应为：>, <, >=, <=, ==, !=",
+		})
+		return false
+	}
+	return true
+}
+
 // AlertRuleVO 告警规则 VO
 type AlertRuleVO struct {
 	ID          int64   `json:"id"`
@@ -59,16 +82,16 @@ type CreateAlertRuleRequest struct {
 // UpdateAlertRuleRequest 更新告警规则请求
 type UpdateAlertRuleRequest struct {
 	ID          int64   `json:"id" binding:"required"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Group       string  `json:"group"`
-	API         string  `json:"api"`
-	MetricName  string  `json:"metricName"`
-	Operator    string  `json:"operator"`
-	Threshold   float64 `json:"threshold"`
-	Window      int     `json:"window"`
-	WebhookURL  string  `json:"webhookUrl"`
-	Email       string  `json:"email"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Group       *string `json:"group"`
+	API         *string `json:"api"`
+	MetricName  *string `json:"metricName"`
+	Operator    *string `json:"operator"`
+	Threshold   *float64 `json:"threshold"`
+	Window      *int    `json:"window"`
+	WebhookURL  *string `json:"webhookUrl"`
+	Email       *string `json:"email"`
 	Enabled     *bool   `json:"enabled"`
 }
 
@@ -178,6 +201,11 @@ func (h *AlertHandler) CreateAlertRule(c *gin.Context) {
 		return
 	}
 
+	// 验证操作符
+	if !validateAlertOperator(c, req.Operator) {
+		return
+	}
+
 	rule := model.AlertRule{
 		Name:        req.Name,
 		Description: req.Description,
@@ -220,42 +248,47 @@ func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
 		return
 	}
 
+	// 验证操作符（如果提供了）
+	if req.Operator != nil && !validateAlertOperator(c, *req.Operator) {
+		return
+	}
+
 	var rule model.AlertRule
 	if err := database.GetDB().First(&rule, id).Error; err != nil {
 		c.JSON(404, gin.H{"code": 404, "message": "规则不存在"})
 		return
 	}
 
-	// 更新字段
-	if req.Name != "" {
-		rule.Name = req.Name
+	// 更新字段（指针字段允许清空）
+	if req.Name != nil {
+		rule.Name = *req.Name
 	}
-	if req.Description != "" {
-		rule.Description = req.Description
+	if req.Description != nil {
+		rule.Description = *req.Description
 	}
-	if req.Group != "" {
-		rule.Group = req.Group
+	if req.Group != nil {
+		rule.Group = *req.Group
 	}
-	if req.API != "" {
-		rule.API = req.API
+	if req.API != nil {
+		rule.API = *req.API
 	}
-	if req.MetricName != "" {
-		rule.MetricName = req.MetricName
+	if req.MetricName != nil {
+		rule.MetricName = *req.MetricName
 	}
-	if req.Operator != "" {
-		rule.Operator = req.Operator
+	if req.Operator != nil {
+		rule.Operator = *req.Operator
 	}
-	if req.Threshold > 0 {
-		rule.Threshold = req.Threshold
+	if req.Threshold != nil {
+		rule.Threshold = *req.Threshold
 	}
-	if req.Window > 0 {
-		rule.Window = req.Window
+	if req.Window != nil {
+		rule.Window = *req.Window
 	}
-	if req.WebhookURL != "" {
-		rule.WebhookURL = req.WebhookURL
+	if req.WebhookURL != nil {
+		rule.WebhookURL = *req.WebhookURL
 	}
-	if req.Email != "" {
-		rule.Email = req.Email
+	if req.Email != nil {
+		rule.Email = *req.Email
 	}
 	if req.Enabled != nil {
 		rule.Enabled = *req.Enabled
