@@ -183,6 +183,9 @@ func (s *Server) Start() error {
 	// Register routes using gin
 	s.registerRoutes()
 
+	// Setup Web management routes with /api prefix
+	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator)
+
 	// Apply trace middleware after routes are registered
 	s.httpServer.Use(middleware.TraceMiddleware())
 
@@ -252,7 +255,7 @@ func (s *Server) registerRoutes() {
 	}
 
 	// Setup Web management routes with /api prefix
-	handlers.SetupWebRoutes(s.httpServer.Engine())
+	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator)
 
 	// Also add /sekiro-api prefix for compatibility with Java Sekiro frontend
 	// This maps /sekiro-api/xxx to the same handlers as /api/xxx

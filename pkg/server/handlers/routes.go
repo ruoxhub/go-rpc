@@ -2,11 +2,12 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
 	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // SetupWebRoutes 设置 Web 管理界面路由
-func SetupWebRoutes(r *gin.Engine) {
+func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator) {
 	// 创建认证中间件实例
 	authMiddleware := middleware.NewAuthMiddleware()
 
@@ -17,6 +18,7 @@ func SetupWebRoutes(r *gin.Engine) {
 	anonymousHandler := NewAnonymousGroupHandler()
 	metricHandler := NewMetricHandler()
 	traceHandler := NewTraceHandler()
+	alertHandler := NewAlertHandler(alertEvaluator)
 
 	// API 路由组（需要认证）
 	api := r.Group("/api")
@@ -87,6 +89,17 @@ func SetupWebRoutes(r *gin.Engine) {
 			traces.GET("/timeline", traceHandler.GetTraceTimeline)
 			traces.GET("/:traceId", traceHandler.GetTraceDetail)
 			traces.GET("/:traceId/extra", traceHandler.GetTraceExtraData)
+		}
+
+		// 告警管理
+		alerts := api.Group("/alerts")
+		{
+			alerts.GET("/rules", alertHandler.GetAlertRules)
+			alerts.GET("/rules/:id", alertHandler.GetAlertRule)
+			alerts.POST("/rules", alertHandler.CreateAlertRule)
+			alerts.PUT("/rules/:id", alertHandler.UpdateAlertRule)
+			alerts.DELETE("/rules/:id", alertHandler.DeleteAlertRule)
+			alerts.GET("/history", alertHandler.GetAlertHistory)
 		}
 	}
 }
