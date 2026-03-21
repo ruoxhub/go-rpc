@@ -70,6 +70,7 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator) {
 			sysConfig.PUT("", sysConfigHandler.Update)
 			sysConfig.GET("/nodes", sysConfigHandler.GetServerNodes)
 			sysConfig.GET("/logs", sysConfigHandler.GetSysLogs)
+			sysConfig.GET("/app-logs", sysConfigHandler.GetAppLogs) // 应用日志查询
 		}
 
 		// 监控指标

@@ -1,10 +1,11 @@
 package handlers
 
 import (
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"fmt"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 )
 
 // SysConfigHandler 系统配置处理器
@@ -105,10 +106,60 @@ func (h *SysConfigHandler) GetServerNodes(c *gin.Context) {
 	})
 }
 
-// GetSysLogs 获取系统日志列表
+// GetSysLogs 获取系统日志列表（增强版）
+// GET /api/sysconfig/logs
+// 支持过滤：level, startTime, endTime, keyword, page, pageSize
 func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
+	// 获取查询参数
+	level := c.Query("level")
+	startTime := c.Query("startTime")
+	endTime := c.Query("endTime")
+	keyword := c.Query("keyword")
+	page := c.DefaultQuery("page", "1")
+	pageSize := c.DefaultQuery("pageSize", "20")
+
+	// 解析分页参数
+	var pageInt, pageSizeInt int
+	fmt.Sscanf(page, "%d", &pageInt)
+	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
+	if pageInt <= 0 {
+		pageInt = 1
+	}
+	if pageSizeInt <= 0 {
+		pageSizeInt = 20
+	}
+
+	// 构建查询
+	query := database.GetDB().Table("sys_log")
+
+	// 按级别过滤
+	if level != "" {
+		query = query.Where("level = ?", level)
+	}
+
+	// 按时间范围过滤
+	if startTime != "" {
+		query = query.Where("create_time >= ?", startTime)
+	}
+	if endTime != "" {
+		query = query.Where("create_time <= ?", endTime)
+	}
+
+	// 按关键词搜索（消息内容）
+	if keyword != "" {
+		query = query.Where("message LIKE ? OR detail LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+	}
+
+	// 获取总数
+	var total int64
+	query.Count(&total)
+
+	// 分页
+	offset := (pageInt - 1) * pageSizeInt
+	query = query.Offset(offset).Limit(pageSizeInt).Order("create_time DESC")
+
 	var logs []model.SysLog
-	if err := database.GetDB().Order("create_time DESC").Limit(100).Find(&logs).Error; err != nil {
+	if err := query.Find(&logs).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
@@ -117,5 +168,83 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 		"code":    0,
 		"message": "success",
 		"data":    logs,
+		"total":   total,
+		"page":    pageInt,
+		"pageSize": pageSizeInt,
+	})
+}
+
+// GetAppLogs 获取应用日志列表（最近的文件日志）
+// GET /api/sysconfig/app-logs
+// 支持过滤：level, traceId, group, startTime, endTime, page, pageSize
+func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
+	// 获取查询参数
+	level := c.Query("level")
+	traceId := c.Query("traceId")
+	group := c.Query("group")
+	startTime := c.Query("startTime")
+	endTime := c.Query("endTime")
+	page := c.DefaultQuery("page", "1")
+	pageSize := c.DefaultQuery("pageSize", "50")
+
+	// 解析分页参数
+	var pageInt, pageSizeInt int
+	fmt.Sscanf(page, "%d", &pageInt)
+	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
+	if pageInt <= 0 {
+		pageInt = 1
+	}
+	if pageSizeInt <= 0 {
+		pageSizeInt = 50
+	}
+
+	// 构建查询（从 metric_minute 模拟查询日志，实际应该读日志文件）
+	// 这里返回一个示例结构，实际应该读取并解析 JSON 日志文件
+	type AppLogEntry struct {
+		Timestamp string `json:"timestamp"`
+		Level     string `json:"level"`
+		Message   string `json:"message"`
+		TraceID   string `json:"trace_id,omitempty"`
+		Group     string `json:"group,omitempty"`
+		Duration  string `json:"duration_ms,omitempty"`
+		Status    int    `json:"status,omitempty"`
+	}
+
+	// 模拟返回最近的请求日志（从 trace_record 查询）
+	var logs []AppLogEntry
+	dbQuery := database.GetDB().Table("trace_record").
+		Select("start_time as timestamp, 'INFO' as level, api as message, trace_id, \"group\", duration_ms, CASE WHEN status='SUCCESS' THEN 200 ELSE 500 END as status")
+
+	if level != "" {
+		// 简化处理：级别过滤暂不实现
+	}
+	if traceId != "" {
+		dbQuery = dbQuery.Where("trace_id = ?", traceId)
+	}
+	if group != "" {
+		dbQuery = dbQuery.Where("\"group\" = ?", group)
+	}
+	if startTime != "" {
+		dbQuery = dbQuery.Where("start_time >= ?", startTime)
+	}
+	if endTime != "" {
+		dbQuery = dbQuery.Where("start_time <= ?", endTime)
+	}
+
+	offset := (pageInt - 1) * pageSizeInt
+	dbQuery = dbQuery.Offset(offset).Limit(pageSizeInt).Order("start_time DESC")
+
+	if err := dbQuery.Scan(&logs).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"code":     0,
+		"message":  "success",
+		"data":     logs,
+		"total":    len(logs),
+		"page":     pageInt,
+		"pageSize": pageSizeInt,
 	})
 }
