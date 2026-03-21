@@ -22,12 +22,23 @@ func InitLogger(debug bool) {
 		config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	}
 
-	config.Encoding = "console"
-	config.EncoderConfig.TimeKey = "time"
+	// 使用 JSON 编码以支持结构化日志
+	config.Encoding = "json"
+	config.EncoderConfig.TimeKey = "timestamp"
 	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	config.EncoderConfig.LevelKey = "level"
+	config.EncoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
+	config.EncoderConfig.MessageKey = "message"
+	config.EncoderConfig.NameKey = "logger"
+	config.EncoderConfig.CallerKey = "caller"
+	config.EncoderConfig.FunctionKey = zapcore.OmitKey
+	config.EncoderConfig.StacktraceKey = "stacktrace"
 
-	logger, err := config.Build()
+	// 输出到 stdout 和 stderr
+	config.OutputPaths = []string{"stdout"}
+	config.ErrorOutputPaths = []string{"stderr"}
+
+	logger, err := config.Build(zap.AddCaller(), zap.AddCallerSkip(1))
 	if err != nil {
 		panic(err)
 	}
@@ -117,4 +128,53 @@ func SetEnabled(enabled bool) {
 		logger, _ := config.Build()
 		globalLogger = logger.Sugar()
 	}
+}
+
+// WithFields returns a logger with the given fields
+func WithFields(fields map[string]interface{}) *zap.SugaredLogger {
+	var flatFields []interface{}
+	for k, v := range fields {
+		flatFields = append(flatFields, k, v)
+	}
+	return globalLogger.With(flatFields...)
+}
+
+// Debugw logs debug message with structured fields
+func Debugw(msg string, keysAndValues ...interface{}) {
+	globalLogger.Debugw(msg, keysAndValues...)
+}
+
+// Infow logs info message with structured fields
+func Infow(msg string, keysAndValues ...interface{}) {
+	globalLogger.Infow(msg, keysAndValues...)
+}
+
+// Warnw logs warning message with structured fields
+func Warnw(msg string, keysAndValues ...interface{}) {
+	globalLogger.Warnw(msg, keysAndValues...)
+}
+
+// Errorw logs error message with structured fields
+func Errorw(msg string, keysAndValues ...interface{}) {
+	globalLogger.Errorw(msg, keysAndValues...)
+}
+
+// WithTraceID returns a logger with trace ID
+func WithTraceID(traceID string) *zap.SugaredLogger {
+	return globalLogger.With(zap.String("trace_id", traceID))
+}
+
+// WithSpanID returns a logger with span ID
+func WithSpanID(spanID string) *zap.SugaredLogger {
+	return globalLogger.With(zap.String("span_id", spanID))
+}
+
+// WithGroup returns a logger with group field
+func WithGroup(group string) *zap.SugaredLogger {
+	return globalLogger.With(zap.String("group", group))
+}
+
+// WithDeviceID returns a logger with device ID field
+func WithDeviceID(deviceID string) *zap.SugaredLogger {
+	return globalLogger.With(zap.String("device_id", deviceID))
 }

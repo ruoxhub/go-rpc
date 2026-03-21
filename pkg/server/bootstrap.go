@@ -178,6 +178,7 @@ func (s *Server) Start() error {
 	s.httpServer.Use(
 		ginCorsMiddleware(corsEnabled),
 		ginRouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
+		middleware.LoggingMiddleware(), // 结构化日志中间件
 	)
 
 	// Register routes using gin
