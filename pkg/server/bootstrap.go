@@ -18,6 +18,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
+	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/handlers"
@@ -55,6 +56,7 @@ type Server struct {
 	apiHandler     *api.APIHandler
 	wsHandler      *websocket.Handler
 	timeoutManager *forwarder.TimeoutManager
+	metricsCollector metrics.MetricCollector
 }
 
 // NewServer creates a new Server
@@ -138,6 +140,9 @@ func (s *Server) Start() error {
 
 	// Initialize API handler with WebSocket handler and timeout manager
 	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager)
+
+	// Initialize metrics collector (flush interval: 1 minute)
+	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
 
 	// Create HTTP server with gin
 	mode := gin.ReleaseMode
@@ -333,6 +338,11 @@ func (s *Server) Shutdown() {
 // GetClientManager returns the client manager
 func (s *Server) GetClientManager() *client.ClientManager {
 	return s.clientManager
+}
+
+// GetMetricsCollector returns the metrics collector
+func (s *Server) GetMetricsCollector() metrics.MetricCollector {
+	return s.metricsCollector
 }
 
 // ginCorsMiddleware returns a gin CORS middleware
