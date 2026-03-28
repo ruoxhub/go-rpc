@@ -191,3 +191,110 @@ INSERT INTO sys_config (config_comment, config_key, config_value) VALUES
 ('为配置的 host 自动生成 ssl 证书', 'sekiro.autoGenSSLCertificateHostList', ''),
 ('开启 443 服务端口', 'sekiro.open443Website', 'false'),
 ('空转调用保护', 'sekiro.defendIdleInvoke', 'true');
+
+-- 调用链路追踪表
+CREATE TABLE IF NOT EXISTS trace_record (
+    id BIGSERIAL PRIMARY KEY,
+    trace_id VARCHAR(64) NOT NULL,
+    span_id VARCHAR(64) NOT NULL,
+    parent_span_id VARCHAR(64),
+    "group" VARCHAR(64),
+    device_id VARCHAR(128),
+    api VARCHAR(256),
+    caller VARCHAR(128),
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP NOT NULL,
+    duration_ms BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    error_message TEXT,
+    extra_data TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 索引
+CREATE INDEX IF NOT EXISTS idx_trace_record_trace_id ON trace_record(trace_id);
+CREATE INDEX IF NOT EXISTS idx_trace_record_group ON trace_record("group");
+CREATE INDEX IF NOT EXISTS idx_trace_record_start_time ON trace_record(start_time);
+CREATE INDEX IF NOT EXISTS idx_trace_record_status ON trace_record(status);
+CREATE INDEX IF NOT EXISTS idx_trace_record_api ON trace_record(api);
+
+-- 注释
+COMMENT ON TABLE trace_record IS '调用链路追踪记录';
+COMMENT ON COLUMN trace_record.trace_id IS '追踪 ID';
+COMMENT ON COLUMN trace_record.span_id IS 'Span ID';
+COMMENT ON COLUMN trace_record.parent_span_id IS '父 Span ID';
+COMMENT ON COLUMN trace_record.duration_ms IS '耗时 (毫秒)';
+COMMENT ON COLUMN trace_record.status IS '状态：SUCCESS, FAILURE';
+
+-- 告警规则表
+CREATE TABLE IF NOT EXISTS alert_rule (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(128) NOT NULL UNIQUE,
+    description VARCHAR(512),
+    "group" VARCHAR(64),
+    api VARCHAR(256),
+    metric_name VARCHAR(128) NOT NULL,
+    operator VARCHAR(8) NOT NULL,
+    threshold DOUBLE PRECISION NOT NULL,
+    window INTEGER NOT NULL,
+    webhook_url VARCHAR(512),
+    email VARCHAR(256),
+    enabled BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 告警规则表索引
+CREATE INDEX idx_alert_rule_group ON alert_rule("group");
+CREATE INDEX idx_alert_rule_enabled ON alert_rule(enabled);
+CREATE INDEX idx_alert_rule_metric ON alert_rule(metric_name);
+
+-- 告警历史表
+CREATE TABLE IF NOT EXISTS alert_history (
+    id BIGSERIAL PRIMARY KEY,
+    rule_id BIGINT NOT NULL,
+    rule_name VARCHAR(128) NOT NULL,
+    "group" VARCHAR(64),
+    api VARCHAR(256),
+    metric_name VARCHAR(128) NOT NULL,
+    current_value DOUBLE PRECISION NOT NULL,
+    threshold DOUBLE PRECISION NOT NULL,
+    operator VARCHAR(8) NOT NULL,
+    level VARCHAR(16),
+    notified BOOLEAN DEFAULT false,
+    notify_error VARCHAR(512),
+    triggered_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    message TEXT
+);
+
+-- 告警历史表索引
+CREATE INDEX idx_alert_history_rule_id ON alert_history(rule_id);
+CREATE INDEX idx_alert_history_group ON alert_history("group");
+CREATE INDEX idx_alert_history_triggered_at ON alert_history(triggered_at);
+CREATE INDEX idx_alert_history_level ON alert_history(level);
+
+-- 表注释
+COMMENT ON TABLE alert_rule IS '告警规则配置表';
+COMMENT ON TABLE alert_history IS '告警触发历史记录表';
+
+-- 告警规则表字段注释
+COMMENT ON COLUMN alert_rule.name IS '规则名称（唯一）';
+COMMENT ON COLUMN alert_rule.description IS '规则描述';
+COMMENT ON COLUMN alert_rule."group" IS '分组名称，空表示全局规则';
+COMMENT ON COLUMN alert_rule.api IS 'API 名称，空表示所有 API';
+COMMENT ON COLUMN alert_rule.metric_name IS '指标名称，如 invoke.total, invoke.latency';
+COMMENT ON COLUMN alert_rule.operator IS '操作符：>, <, >=, <=, ==, !=';
+COMMENT ON COLUMN alert_rule.threshold IS '阈值';
+COMMENT ON COLUMN alert_rule.window IS '时间窗口（分钟）';
+COMMENT ON COLUMN alert_rule.webhook_url IS 'Webhook URL';
+COMMENT ON COLUMN alert_rule.email IS '通知邮箱';
+COMMENT ON COLUMN alert_rule.enabled IS '是否启用';
+
+-- 告警历史表字段注释
+COMMENT ON COLUMN alert_history.rule_id IS '关联的规则 ID';
+COMMENT ON COLUMN alert_history.rule_name IS '规则名称冗余';
+COMMENT ON COLUMN alert_history.current_value IS '触发时的当前值';
+COMMENT ON COLUMN alert_history.level IS '告警级别：INFO, WARNING, CRITICAL';
+COMMENT ON COLUMN alert_history.notified IS '是否已通知';
+COMMENT ON COLUMN alert_history.notify_error IS '通知错误信息';
+COMMENT ON COLUMN alert_history.message IS '告警详情消息';

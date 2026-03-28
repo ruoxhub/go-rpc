@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 )
@@ -88,11 +89,26 @@ func (h *UserHandler) Add(c *gin.Context) {
 		return
 	}
 
+	// 获取默认 QPS 配置
+	var defaultQps float64 = 100
+	cfgSvc, exists := c.Get("configService")
+	if exists {
+		if configSvc, ok := cfgSvc.(config.Service); ok {
+			defaultQps = configSvc.GetConfigFloat(config.ConfigKeyDefaultQuotaUser, 100.0)
+		}
+	}
+
+	// 如果用户未指定 QPS，使用默认值
+	qps := req.QuotaQps
+	if qps <= 0 {
+		qps = defaultQps
+	}
+
 	now := time.Now()
 	user := model.UserInfo{
 		UserName:   req.UserName,
 		Password:   hashedPassword,
-		QuotaQps:   req.QuotaQps,
+		QuotaQps:   qps,
 		IsAdmin:    req.IsAdmin,
 		ApiToken:   uuid.New().String(),
 		LoginToken: uuid.New().String(),

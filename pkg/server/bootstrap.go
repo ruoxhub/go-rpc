@@ -19,6 +19,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
+	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/handlers"
 	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
@@ -58,6 +59,7 @@ type Server struct {
 	timeoutManager   *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
 	alertEvaluator   *alert.Evaluator
+	configService    pkgconfig.Service
 }
 
 func NewServer(config *Config) *Server {
@@ -66,6 +68,7 @@ func NewServer(config *Config) *Server {
 		shutdown:       make(chan struct{}),
 		clientManager:  client.NewClientManager(),
 		timeoutManager: forwarder.NewTimeoutManager(nil),
+		configService:  pkgconfig.NewService(),
 	}
 }
 
@@ -129,9 +132,17 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Database migration completed successfully")
 
+	// 启动配置服务（5 秒刷新间隔）
+	ctx := context.Background()
+	if err := s.configService.Start(ctx, 5*time.Second); err != nil {
+		logger.Errorf("Failed to start config service: %v", err)
+		// 配置服务启动失败不影响服务器启动
+	}
+	logger.Info("Config service started successfully")
+
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
-	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector)
+	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService)
 
 	metricsReader := alert.NewDefaultMetricsReader()
 	s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
@@ -217,9 +228,14 @@ func (s *Server) registerRoutes() {
 		business.GET("/register", s.handleRegister)
 	}
 
-	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator)
+	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator, s.configService)
 
 	sekiroAPI := s.httpServer.Group("/sekiro-api")
+	// 为 /sekiro-api 路由添加配置服务上下文
+	sekiroAPI.Use(func(c *gin.Context) {
+		c.Set("configService", s.configService)
+		c.Next()
+	})
 	{
 		userInfo := sekiroAPI.Group("/user-info")
 		{

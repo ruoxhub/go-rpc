@@ -3,11 +3,12 @@ package handlers
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
+	"github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // SetupWebRoutes 设置 Web 管理界面路由
-func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator) {
+func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc config.Service) {
 	// 创建认证中间件实例
 	authMiddleware := middleware.NewAuthMiddleware()
 
@@ -22,7 +23,11 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator) {
 
 	// API 路由组（需要认证）
 	api := r.Group("/api")
-	api.Use(authMiddleware.Authenticate()) // 应用认证中间件
+	api.Use(
+		authMiddleware.Authenticate(),        // 应用认证中间件
+		middleware.AnonymousAccessMiddleware(cfgSvc), // 匿名访问控制
+		middleware.RateLimitMiddleware(cfgSvc),       // QPS 限流
+	)
 	{
 		// 用户管理
 		users := api.Group("/users")

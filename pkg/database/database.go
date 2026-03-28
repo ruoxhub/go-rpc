@@ -92,13 +92,21 @@ func AutoMigrate() error {
 		&model.MetricMinute{},
 		&model.MetricHour{},
 		&model.MetricDay{},
+		&model.TraceRecord{},
+		&model.AlertRule{},
+		&model.AlertHistory{},
 	)
 	if err != nil {
 		return err
 	}
 
 	// 创建默认管理员用户
-	return createDefaultAdminUser()
+	if err := createDefaultAdminUser(); err != nil {
+		return err
+	}
+
+	// 创建默认系统配置
+	return createDefaultSysConfigs()
 }
 
 // createDefaultAdminUser 创建默认管理员用户
@@ -126,6 +134,46 @@ func createDefaultAdminUser() error {
 			UpdateTime: &now,
 		}
 		return DB.Create(&adminUser).Error
+	}
+	return nil
+}
+
+// createDefaultSysConfigs 创建默认系统配置
+func createDefaultSysConfigs() error {
+	defaultConfigs := []struct {
+		comment string
+		key     string
+		value   string
+	}{
+		{"是否允许注册用户", "sekiro.user.allowRegister", "true"},
+		{"出口 ip 探测 URL", "sekiro.outIpTestUrl", "http://api.ipify.org"},
+		{"系统通告信息", "sekiro.systemNotice", ""},
+		{"文档首页通告信息", "sekiro.docNotice", ""},
+		{"是否允许匿名访问", "sekiro.allowAnonymousAccess", "true"},
+		{"匿名访问 qps 限制", "sekiro.anonymousAccessRateLimit", "10"},
+		{"注册用户默认 qps 限制", "sekiro.defaultRegisterQuotaUser", "10"},
+		{"注册 group 默认 qps 限制", "sekiro.defaultRegisterQuotaGroup", "100"},
+		{"设备默认 qps 限制", "sekiro.defaultRegisterQuotaPerDevice", "10"},
+		{"使用自定义 ssl 证书", "sekiro.useCustomSSLCertificate", "false"},
+		{"为配置的 host 自动生成 ssl 证书", "sekiro.autoGenSSLCertificateHostList", ""},
+		{"开启 443 服务端口", "sekiro.open443Website", "false"},
+		{"空转调用保护", "sekiro.defendIdleInvoke", "true"},
+	}
+
+	for _, cfg := range defaultConfigs {
+		var count int64
+		DB.Model(&model.SysConfig{}).Where("config_key = ?", cfg.key).Count(&count)
+		if count == 0 {
+			sysConfig := model.SysConfig{
+				ConfigComment: cfg.comment,
+				ConfigKey:     cfg.key,
+				ConfigValue:   cfg.value,
+				CreateTime:    time.Now(),
+			}
+			if err := DB.Create(&sysConfig).Error; err != nil {
+				return fmt.Errorf("failed to create config %s: %w", cfg.key, err)
+			}
+		}
 	}
 	return nil
 }

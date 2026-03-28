@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
+	"github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
 	"github.com/sekiro-go/sekiro-go/pkg/server/router"
@@ -25,6 +26,7 @@ type APIHandler struct {
 	wsHandler        *ws.Handler
 	timeoutManager   *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
+	configService    config.Service
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -62,13 +64,14 @@ type GetCookieRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service) *APIHandler {
 	return &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(),
 		wsHandler:        wsHandler,
 		timeoutManager:   timeoutMgr,
 		metricsCollector: metricsCollector,
+		configService:    cfgSvc,
 	}
 }
 
@@ -148,6 +151,19 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			"message": "action parameter required",
 		})
 		return
+	}
+
+	// 空转调用保护检查
+	if h.configService != nil && h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
+		// 检查是否是空转调用（constantInvoke=true 但没有实际处理逻辑）
+		if req.ConstantInvoke == "true" || req.ConstantInvoke == "1" {
+			logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", req.Group, req.Action)
+			c.JSON(http.StatusOK, gin.H{
+				"status":  -1,
+				"message": "空转调用被拒绝，请联系管理员配置实际处理逻辑",
+			})
+			return
+		}
 	}
 
 	// 分配客户端

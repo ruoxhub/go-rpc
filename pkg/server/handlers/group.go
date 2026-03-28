@@ -1,12 +1,13 @@
 package handlers
 
 import (
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/server/config"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // GroupHandler 分组管理处理器
@@ -100,12 +101,31 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
+	// 获取默认 QPS 配置
+	var defaultGroupQps float64 = 100
+	var defaultDeviceQps float64 = 10
+	cfgSvc, cfgExists := c.Get("configService")
+	if cfgExists {
+		if configSvc, ok := cfgSvc.(config.Service); ok {
+			defaultGroupQps = configSvc.GetConfigFloat(config.ConfigKeyDefaultQuotaGroup, 100.0)
+			defaultDeviceQps = configSvc.GetConfigFloat(config.ConfigKeyDefaultQuotaPerDevice, 10.0)
+		}
+	}
+
 	group := model.GroupConfig{
 		GroupName:         req.GroupName,
 		UserName:          user.UserName,
 		QuotaQpsGroup:     req.QuotaQpsGroup,
 		QuotaQpsPerDevice: req.QuotaQpsPerDevice,
 		CreateDate:        time.Now(),
+	}
+
+	// 如果用户未指定 QPS，使用默认值
+	if group.QuotaQpsGroup <= 0 {
+		group.QuotaQpsGroup = defaultGroupQps
+	}
+	if group.QuotaQpsPerDevice <= 0 {
+		group.QuotaQpsPerDevice = defaultDeviceQps
 	}
 
 	if err := database.GetDB().Create(&group).Error; err != nil {

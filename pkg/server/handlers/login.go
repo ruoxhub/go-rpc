@@ -8,6 +8,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 )
 
@@ -115,10 +116,19 @@ func HandleGetUserInfo(c *gin.Context) {
 // HandleSystemNotice 获取系统通知
 // GET /sekiro-api/system/systemNotice
 func HandleSystemNotice(c *gin.Context) {
+	// 从 context 获取配置服务
+	cfgSvc, exists := c.Get("configService")
+	var systemNotice string = ""
+	if exists {
+		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
+			systemNotice = configSvc.GetConfig(pkgconfig.ConfigKeySystemNotice)
+		}
+	}
+
 	c.JSON(200, gin.H{
 		"status":  0,
 		"message": "success",
-		"data":    nil, // 暂无通知
+		"data":    systemNotice,
 	})
 }
 
@@ -191,6 +201,22 @@ type RegisterRequest struct {
 // HandleRegister 处理注册请求
 // POST /sekiro-api/user-info/register
 func HandleRegister(c *gin.Context) {
+	// 检查是否允许注册
+	cfgSvc, exists := c.Get("configService")
+	if !exists {
+		// 配置服务未初始化，使用默认值允许注册
+	} else {
+		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
+			if !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
+				c.JSON(403, gin.H{
+					"status":  -1,
+					"message": "当前不允许注册新用户",
+				})
+				return
+			}
+		}
+	}
+
 	var req RegisterRequest
 	if err := c.ShouldBind(&req); err != nil {
 		c.JSON(400, gin.H{
@@ -222,10 +248,18 @@ func HandleRegister(c *gin.Context) {
 		return
 	}
 
+	// 获取默认 QPS 配置
+	var defaultQps float64 = 100
+	if cfgSvc != nil {
+		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
+			defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
+		}
+	}
+
 	user := model.UserInfo{
 		UserName:   req.UserName,
 		Password:   hashedPassword,
-		QuotaQps:   100, // 默认 QPS
+		QuotaQps:   defaultQps,
 		IsAdmin:    false,
 		ApiToken:   uuid.New().String(),
 		LoginToken: uuid.New().String(),
