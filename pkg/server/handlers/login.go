@@ -52,6 +52,11 @@ func HandleLogin(c *gin.Context) {
 	database.GetDB().Model(&user).Update("last_active", time.Now())
 
 	// 返回用户信息（包含 loginToken 和 apiToken）
+	updateTime := ""
+	if user.UpdateTime != nil {
+		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
+	}
+
 	c.JSON(200, gin.H{
 		"status":  0,
 		"message": "success",
@@ -63,7 +68,7 @@ func HandleLogin(c *gin.Context) {
 			"loginToken": user.LoginToken,
 			"apiToken":   user.ApiToken,
 			"isAdmin":    user.IsAdmin,
-			"updateTime": user.UpdateTime.Format("2006-01-02T15:04:05"),
+			"updateTime": updateTime,
 			"permission": user.Permission,
 			"quotaQps":   user.QuotaQps,
 		},

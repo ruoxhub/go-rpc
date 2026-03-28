@@ -42,7 +42,7 @@ function App() {
           <Route path="system" element={<SystemPanel />} />
           <Route path="group/:groupName" element={<GroupDetail />} />
           <Route path="traces" element={<TraceList />} />
-          <Route path="trace/:traceId" element={<TraceDetail />} />
+          <Route path="traces/:traceId" element={<TraceDetail />} />
           <Route path="alerts" element={<AlertRules />} />
           <Route path="alert-history" element={<AlertHistory />} />
         </Route>

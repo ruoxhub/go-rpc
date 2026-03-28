@@ -10,12 +10,38 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/sekiro-go/sekiro-go/pkg/server/router"
 )
 
-// MockClientManager provides mock implementation for testing
+// MockClientManager provides mock implementation for testing.
 type MockClientManager struct {
-	groups  []string
-	clients map[string][]*client.SekiroClient
+	groups   []string
+	clients  map[string][]*client.SekiroClient
+	groupMap map[string]*client.SekiroGroup
+}
+
+func newMockClientManager() *MockClientManager {
+	return &MockClientManager{
+		clients:  make(map[string][]*client.SekiroClient),
+		groupMap: make(map[string]*client.SekiroGroup),
+	}
+}
+
+func (m *MockClientManager) AddClient(groupName string, c *client.SekiroClient) {
+	m.clients[groupName] = append(m.clients[groupName], c)
+	group, ok := m.groupMap[groupName]
+	if !ok {
+		group = client.NewSekiroGroup(groupName)
+		m.groupMap[groupName] = group
+		m.groups = append(m.groups, groupName)
+	}
+	group.Register(c)
+}
+
+func (m *MockClientManager) Close() {
+	for _, group := range m.groupMap {
+		group.Close()
+	}
 }
 
 func (m *MockClientManager) GetAllGroups() []string {
@@ -27,29 +53,26 @@ func (m *MockClientManager) GetClientsByGroup(group string) []*client.SekiroClie
 }
 
 func (m *MockClientManager) GetClient(group, clientID string) *client.SekiroClient {
-	if clients, ok := m.clients[group]; ok {
-		for _, c := range clients {
-			if c.ClientID == clientID {
-				return c
-			}
-		}
+	groupInst := m.groupMap[group]
+	if groupInst == nil {
+		return nil
 	}
-	return nil
+	return groupInst.GetClient(clientID)
 }
 
-func (m *MockClientManager) Register(c *client.SekiroClient) {}
-func (m *MockClientManager) Unregister(group, clientID string) {}
-func (m *MockClientManager) AllocateClient(group string) *client.SekiroClient {
-	if clients, ok := m.clients[group]; ok && len(clients) > 0 {
-		return clients[0]
-	}
-	return nil
+func (m *MockClientManager) GetGroup(groupName string) *client.SekiroGroup {
+	return m.groupMap[groupName]
 }
-func (m *MockClientManager) CleanupAll() {}
+
+func (m *MockClientManager) Register(c *client.SekiroClient)                  {}
+func (m *MockClientManager) Unregister(group, clientID string)                {}
+func (m *MockClientManager) AllocateClient(group string) *client.SekiroClient { return nil }
+func (m *MockClientManager) CleanupAll()                                      {}
 
 func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
 	return &APIHandler{
 		clientManager:  mockManager,
+		router:         nil,
 		wsHandler:      nil,
 		timeoutManager: forwarder.NewTimeoutManager(nil),
 	}
@@ -74,20 +97,18 @@ func performRequest(r *gin.Engine, method, path string, body interface{}) *httpt
 
 func TestHandleGroupList(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockManager := &MockClientManager{
-		groups: []string{"group1", "group2", "group3"},
-	}
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
 
+	mockManager.groups = []string{"group1", "group2", "group3"}
 	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
 
-	// 创建 gin engine 并注册路由
 	router := gin.New()
 	router.GET("/business/groupList", handler.HandleGroupList)
 
-	// 执行请求
 	w := performRequest(router, http.MethodGet, "/business/groupList", nil)
 
-	// 验证响应
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
@@ -109,22 +130,20 @@ func TestHandleGroupList(t *testing.T) {
 
 func TestHandleClientQueue(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockManager := &MockClientManager{
-		clients: map[string][]*client.SekiroClient{
-			"test-group": {
-				{ClientID: "client-1"},
-				{ClientID: "client-2"},
-			},
-		},
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	mockManager.clients["test-group"] = []*client.SekiroClient{
+		{ClientID: "client-1"},
+		{ClientID: "client-2"},
 	}
 
 	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
 
-	// 创建 gin engine 并注册路由
 	router := gin.New()
 	router.GET("/business/clientQueue", handler.HandleClientQueue)
 
-	// 测试缺少 group 参数
 	w := performRequest(router, http.MethodGet, "/business/clientQueue", nil)
 
 	var result map[string]interface{}
@@ -133,7 +152,6 @@ func TestHandleClientQueue(t *testing.T) {
 		t.Error("Expected error when group parameter missing")
 	}
 
-	// 测试正常请求
 	w = performRequest(router, http.MethodGet, "/business/clientQueue?group=test-group", nil)
 
 	json.NewDecoder(w.Body).Decode(&result)
@@ -147,16 +165,17 @@ func TestHandleClientQueue(t *testing.T) {
 	}
 }
 
-func TestHandleInvoke(t *testing.T) {
+func TestHandleInvoke_MissingGroup(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockManager := &MockClientManager{}
-	handler := newTestAPIHandler(mockManager)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
 
-	// 创建 gin engine 并注册路由
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+
 	router := gin.New()
 	router.Any("/business/invoke", handler.HandleInvoke)
 
-	// 测试缺少 group 参数
 	w := performRequest(router, http.MethodPost, "/business/invoke", nil)
 
 	var result map[string]interface{}
@@ -166,31 +185,93 @@ func TestHandleInvoke(t *testing.T) {
 	}
 }
 
-func TestHandleInvoke_GET(t *testing.T) {
+func TestHandleInvoke_RoundRobinSelectsDifferentClients(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	mockManager := &MockClientManager{
-		clients: map[string][]*client.SekiroClient{
-			"test-group": {
-				client.NewSekiroClient("test-group", "client-1", nil),
-			},
-		},
-	}
-	handler := newTestAPIHandler(mockManager)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
 
-	// 创建 gin engine 并注册路由
+	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1.SetStatus(client.StatusOnline)
+	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2.SetStatus(client.StatusOnline)
+	mockManager.AddClient("test-group", c1)
+	mockManager.AddClient("test-group", c2)
+
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+
 	router := gin.New()
 	router.Any("/business/invoke", handler.HandleInvoke)
 
-	// 测试 GET 方法
-	w := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test", nil)
+	w1 := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test", nil)
+	w2 := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test", nil)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", w.Code)
+	var result1 map[string]interface{}
+	var result2 map[string]interface{}
+	json.NewDecoder(w1.Body).Decode(&result1)
+	json.NewDecoder(w2.Body).Decode(&result2)
+
+	if result1["message"] != "Invalid client connection" || result2["message"] != "Invalid client connection" {
+		t.Fatalf("Expected invalid connection responses, got %v and %v", result1, result2)
 	}
+	if result1["clientId"] == result2["clientId"] {
+		t.Fatalf("Expected round robin to select different clients, got %v and %v", result1["clientId"], result2["clientId"])
+	}
+}
+
+func TestHandleInvoke_ConstantInvokePinsClient(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1.SetStatus(client.StatusOnline)
+	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2.SetStatus(client.StatusOnline)
+	mockManager.AddClient("test-group", c1)
+	mockManager.AddClient("test-group", c2)
+
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+
+	router := gin.New()
+	router.Any("/business/invoke", handler.HandleInvoke)
+
+	path := "/business/invoke?group=test-group&action=test&constantInvoke=true"
+	w1 := performRequest(router, http.MethodGet, path, nil)
+	w2 := performRequest(router, http.MethodGet, path, nil)
+
+	var result1 map[string]interface{}
+	var result2 map[string]interface{}
+	json.NewDecoder(w1.Body).Decode(&result1)
+	json.NewDecoder(w2.Body).Decode(&result2)
+
+	if result1["clientId"] != result2["clientId"] {
+		t.Fatalf("Expected constantInvoke to pin the same client, got %v and %v", result1["clientId"], result2["clientId"])
+	}
+}
+
+func TestHandleInvoke_SpecifiedClientNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+
+	router := gin.New()
+	router.Any("/business/invoke", handler.HandleInvoke)
+
+	w := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test&clientId=missing", nil)
 
 	var result map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&result)
-	// 由于没有实际的 WebSocket 连接，应该返回错误
-	// 但状态码应该是 200（业务逻辑错误通过 status 字段返回）
-	t.Logf("Response: %v", result)
+
+	if result["message"] != "client missing not found in group test-group" {
+		t.Fatalf("Unexpected error response: %v", result)
+	}
+}
+
+func newDefaultTestRouter() *router.Router {
+	return router.NewRouter()
 }

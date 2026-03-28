@@ -1,29 +1,28 @@
 package handlers
 
 import (
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
+	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 )
 
-// UserHandler 用户管理处理器
+// UserHandler handles user management APIs.
 type UserHandler struct{}
 
-// NewUserHandler 创建用户处理器
 func NewUserHandler() *UserHandler {
 	return &UserHandler{}
 }
 
-// ListUsersResponse 用户列表响应
 type ListUsersResponse struct {
-	Code    int            `json:"code"`
-	Message string         `json:"message"`
-	Data    []UserInfoVO   `json:"data"`
-	Total   int64          `json:"total"`
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Data    []UserInfoVO `json:"data"`
+	Total   int64        `json:"total"`
 }
 
 type UserInfoVO struct {
@@ -34,12 +33,11 @@ type UserInfoVO struct {
 	CreateTime string  `json:"createTime"`
 }
 
-// List 获取用户列表
 func (h *UserHandler) List(c *gin.Context) {
 	var users []model.UserInfo
-	result := database.GetDB().Find(&users)
+	result := database.GetDB().Order("id ASC").Find(&users)
 
-	var vos []UserInfoVO
+	vos := make([]UserInfoVO, 0, len(users))
 	for _, u := range users {
 		vos = append(vos, UserInfoVO{
 			ID:         u.ID,
@@ -58,7 +56,6 @@ func (h *UserHandler) List(c *gin.Context) {
 	})
 }
 
-// AddUserRequest 添加用户请求
 type AddUserRequest struct {
 	UserName string  `json:"userName" binding:"required"`
 	Password string  `json:"password" binding:"required"`
@@ -66,7 +63,6 @@ type AddUserRequest struct {
 	IsAdmin  bool    `json:"isAdmin"`
 }
 
-// Add 添加用户
 func (h *UserHandler) Add(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -74,14 +70,35 @@ func (h *UserHandler) Add(c *gin.Context) {
 		return
 	}
 
+	var count int64
+	if err := database.GetDB().Model(&model.UserInfo{}).
+		Where("user_name = ?", req.UserName).
+		Count(&count).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+	if count > 0 {
+		c.JSON(400, gin.H{"code": 400, "message": "user already exists"})
+		return
+	}
+
+	hashedPassword, err := password.HashPassword(req.Password)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": "failed to hash password"})
+		return
+	}
+
+	now := time.Now()
 	user := model.UserInfo{
 		UserName:   req.UserName,
-		Password:   req.Password, // TODO: 应该加密存储
+		Password:   hashedPassword,
 		QuotaQps:   req.QuotaQps,
 		IsAdmin:    req.IsAdmin,
 		ApiToken:   uuid.New().String(),
-		CreateTime: time.Now(),
-		LastActive: time.Now(),
+		LoginToken: uuid.New().String(),
+		CreateTime: now,
+		LastActive: now,
+		UpdateTime: &now,
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
@@ -92,13 +109,11 @@ func (h *UserHandler) Add(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "success", "data": user.ID})
 }
 
-// UpdateUserQpsRequest 更新用户 QPS 请求
 type UpdateUserQpsRequest struct {
 	UserID   int64   `json:"userId" binding:"required"`
 	QuotaQps float64 `json:"quotaQps" binding:"required"`
 }
 
-// UpdateQps 更新用户 QPS
 func (h *UserHandler) UpdateQps(c *gin.Context) {
 	var req UpdateUserQpsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -116,12 +131,10 @@ func (h *UserHandler) UpdateQps(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
-// DeleteUserRequest 删除用户请求
 type DeleteUserRequest struct {
 	UserID int64 `json:"userId" binding:"required"`
 }
 
-// Delete 删除用户
 func (h *UserHandler) Delete(c *gin.Context) {
 	var req DeleteUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -137,12 +150,10 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
-// ChangePasswordRequest 修改密码请求
 type ChangePasswordRequest struct {
 	NewPassword string `json:"newPassword" binding:"required"`
 }
 
-// ChangePassword 修改密码
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -150,16 +161,24 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	// 从认证中间件获取当前用户信息
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
+		return
+	}
+
+	hashedPassword, err := password.HashPassword(req.NewPassword)
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": "failed to hash password"})
 		return
 	}
 
 	if err := database.GetDB().Model(&model.UserInfo{}).
 		Where("id = ?", user.ID).
-		Update("password", req.NewPassword).Error; err != nil {
+		Updates(map[string]interface{}{
+			"password":    hashedPassword,
+			"update_time": time.Now(),
+		}).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
@@ -167,20 +186,20 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
-// RefreshToken 刷新 API Token
 func (h *UserHandler) RefreshToken(c *gin.Context) {
-	// 从认证中间件获取当前用户信息
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
 		return
 	}
 
 	newToken := uuid.New().String()
-
 	if err := database.GetDB().Model(&model.UserInfo{}).
 		Where("id = ?", user.ID).
-		Update("api_token", newToken).Error; err != nil {
+		Updates(map[string]interface{}{
+			"api_token":   newToken,
+			"update_time": time.Now(),
+		}).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
@@ -192,12 +211,10 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	})
 }
 
-// GetCurrentUser 获取当前用户信息
 func (h *UserHandler) GetCurrentUser(c *gin.Context) {
-	// 从认证中间件获取当前用户信息
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
 		return
 	}
 
@@ -209,6 +226,7 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 			"userName": user.UserName,
 			"apiToken": user.ApiToken,
 			"isAdmin":  user.IsAdmin,
+			"quotaQps": user.QuotaQps,
 		},
 	})
 }

@@ -39,6 +39,7 @@ type SekiroGroup struct {
 	name        string
 	commandChan chan groupCommand
 	clients     map[string]*SekiroClient
+	order       []string
 	wg          sync.WaitGroup
 	closed      bool
 	mu          sync.Mutex
@@ -50,6 +51,7 @@ func NewSekiroGroup(name string) *SekiroGroup {
 		name:        name,
 		commandChan: make(chan groupCommand, 64),
 		clients:     make(map[string]*SekiroClient),
+		order:       make([]string, 0, 8),
 	}
 
 	g.wg.Add(1)
@@ -65,6 +67,9 @@ func (g *SekiroGroup) runLoop() {
 	for cmd := range g.commandChan {
 		switch cmd.typ {
 		case cmdRegister:
+			if _, exists := g.clients[cmd.client.ClientID]; !exists {
+				g.order = append(g.order, cmd.client.ClientID)
+			}
 			g.clients[cmd.client.ClientID] = cmd.client
 			logger.Infof("Client registered: group=%s, clientId=%s", g.name, cmd.client.ClientID)
 
@@ -72,6 +77,7 @@ func (g *SekiroGroup) runLoop() {
 			if client, ok := g.clients[cmd.clientID]; ok {
 				client.Close()
 				delete(g.clients, cmd.clientID)
+				g.removeFromOrder(cmd.clientID)
 				logger.Infof("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
 			}
 
@@ -80,10 +86,7 @@ func (g *SekiroGroup) runLoop() {
 			cmd.callback <- commandResult{client: client}
 
 		case cmdGetAllClients:
-			clients := make([]*SekiroClient, 0, len(g.clients))
-			for _, c := range g.clients {
-				clients = append(clients, c)
-			}
+			clients := g.snapshotClients()
 			cmd.callback <- commandResult{clients: clients}
 
 		case cmdAllocate:
@@ -122,9 +125,30 @@ func (g *SekiroGroup) runLoop() {
 				c.Close()
 			}
 			g.clients = make(map[string]*SekiroClient)
+			g.order = nil
 			cmd.callback <- commandResult{}
 			return
 		}
+	}
+}
+
+func (g *SekiroGroup) snapshotClients() []*SekiroClient {
+	clients := make([]*SekiroClient, 0, len(g.order))
+	for _, clientID := range g.order {
+		if c, ok := g.clients[clientID]; ok {
+			clients = append(clients, c)
+		}
+	}
+	return clients
+}
+
+func (g *SekiroGroup) removeFromOrder(clientID string) {
+	for i, id := range g.order {
+		if id != clientID {
+			continue
+		}
+		g.order = append(g.order[:i], g.order[i+1:]...)
+		return
 	}
 }
 

@@ -33,7 +33,10 @@ func TestHTTPServer_Start(t *testing.T) {
 }
 
 func TestHTTPServer_RegisterHandler(t *testing.T) {
-	server := NewHTTPServer(DefaultConfig())
+	server := NewHTTPServer(&Config{
+		Host: "127.0.0.1",
+		Port: 0,
+	})
 
 	// 注册测试处理器
 	server.RegisterHandler("/test", func(w http.ResponseWriter, r *http.Request) {

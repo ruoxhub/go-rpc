@@ -9,17 +9,19 @@ import (
 )
 
 var (
-	port     int
-	host     string
-	debug    bool
+	port       int
+	host       string
+	debug      bool
 	localDebug bool
+	configPath string
 )
 
 func init() {
-	flag.IntVar(&port, "port", 5612, "Server port")
-	flag.StringVar(&host, "host", "0.0.0.0", "Server host")
+	flag.IntVar(&port, "port", 0, "Server port")
+	flag.StringVar(&host, "host", "", "Server host")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.BoolVar(&localDebug, "local-debug", false, "Enable local debug mode")
+	flag.StringVar(&configPath, "c", "config.yaml", "Path to YAML config")
 }
 
 func main() {
@@ -30,12 +32,13 @@ func main() {
 		Host:       host,
 		Debug:      debug,
 		LocalDebug: localDebug,
+		ConfigPath: configPath,
 	}
 
 	srv := server.NewServer(config)
 
 	fmt.Printf("Starting Sekiro RPC Server...\n")
-	fmt.Printf("Host: %s, Port: %d\n", host, port)
+	fmt.Printf("Host: %s, Port: %d\n", config.Host, config.Port)
 
 	if err := srv.Start(); err != nil {
 		fmt.Printf("Server error: %v\n", err)

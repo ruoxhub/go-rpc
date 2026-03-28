@@ -48,3 +48,4 @@ temp/
 dist/
 build/
 jsRpc/
+.gocache

@@ -7,17 +7,16 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/business': {
-        target: 'http://localhost:5612',
+        target: 'http://localhost:5613',
         changeOrigin: true
       },
       '/api': {
-        target: 'http://localhost:5612',
+        target: 'http://localhost:5613',
         changeOrigin: true
       },
       '/sekiro-api': {
-        target: 'http://localhost:5612',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/sekiro-api/, '/api')
+        target: 'http://localhost:5613',
+        changeOrigin: true
       }
     }
   }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,14 +14,16 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
+	"github.com/sekiro-go/sekiro-go/pkg/server/router"
 	ws "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
 // APIHandler handles HTTP API requests
 type APIHandler struct {
-	clientManager  clientManagerIface
-	wsHandler      *ws.Handler
-	timeoutManager *forwarder.TimeoutManager
+	clientManager    clientManagerIface
+	router           *router.Router
+	wsHandler        *ws.Handler
+	timeoutManager   *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
 }
 
@@ -30,6 +33,7 @@ type clientManagerIface interface {
 	GetClientsByGroup(group string) []*client.SekiroClient
 	AllocateClient(group string) *client.SekiroClient
 	GetClient(group, clientID string) *client.SekiroClient
+	GetGroup(groupName string) *client.SekiroGroup
 }
 
 // InvokeRequest represents the invoke request body
@@ -44,23 +48,26 @@ type InvokeRequest struct {
 
 // ExecJSRequest represents the execjs request body
 type ExecJSRequest struct {
-	Group    string `json:"group" form:"group"`
-	ClientID string `json:"clientId,omitempty" form:"clientId"`
-	Code     string `json:"code" form:"code"`
+	Group          string `json:"group" form:"group"`
+	ClientID       string `json:"clientId,omitempty" form:"clientId"`
+	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
+	Code           string `json:"code" form:"code"`
 }
 
 // GetCookieRequest represents the getCookie request body
 type GetCookieRequest struct {
-	Group    string `json:"group" form:"group"`
-	ClientID string `json:"clientId,omitempty" form:"clientId"`
+	Group          string `json:"group" form:"group"`
+	ClientID       string `json:"clientId,omitempty" form:"clientId"`
+	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
 }
 
 // NewAPIHandler creates a new APIHandler
 func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector) *APIHandler {
 	return &APIHandler{
-		clientManager:  manager,
-		wsHandler:      wsHandler,
-		timeoutManager: timeoutMgr,
+		clientManager:    manager,
+		router:           router.NewRouter(),
+		wsHandler:        wsHandler,
+		timeoutManager:   timeoutMgr,
 		metricsCollector: metricsCollector,
 	}
 }
@@ -145,10 +152,13 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 
 	// 分配客户端
 	var targetClient *client.SekiroClient
-	if req.ClientID != "" {
-		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
-	} else {
-		targetClient = h.clientManager.AllocateClient(req.Group)
+	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, req.Action, req.Params)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
 	}
 
 	if targetClient == nil {
@@ -190,8 +200,10 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 	if !ok {
 		h.timeoutManager.Remove(sequence)
 		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Invalid client connection",
+			"status":   -1,
+			"message":  "Invalid client connection",
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
 		})
 		return
 	}
@@ -203,8 +215,10 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		// Mark client failure on send error
 		targetClient.MarkFailure()
 		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to send request: " + err.Error(),
+			"status":   -1,
+			"message":  "Failed to send request: " + err.Error(),
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
 		})
 		return
 	}
@@ -239,8 +253,10 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": req.Group, "api": req.Action}, float64(time.Since(startTime).Milliseconds()))
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Request timeout",
+			"status":   -1,
+			"message":  "Request timeout",
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
 		})
 		return
 	case resp := <-responseChan:
@@ -263,8 +279,10 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 
 		if resp.Error != "" {
 			c.JSON(http.StatusOK, gin.H{
-				"status":  resp.Status,
-				"message": resp.Error,
+				"status":   resp.Status,
+				"message":  resp.Error,
+				"group":    req.Group,
+				"clientId": targetClient.ClientID,
 			})
 			return
 		}
@@ -283,9 +301,11 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		}
 
 		c.JSON(http.StatusOK, gin.H{
-			"status":  resp.Status,
-			"message": message,
-			"data":    responseData,
+			"status":   resp.Status,
+			"message":  message,
+			"group":    req.Group,
+			"clientId": targetClient.ClientID,
+			"data":     responseData,
 		})
 	}
 }
@@ -318,11 +338,13 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
+			req.ConstantInvoke = c.Query("constantInvoke")
 			req.Code = c.Query("code")
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
+		req.ConstantInvoke = c.Query("constantInvoke")
 		req.Code = c.Query("code")
 	}
 
@@ -347,10 +369,13 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 
 	// 分配客户端
 	var targetClient *client.SekiroClient
-	if req.ClientID != "" {
-		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
-	} else {
-		targetClient = h.clientManager.AllocateClient(req.Group)
+	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", req.Code)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
 	}
 
 	if targetClient == nil {
@@ -484,10 +509,12 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
+			req.ConstantInvoke = c.Query("constantInvoke")
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
+		req.ConstantInvoke = c.Query("constantInvoke")
 	}
 
 	logger.Infof("GetCookie request: group=%s, clientId=%s", req.Group, req.ClientID)
@@ -503,10 +530,13 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 
 	// 分配客户端
 	var targetClient *client.SekiroClient
-	if req.ClientID != "" {
-		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
-	} else {
-		targetClient = h.clientManager.AllocateClient(req.Group)
+	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", "document.cookie")
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
 	}
 
 	if targetClient == nil {
@@ -641,10 +671,12 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
+			req.ConstantInvoke = c.Query("constantInvoke")
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
+		req.ConstantInvoke = c.Query("constantInvoke")
 	}
 
 	logger.Infof("GetHtml request: group=%s, clientId=%s", req.Group, req.ClientID)
@@ -660,10 +692,13 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 
 	// 分配客户端
 	var targetClient *client.SekiroClient
-	if req.ClientID != "" {
-		targetClient = h.clientManager.GetClient(req.Group, req.ClientID)
-	} else {
-		targetClient = h.clientManager.AllocateClient(req.Group)
+	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", "document.documentElement.outerHTML")
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
 	}
 
 	if targetClient == nil {
@@ -778,4 +813,56 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 			"data":     responseData,
 		})
 	}
+}
+
+func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.SekiroClient, error) {
+	if clientID != "" {
+		group := h.clientManager.GetGroup(groupName)
+		selected := h.router.Route(group, router.RouteParams{
+			GroupName: groupName,
+			ClientID:  clientID,
+		})
+		if selected == nil {
+			return nil, fmt.Errorf("client %s not found in group %s", clientID, groupName)
+		}
+		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s", groupName, selected.ClientID)
+		return selected, nil
+	}
+
+	group := h.clientManager.GetGroup(groupName)
+	if group == nil {
+		return nil, nil
+	}
+
+	params := router.RouteParams{GroupName: groupName}
+	strategy := "round_robin"
+	if shouldUseConsistentHash(constantInvoke) {
+		params.HashKey = buildConsistentHashKey(groupName, action, payload)
+		strategy = "consistent_hash"
+	}
+
+	selected := h.router.Route(group, params)
+	if selected == nil {
+		return nil, nil
+	}
+
+	logger.Infof("Route selected: strategy=%s, group=%s, clientId=%s", strategy, groupName, selected.ClientID)
+	return selected, nil
+}
+
+func shouldUseConsistentHash(value string) bool {
+	if value == "" {
+		return false
+	}
+
+	enabled, err := strconv.ParseBool(value)
+	return err == nil && enabled
+}
+
+func buildConsistentHashKey(groupName, action string, payload interface{}) string {
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return groupName + ":" + action
+	}
+	return groupName + ":" + action + ":" + string(encoded)
 }

@@ -1,169 +1,132 @@
-import { useState, useEffect } from 'react'
-import { Table, Card, Form, Input, Select, DatePicker, Button, Space, Tag, Typography, Divider } from 'antd'
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons'
-import axios from 'axios'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Button, Card, DatePicker, Form, Input, Select, Space, Table, Tag, Typography } from 'antd'
+import { ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { traceApi } from '../utils/api'
 
-const { Text } = Typography
 const { RangePicker } = DatePicker
-
-// 获取 API 基础路径
-const getApiBase = () => {
-  const host = window.location.hostname
-  const port = window.location.port
-  return `http://${host}:${port}/api`
-}
+const { Text } = Typography
 
 function TraceList() {
+  const navigate = useNavigate()
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState([])
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 20,
-    total: 0,
+    total: 0
   })
 
-  // 获取追踪列表
-  const fetchTraces = async (params = {}) => {
+  const fetchTraces = async (pageConfig = {}) => {
     setLoading(true)
     try {
-      const queryParams = {
-        page: params.current || 1,
-        pageSize: params.pageSize || 20,
-        ...form.getFieldsValue(),
+      const fields = form.getFieldsValue()
+      const params = {
+        page: pageConfig.current || pagination.current,
+        pageSize: pageConfig.pageSize || pagination.pageSize,
+        traceId: fields.traceId,
+        group: fields.group,
+        deviceId: fields.deviceId,
+        api: fields.api,
+        status: fields.status
       }
 
-      // 处理时间范围
-      if (queryParams.timeRange && Array.isArray(queryParams.timeRange)) {
-        queryParams.startTime = queryParams.timeRange[0].format('YYYY-MM-DD HH:mm:ss')
-        queryParams.endTime = queryParams.timeRange[1].format('YYYY-MM-DD HH:mm:ss')
-        delete queryParams.timeRange
+      if (fields.timeRange?.length === 2) {
+        params.startTime = fields.timeRange[0].format('YYYY-MM-DD HH:mm:ss')
+        params.endTime = fields.timeRange[1].format('YYYY-MM-DD HH:mm:ss')
       }
 
-      const response = await axios.get(`${getApiBase()}/traces`, { params: queryParams })
-
-      if (response.data.code === 0) {
-        setData(response.data.data || [])
-        setPagination({
-          current: params.current || 1,
-          pageSize: params.pageSize || 20,
-          total: response.data.total || 0,
-        })
-      }
-    } catch (error) {
-      console.error('获取追踪列表失败:', error)
+      const result = await traceApi.getTraces(params)
+      setData(result.data || [])
+      setPagination({
+        current: params.page,
+        pageSize: params.pageSize,
+        total: result.total || 0
+      })
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    fetchTraces()
+    fetchTraces({ current: 1, pageSize: 20 })
   }, [])
 
-  // 处理表格变化（分页、排序、筛选）
-  const handleTableChange = (newPagination) => {
-    fetchTraces({
-      current: newPagination.current,
-      pageSize: newPagination.pageSize,
-    })
-  }
-
-  // 搜索
-  const handleSearch = () => {
-    fetchTraces({ current: 1, pageSize: pagination.pageSize })
-  }
-
-  // 重置
-  const handleReset = () => {
-    form.resetFields()
-    fetchTraces({ current: 1, pageSize: pagination.pageSize })
-  }
-
-  // 查看追踪详情
-  const viewTraceDetail = (traceId) => {
-    window.open(`/trace/${traceId}`, '_blank')
-  }
-
-  // 表格列定义
   const columns = [
     {
       title: 'Trace ID',
       dataIndex: 'trace_id',
       key: 'trace_id',
       width: 280,
-      render: (text) => (
-        <Text copyable={{ text }} ellipsis style={{ width: 280 }}>
-          {text}
+      render: (value) => (
+        <Text copyable={{ text: value }} ellipsis style={{ width: 260 }}>
+          {value}
         </Text>
-      ),
+      )
     },
     {
       title: '分组',
       dataIndex: 'group',
       key: 'group',
-      width: 120,
+      width: 140
     },
     {
       title: '设备 ID',
       dataIndex: 'device_id',
       key: 'device_id',
-      width: 150,
-      render: (text) => text || '-',
+      width: 160,
+      render: (value) => value || '-'
     },
     {
       title: 'API',
       dataIndex: 'api',
       key: 'api',
-      width: 200,
-      ellipsis: true,
+      width: 220,
+      ellipsis: true
     },
     {
       title: '调用方',
       dataIndex: 'caller',
       key: 'caller',
-      width: 130,
+      width: 140,
+      render: (value) => value || '-'
     },
     {
-      title: '耗时 (ms)',
+      title: '耗时',
       dataIndex: 'duration_ms',
       key: 'duration_ms',
-      width: 100,
-      sorter: true,
+      width: 120,
       render: (value) => {
         let color = 'green'
         if (value > 1000) color = 'red'
         else if (value > 500) color = 'orange'
         else if (value > 100) color = 'blue'
         return <Tag color={color}>{value} ms</Tag>
-      },
+      }
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
-      render: (value) => {
-        const color = value === 'SUCCESS' ? 'green' : 'red'
-        return <Tag color={color}>{value}</Tag>
-      },
+      width: 110,
+      render: (value) => <Tag color={value === 'SUCCESS' ? 'green' : 'red'}>{value}</Tag>
     },
     {
       title: '开始时间',
       dataIndex: 'start_time',
       key: 'start_time',
       width: 180,
-      sorter: true,
-      render: (value) => value ? new Date(value).toLocaleString() : '-',
+      render: (value) => (value ? new Date(value).toLocaleString() : '-')
     },
     {
       title: '操作',
       key: 'action',
       width: 100,
       render: (_, record) => (
-        <a onClick={() => viewTraceDetail(record.trace_id)}>详情</a>
-      ),
-    },
+        <a onClick={() => navigate(`/traces/${record.trace_id}`)}>详情</a>
+      )
+    }
   ]
 
   return (
@@ -172,42 +135,41 @@ function TraceList() {
         <h2 style={{ fontSize: 24, fontWeight: 600 }}>调用链路追踪</h2>
       </div>
 
-      {/* 搜索表单 */}
       <Card style={{ marginBottom: 16 }}>
         <Form form={form} layout="inline">
           <Form.Item name="traceId" label="Trace ID">
-            <Input placeholder="输入 Trace ID" style={{ width: 280 }} allowClear />
+            <Input allowClear style={{ width: 260 }} />
           </Form.Item>
-
           <Form.Item name="group" label="分组">
-            <Input placeholder="输入分组名称" allowClear />
+            <Input allowClear />
           </Form.Item>
-
           <Form.Item name="deviceId" label="设备 ID">
-            <Input placeholder="输入设备 ID" allowClear />
+            <Input allowClear />
           </Form.Item>
-
           <Form.Item name="api" label="API">
-            <Input placeholder="输入 API 路径" allowClear />
+            <Input allowClear />
           </Form.Item>
-
           <Form.Item name="status" label="状态">
-            <Select placeholder="请选择状态" allowClear style={{ width: 120 }}>
-              <Select.Option value="SUCCESS">成功</Select.Option>
-              <Select.Option value="FAILURE">失败</Select.Option>
+            <Select allowClear style={{ width: 120 }}>
+              <Select.Option value="SUCCESS">SUCCESS</Select.Option>
+              <Select.Option value="FAILURE">FAILURE</Select.Option>
             </Select>
           </Form.Item>
-
           <Form.Item name="timeRange" label="时间范围">
-            <RangePicker />
+            <RangePicker showTime />
           </Form.Item>
-
           <Form.Item>
             <Space>
-              <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
+              <Button type="primary" icon={<SearchOutlined />} onClick={() => fetchTraces({ current: 1 })}>
                 查询
               </Button>
-              <Button icon={<ReloadOutlined />} onClick={handleReset}>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  form.resetFields()
+                  fetchTraces({ current: 1, pageSize: pagination.pageSize })
+                }}
+              >
                 重置
               </Button>
             </Space>
@@ -215,16 +177,15 @@ function TraceList() {
         </Form>
       </Card>
 
-      {/* 追踪列表表格 */}
       <Card>
         <Table
+          rowKey="id"
+          loading={loading}
           columns={columns}
           dataSource={data}
-          loading={loading}
           pagination={pagination}
-          onChange={handleTableChange}
-          rowKey="id"
-          scroll={{ x: 1400 }}
+          onChange={(pager) => fetchTraces({ current: pager.current, pageSize: pager.pageSize })}
+          scroll={{ x: 1500 }}
         />
       </Card>
     </div>

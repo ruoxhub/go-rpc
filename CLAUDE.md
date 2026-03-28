@@ -124,7 +124,8 @@ sekiro-go/
 | **flow/backoff.go** | 空队列延迟退避机制 |
 | **websocket/handler.go** | WebSocket 消息处理和客户端注册 |
 | **detector/** | HTTP 协议检测器 |
-| **handlers/** | Web 管理界面处理器 (user.go, group.go, metric.go, sysconfig.go, anonymous.go) |
+| **alert/** | **告警评估引擎** |
+| **handlers/** | Web 管理界面处理器 (user.go, group.go, metric.go, sysconfig.go, anonymous.go, **trace.go**, **alert.go**) |
 | **middleware/cors.go** | CORS 中间件 |
 | **middleware/auth.go** | Token 认证中间件，从 Authorization header 解析用户信息 |
 | **handlers/login.go** | 登录 API 处理器 (`/sekiro-api/user-info/login`) |
@@ -168,6 +169,71 @@ sekiro-go/
 | MetricMinute | metric_minute | 分钟级指标 |
 | MetricHour | metric_hour | 小时级指标 |
 | MetricDay | metric_day | 天级指标 |
+| **AlertRule** | **alert_rule** | **告警规则** |
+| **AlertHistory** | **alert_history** | **告警历史记录** |
+| **TraceRecord** | **trace_record** | **调用链路追踪** |
+
+### 新增数据模型说明 (监控和可观测性)
+
+**告警规则 (AlertRule)**
+```go
+type AlertRule struct {
+    ID          int64     // 主键 ID
+    Name        string    // 规则名称（唯一）
+    Description string    // 规则描述
+    Group       string    // 分组名称，空表示全局规则
+    API         string    // API 名称，空表示所有 API
+    MetricName  string    // 指标名称，如 invoke.total, invoke.latency
+    Operator    string    // 操作符：>, <, >=, <=, ==, !=
+    Threshold   float64   // 阈值
+    Window      int       // 时间窗口（分钟）
+    WebhookURL  string    // Webhook URL
+    Email       string    // 通知邮箱
+    Enabled     bool      // 是否启用
+    CreatedAt   time.Time // 创建时间
+    UpdatedAt   time.Time // 更新时间
+}
+```
+
+**告警历史 (AlertHistory)**
+```go
+type AlertHistory struct {
+    ID           int64     // 主键 ID
+    RuleID       int64     // 规则 ID
+    RuleName     string    // 规则名称
+    Group        string    // 分组名称
+    API          string    // API 名称
+    MetricName   string    // 指标名称
+    CurrentValue float64   // 触发时的值
+    Threshold    float64   // 阈值
+    Operator     string    // 操作符
+    Level        string    // 告警级别：INFO, WARNING, CRITICAL
+    Notified     bool      // 是否已通知
+    NotifyError  string    // 通知错误信息
+    TriggeredAt  time.Time // 触发时间
+    Message      string    // 告警消息
+}
+```
+
+**调用链路追踪 (TraceRecord)**
+```go
+type TraceRecord struct {
+    ID           int64     // 主键 ID
+    TraceID      string    // 追踪 ID
+    SpanID       string    // Span ID
+    ParentSpanID string    // 父 Span ID
+    Group        string    // 分组名称
+    DeviceID     string    // 设备 ID
+    API          string    // API 名称
+    Caller       string    // 调用者
+    StartTime    time.Time // 开始时间
+    EndTime      time.Time // 结束时间
+    DurationMs   int64     // 耗时（毫秒）
+    Status       string    // 状态：SUCCESS, FAILURE
+    ErrorMessage string    // 错误消息
+    ExtraData    string    // 额外数据（JSON 格式）
+}
+```
 
 ## API 端点
 
@@ -204,6 +270,14 @@ sekiro-go/
 | `/api/metrics` | GET | 监控指标 |
 | `/api/metrics/list` | GET | 指标列表 |
 | `/api/metrics/dashboard` | GET | 仪表盘数据 |
+| `/api/traces` | GET | 追踪列表 |
+| `/api/traces/stats` | GET | 追踪统计 |
+| `/api/traces/timeline` | GET | 追踪时间线 |
+| `/api/traces/:traceId` | GET | 追踪详情 |
+| `/api/traces/:traceId/extra` | GET | 追踪额外数据 |
+| `/api/alerts/rules` | GET/POST/DELETE | 告警规则管理 |
+| `/api/alerts/rules/:id` | GET/PUT/DELETE | 告警规则详情 |
+| `/api/alerts/history` | GET | 告警历史 |
 
 ### 前端兼容 API (`/sekiro-api` 前缀)
 
@@ -226,6 +300,10 @@ sekiro-go/
 | `/sekiro-api/groupActions/list` | GET | Action 列表 |
 | `/sekiro-api/groupActions/create` | POST | 创建 Action |
 | `/sekiro-api/groupActions/delete` | POST | 删除 Action |
+| `/sekiro-api/traces/list` | GET | 追踪列表 |
+| `/sekiro-api/traces/detail` | GET | 追踪详情 |
+| `/sekiro-api/alert/rules` | GET/POST/DELETE | 告警规则 |
+| `/sekiro-api/alert/history` | GET | 告警历史 |
 
 ## 配置
 
@@ -355,6 +433,11 @@ database.InitFromConfig(
 | AnonymousGroup | `/anonymous` | 匿名分组 |
 | Monitor | `/monitor` | 监控页面 |
 | SystemPanel | `/system` | 系统面板 |
+| **MonitorDashboard** | `/monitor/dashboard` | **监控仪表盘（调用趋势、延迟分析）** |
+| **TraceList** | `/traces` | **追踪列表页面** |
+| **TraceDetail** | `/traces/:traceId` | **追踪详情页面** |
+| **AlertRules** | `/alerts/rules` | **告警规则管理页面** |
+| **AlertHistory** | `/alerts/history` | **告警历史记录页面** |
 
 ### 前端核心组件
 
@@ -364,6 +447,9 @@ database.InitFromConfig(
 | GroupMonitor | `web/src/components/GroupMonitor.jsx` | 监控图表组件（ECharts），展示调用趋势、QPS、设备状态 |
 | GroupAction | `web/src/components/GroupAction.jsx` | Action 管理组件 |
 | GroupDeviceList | `web/src/components/GroupDeviceList.jsx` | 设备列表组件 |
+| **TraceTimeline** | `web/src/components/TraceTimeline.jsx` | **追踪时间线图组件** |
+| **AlertRuleForm** | `web/src/components/AlertRuleForm.jsx` | **告警规则表单组件** |
+| **AlertHistoryTable** | `web/src/components/AlertHistoryTable.jsx` | **告警历史表格组件** |
 
 ## 开发注意事项
 

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"sync"
 	"sync/atomic"
 
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
@@ -30,13 +31,16 @@ type RouteParams struct {
 
 // Router handles routing decisions using different strategies
 type Router struct {
-	// roundRobinCounter for round-robin load balancing
-	roundRobinCounter uint64
+	// roundRobinCounter tracks per-group round-robin progress.
+	roundRobinCounter map[string]*uint64
+	mu                sync.Mutex
 }
 
 // NewRouter creates a new Router instance
 func NewRouter() *Router {
-	return &Router{}
+	return &Router{
+		roundRobinCounter: make(map[string]*uint64),
+	}
 }
 
 // Route selects a client from the group based on the routing strategy
@@ -92,8 +96,14 @@ func (r *Router) routeByConsistentHash(group *client.SekiroGroup, hashKey string
 		return nil
 	}
 
-	// Return the selected client
-	return group.GetClient(targetID)
+	selected := group.GetClient(targetID)
+	if selected == nil {
+		return nil
+	}
+	if selected.GetStatus() != client.StatusOnline {
+		return nil
+	}
+	return selected
 }
 
 // routeByRoundRobin routes to clients in round-robin order
@@ -103,9 +113,43 @@ func (r *Router) routeByRoundRobin(group *client.SekiroGroup) *client.SekiroClie
 		return nil
 	}
 
-	// Increment counter and get index
-	counter := atomic.AddUint64(&r.roundRobinCounter, 1)
-	index := int(counter) % len(clients)
+	eligible := filterEligibleClients(clients, true)
+	if len(eligible) == 0 {
+		eligible = filterEligibleClients(clients, false)
+	}
+	if len(eligible) == 0 {
+		eligible = clients
+	}
 
-	return clients[index]
+	counter := r.counterForGroup(group.Name())
+	index := int(atomic.AddUint64(counter, 1)-1) % len(eligible)
+
+	return eligible[index]
+}
+
+func filterEligibleClients(clients []*client.SekiroClient, requireHealthy bool) []*client.SekiroClient {
+	filtered := make([]*client.SekiroClient, 0, len(clients))
+	for _, c := range clients {
+		if c.GetStatus() != client.StatusOnline {
+			continue
+		}
+		if requireHealthy && !c.GetHealthStatus() {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
+}
+
+func (r *Router) counterForGroup(groupName string) *uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if counter, ok := r.roundRobinCounter[groupName]; ok {
+		return counter
+	}
+
+	counter := new(uint64)
+	r.roundRobinCounter[groupName] = counter
+	return counter
 }

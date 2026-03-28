@@ -175,7 +175,7 @@ CREATE INDEX idx_metric_day_delete ON metric_day(name, create_time);
 
 -- 插入默认管理员用户
 INSERT INTO user_info (user_name, password, is_admin, api_token, quota_qps)
-VALUES ('admin', 'admin123', TRUE, uuid_generate_v4()::text, 1000);
+VALUES ('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', TRUE, uuid_generate_v4()::text, 1000);
 
 -- 插入默认系统配置
 INSERT INTO sys_config (config_comment, config_key, config_value) VALUES
