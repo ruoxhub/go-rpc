@@ -158,29 +158,57 @@ func HandleSystemInfo(c *gin.Context) {
 // HandleFrontendListGroup 获取分组列表（前端兼容接口）
 // GET /sekiro-api/frontend/listGroup
 func HandleFrontendListGroup(c *gin.Context) {
-	var groups []model.GroupConfig
-	database.GetDB().Find(&groups)
+	db := database.GetDB()
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
-	var vos []GroupInfoVO
-	for _, g := range groups {
-		// 统计在线和禁用设备数量
-		var availableCount, disabledCount int64
-		database.GetDB().Model(&model.GroupDevice{}).
-			Where("group_name = ? AND last_active_time > ?", g.GroupName, time.Now().Add(-5*time.Minute)).
-			Count(&availableCount)
-		database.GetDB().Model(&model.GroupDevice{}).
-			Where("group_name = ? AND last_active_time <= ?", g.GroupName, time.Now().Add(-5*time.Minute)).
-			Count(&disabledCount)
+	// 使用优化版本：单次 JOIN + GROUP BY 查询替代 N+1 查询
+	var stats []struct {
+		ID                int64     `json:"id"`
+		GroupName         string    `json:"groupName"`
+		UserName          string    `json:"userName"`
+		QuotaQpsGroup     float64   `json:"quotaQpsGroup"`
+		QuotaQpsPerDevice float64   `json:"quotaQpsPerDevice"`
+		CreateDate        time.Time `json:"createTime"`
+		AvailableClients  int64     `json:"availableClients"`
+		DisabledClients   int64     `json:"disabledClients"`
+	}
 
+	err := db.Table("group_config gc").
+		Select(`
+			gc.id,
+			gc.group_name,
+			gc.user_name,
+			gc.quota_qps_group,
+			gc.quota_qps_per_device,
+			gc.create_date,
+			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
+			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
+		`, activeThreshold, activeThreshold).
+		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name").
+		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
+		Order("gc.create_date DESC").
+		Scan(&stats).Error
+
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	// 构建响应 VO
+	vos := make([]GroupInfoVO, 0, len(stats))
+	for _, s := range stats {
 		vos = append(vos, GroupInfoVO{
-			ID:                g.ID,
-			GroupName:         g.GroupName,
-			UserName:          g.UserName,
-			QuotaQpsGroup:     g.QuotaQpsGroup,
-			QuotaQpsPerDevice: g.QuotaQpsPerDevice,
-			CreateTime:        g.CreateDate.Format("2006-01-02T15:04:05"),
-			AvailableClients:  availableCount,
-			DisableClientSize: disabledCount,
+			ID:                s.ID,
+			GroupName:         s.GroupName,
+			UserName:          s.UserName,
+			QuotaQpsGroup:     s.QuotaQpsGroup,
+			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
+			CreateTime:        s.CreateDate.Format("2006-01-02T15:04:05"),
+			AvailableClients:  s.AvailableClients,
+			DisableClientSize: s.DisabledClients,
 		})
 	}
 
@@ -190,6 +218,32 @@ func HandleFrontendListGroup(c *gin.Context) {
 		"data":    vos,
 		"ok":      true,
 	})
+}
+
+// HandleFrontendAnonymousGroupList 获取匿名分组列表（前端兼容接口）
+// GET /sekiro-api/frontend/anonymousGroupList
+func HandleFrontendAnonymousGroupList(c *gin.Context) {
+	anonymousHandler := NewAnonymousGroupHandler()
+	anonymousHandler.ListOptimized(c)
+}
+
+// HandleFrontendGroupDetail 获取分组详情（前端兼容接口）
+// GET /sekiro-api/frontend/groupDetail?groupName=xxx
+func HandleFrontendGroupDetail(c *gin.Context) {
+	groupName := c.Query("groupName")
+	if groupName == "" {
+		c.JSON(400, gin.H{
+			"status":  -1,
+			"message": "groupName 参数必填",
+		})
+		return
+	}
+
+	// 将 groupName 设置为 URL 参数，以便 GetDetail 方法可以读取
+	c.Params = append(c.Params, gin.Param{Key: "groupName", Value: groupName})
+
+	groupHandler := NewGroupHandler()
+	groupHandler.GetDetail(c)
 }
 
 // RegisterRequest 注册请求

@@ -253,6 +253,8 @@ func (s *Server) registerRoutes() {
 		frontend := sekiroAPI.Group("/frontend")
 		{
 			frontend.GET("/listGroup", handlers.HandleFrontendListGroup)
+			frontend.GET("/anonymousGroupList", handlers.HandleFrontendAnonymousGroupList)
+			frontend.GET("/groupDetail", handlers.HandleFrontendGroupDetail)
 		}
 	}
 }
