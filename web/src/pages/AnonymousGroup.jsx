@@ -23,6 +23,8 @@ function AnonymousGroup() {
       const data = Array.isArray(response) ? response : (response.data || [])
       setGroups(data)
     } catch (err) {
+      // 错误已在 axios 拦截器中统一处理（401/403 跳转登录）
+      // 此处仅设置错误信息显示在页面上
       setError(err.message || '加载失败')
       console.error('Failed to load anonymous groups:', err)
     } finally {
@@ -32,11 +34,12 @@ function AnonymousGroup() {
 
   const handleDeleteGroup = async (groupName) => {
     try {
-      // TODO: 实现删除匿名分组的 API
+      await anonymousGroupApi.delete({ groupName })
       message.success(`分组 ${groupName} 已删除`)
       loadGroups()
     } catch (err) {
-      message.error('删除失败：' + err.message)
+      // 错误已在拦截器中处理，此处只需刷新列表
+      loadGroups()
     }
   }
 

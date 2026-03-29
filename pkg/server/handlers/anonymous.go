@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 )
 
 // AnonymousGroupHandler 匿名分组处理器
@@ -60,7 +61,7 @@ func (h *AnonymousGroupHandler) List(c *gin.Context) {
 	}
 
 	// 预计算时间阈值，避免多次计算
-	activeThreshold := time.Now().Add(-5 * time.Minute)
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
 	// 构建结果
 	var vos []AnonymousGroupVO
@@ -103,7 +104,7 @@ func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
 	// 查询匿名分组的统计信息
 	// 活跃：last_active_time > 5 分钟前
 	// 禁用：last_active_time <= 5 分钟前
-	activeThreshold := time.Now().Add(-5 * time.Minute)
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
 	var stats []struct {
 		GroupName string `json:"group_name"`
@@ -152,5 +153,52 @@ func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
 		"code":    0,
 		"message": "success",
 		"data":    vos,
+	})
+}
+
+// DeleteAnonymousGroupRequest 删除匿名分组请求
+type DeleteAnonymousGroupRequest struct {
+	GroupName string `json:"groupName" binding:"required"`
+}
+
+// Delete 删除匿名分组
+// 注意：匿名分组没有对应的 group_config 记录，只需要删除 group_device 表中的记录
+func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
+	var req DeleteAnonymousGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	// 检查是否是匿名分组（即不存在于 group_config 表中）
+	var groupCount int64
+	if err := database.GetDB().Model(&model.GroupConfig{}).
+		Where("group_name = ?", req.GroupName).
+		Count(&groupCount).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	if groupCount > 0 {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "不能删除已注册的分组，请在分组管理中删除",
+		})
+		return
+	}
+
+	// 删除匿名分组的所有设备记录
+	result := database.GetDB().Where("group_name = ?", req.GroupName).
+		Delete(&model.GroupDevice{})
+
+	if result.Error != nil {
+		c.JSON(500, gin.H{"code": 500, "message": result.Error.Error()})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    result.RowsAffected,
 	})
 }

@@ -65,7 +65,8 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 		// 匿名分组
 		anonGroups := api.Group("/anonymous-groups")
 		{
-			anonGroups.GET("", anonymousHandler.List)
+			anonGroups.GET("", anonymousHandler.ListOptimized) // 使用优化版本
+			anonGroups.DELETE("", anonymousHandler.Delete)     // 删除匿名分组
 		}
 
 		// 系统配置

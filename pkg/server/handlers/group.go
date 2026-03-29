@@ -42,32 +42,50 @@ type GroupInfoVO struct {
 
 // List 获取分组列表
 func (h *GroupHandler) List(c *gin.Context) {
-	var groups []model.GroupConfig
-	result := database.GetDB().Find(&groups)
+	db := database.GetDB()
 
-	var vos []GroupInfoVO
-	for _, g := range groups {
-		// 统计在线和禁用设备数量
-		var availableCount, disabledCount int64
-		database.GetDB().Model(&model.GroupDevice{}).
-			Where("group_name = ? AND last_active_time > ?", g.GroupName, time.Now().Add(-5*time.Minute)).
-			Count(&availableCount)
-		database.GetDB().Model(&model.GroupDevice{}).
-			Where("group_name = ? AND last_active_time <= ?", g.GroupName, time.Now().Add(-5*time.Minute)).
-			Count(&disabledCount)
+	// 优化版本：使用单次 JOIN + GROUP BY 查询替代 N+1 查询
+	// 查询所有分组及其设备统计信息
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
+	var stats []GroupStats
+	err := db.Table("group_config gc").
+		Select(`
+			gc.id,
+			gc.group_name,
+			gc.user_name,
+			gc.quota_qps_group,
+			gc.quota_qps_per_device,
+			gc.create_date,
+			COUNT(gd.id) as total_clients,
+			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
+			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
+		`, activeThreshold, activeThreshold).
+		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name").
+		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
+		Order("gc.create_date DESC").
+		Scan(&stats).Error
+
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	// 构建响应 VO
+	vos := make([]GroupInfoVO, 0, len(stats))
+	for _, s := range stats {
 		vos = append(vos, GroupInfoVO{
-			ID:                g.ID,
-			GroupName:         g.GroupName,
-			UserName:          g.UserName,
-			QuotaQpsGroup:     g.QuotaQpsGroup,
-			QuotaQpsPerDevice: g.QuotaQpsPerDevice,
-			CreateTime:        g.CreateDate.Format("2006-01-02 15:04:05"),
-			AvailableClients:  availableCount,
-			DisabledClients:   disabledCount,
+			ID:                s.ID,
+			GroupName:         s.GroupName,
+			UserName:          s.UserName,
+			QuotaQpsGroup:     s.QuotaQpsGroup,
+			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
+			CreateTime:        s.CreateDate.Format("2006-01-02 15:04:05"),
+			AvailableClients:  s.AvailableClients,
+			DisabledClients:   s.DisabledClients,
 			// 兼容旧版字段
-			AvailableClientSize: availableCount,
-			DisableClientSize:   disabledCount,
+			AvailableClientSize: s.AvailableClients,
+			DisableClientSize:   s.DisabledClients,
 		})
 	}
 
@@ -75,8 +93,21 @@ func (h *GroupHandler) List(c *gin.Context) {
 		"code":    0,
 		"message": "success",
 		"data":    vos,
-		"total":   result.RowsAffected,
+		"total":   int64(len(vos)),
 	})
+}
+
+// GroupStats 分组统计信息 (内部使用)
+type GroupStats struct {
+	ID                int64
+	GroupName         string
+	UserName          string
+	QuotaQpsGroup     float64
+	QuotaQpsPerDevice float64
+	CreateDate        time.Time
+	TotalClients      int64
+	AvailableClients  int64
+	DisabledClients   int64
 }
 
 // CreateGroupRequest 创建分组请求
@@ -183,14 +214,26 @@ func (h *GroupHandler) GetDetail(c *gin.Context) {
 		return
 	}
 
-	// 统计在线和禁用设备数量
-	var availableCount, disabledCount int64
-	database.GetDB().Model(&model.GroupDevice{}).
-		Where("group_name = ? AND last_active_time > ?", groupName, time.Now().Add(-5*time.Minute)).
-		Count(&availableCount)
-	database.GetDB().Model(&model.GroupDevice{}).
-		Where("group_name = ? AND last_active_time <= ?", groupName, time.Now().Add(-5*time.Minute)).
-		Count(&disabledCount)
+	// 优化版本：使用单次查询同时统计活跃和禁用设备数量
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
+
+	var stats struct {
+		Available int64 `json:"available"`
+		Disabled  int64 `json:"disabled"`
+	}
+
+	err := database.GetDB().Model(&model.GroupDevice{}).
+		Select(`
+			SUM(CASE WHEN last_active_time > ? THEN 1 ELSE 0 END) as available,
+			SUM(CASE WHEN last_active_time <= ? THEN 1 ELSE 0 END) as disabled
+		`, activeThreshold, activeThreshold).
+		Where("group_name = ?", groupName).
+		Scan(&stats).Error
+
+	if err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
 
 	c.JSON(200, gin.H{
 		"code":    0,
@@ -201,8 +244,8 @@ func (h *GroupHandler) GetDetail(c *gin.Context) {
 			"createTime":        group.CreateDate.Format("2006-01-02 15:04:05"),
 			"quotaQpsGroup":     group.QuotaQpsGroup,
 			"quotaQpsPerDevice": group.QuotaQpsPerDevice,
-			"availableClients":  availableCount,
-			"disabledClients":   disabledCount,
+			"availableClients":  stats.Available,
+			"disabledClients":   stats.Disabled,
 		},
 	})
 }

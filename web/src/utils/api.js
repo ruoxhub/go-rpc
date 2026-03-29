@@ -104,7 +104,8 @@ export const sysConfigApi = {
 }
 
 export const anonymousGroupApi = {
-  list: () => adminApi.get('/anonymous-groups')
+  list: () => adminApi.get('/anonymous-groups'),
+  delete: (data) => adminApi.delete('/anonymous-groups', { data })
 }
 
 export const metricApi = {

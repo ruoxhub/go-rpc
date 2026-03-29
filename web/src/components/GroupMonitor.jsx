@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Card, Empty, Select, Spin, Row, Col, Statistic } from 'antd'
+import { Card, Empty, Select, Spin, Row, Col, Statistic, Alert, Button } from 'antd'
 import ReactECharts from 'echarts-for-react'
 import { metricApi } from '../utils/api'
 
@@ -10,6 +10,8 @@ function GroupMonitor({ groupName }) {
   const [loading, setLoading] = useState(false)
   const [metricsData, setMetricsData] = useState([])
   const [dashboardData, setDashboardData] = useState(null)
+  const [dashboardLoading, setDashboardLoading] = useState(false)
+  const [dashboardError, setDashboardError] = useState(false)
   const chartRef = useRef(null)
 
   // 加载监控数据
@@ -30,11 +32,17 @@ function GroupMonitor({ groupName }) {
 
   // 加载大盘数据
   const loadDashboard = async () => {
+    setDashboardLoading(true)
+    setDashboardError(false)
     try {
       const result = await metricApi.getDashboard()
       setDashboardData(result.data)
     } catch (error) {
       console.error('加载大盘数据失败:', error)
+      setDashboardError(true)
+      // 不显示错误提示，仅记录日志
+    } finally {
+      setDashboardLoading(false)
     }
   }
 
@@ -259,9 +267,10 @@ function GroupMonitor({ groupName }) {
           <Card>
             <Statistic
               title="总调用量"
-              value={dashboardData?.totalCalls || 0}
+              value={dashboardLoading ? undefined : (dashboardData?.totalCalls || 0)}
               suffix="次"
               valueStyle={{ color: '#1890ff' }}
+              loading={dashboardLoading}
             />
           </Card>
         </Col>
@@ -269,9 +278,10 @@ function GroupMonitor({ groupName }) {
           <Card>
             <Statistic
               title="在线设备"
-              value={dashboardData?.onlineDevices || 0}
+              value={dashboardLoading ? undefined : (dashboardData?.onlineDevices || 0)}
               suffix="台"
               valueStyle={{ color: '#52c41a' }}
+              loading={dashboardLoading}
             />
           </Card>
         </Col>
@@ -279,13 +289,29 @@ function GroupMonitor({ groupName }) {
           <Card>
             <Statistic
               title="分组数量"
-              value={dashboardData?.totalGroups || 0}
+              value={dashboardLoading ? undefined : (dashboardData?.totalGroups || 0)}
               suffix="个"
               valueStyle={{ color: '#722ed1' }}
+              loading={dashboardLoading}
             />
           </Card>
         </Col>
       </Row>
+
+      {dashboardError && !dashboardLoading && (
+        <Alert
+          message="大盘数据加载失败"
+          description="部分概览数据可能无法显示，请刷新页面重试"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          action={
+            <Button size="small" onClick={loadDashboard}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
       {/* 调用量趋势图表 */}
       <Card title="调用量趋势" style={{ marginBottom: 24 }}>
