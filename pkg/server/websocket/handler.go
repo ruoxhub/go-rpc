@@ -3,11 +3,14 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 )
@@ -45,6 +48,19 @@ func (m *SekiroMessage) GetSequence() string {
 		return m.SekiroSeq
 	}
 	return m.Sequence
+}
+
+// extractRemoteIP extracts the remote IP address from WebSocket connection
+func extractRemoteIP(conn *websocket.Conn) string {
+	if conn == nil || conn.UnderlyingConn() == nil {
+		return ""
+	}
+	remoteAddr := conn.UnderlyingConn().RemoteAddr()
+	if remoteAddr == nil {
+		return ""
+	}
+	ip, _, _ := net.SplitHostPort(remoteAddr.String())
+	return ip
 }
 
 // Handler handles WebSocket connections for Sekiro clients
@@ -93,6 +109,26 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// Create Sekiro client
 	sekiroClient := client.NewSekiroClient(group, clientID, conn)
 	sekiroClient.SetStatus(client.StatusOnline)
+
+	// Create or update device record in database
+	remoteIP := extractRemoteIP(conn)
+	now := time.Now()
+	device := model.GroupDevice{
+		GroupName:      group,
+		DeviceID:       clientID,
+		RemoteIP:       remoteIP,
+		LastActiveTime: now,
+	}
+
+	// Use FirstOrCreate to avoid duplicate inserts
+	// If record exists, update LastActiveTime
+	if err := database.GetDB().Where("group_name = ? AND device_id = ?", group, clientID).
+		FirstOrCreate(&device).Error; err != nil {
+		logger.Warnf("Failed to create device record: %v", err)
+		// Database error doesn't affect connection establishment
+	} else {
+		logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
+	}
 
 	// Register client
 	h.clientManager.Register(sekiroClient)
@@ -185,6 +221,13 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
 		sekiroClient := h.clientManager.GetClient(msg.Group, msg.ClientID)
 		if sekiroClient != nil {
 			sekiroClient.MarkSuccess()
+		}
+
+		// Update LastActiveTime in database
+		if err := database.GetDB().Model(&model.GroupDevice{}).
+			Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
+			Update("last_active_time", time.Now()).Error; err != nil {
+			logger.Warnf("Failed to update device last_active_time: %v", err)
 		}
 	}
 
