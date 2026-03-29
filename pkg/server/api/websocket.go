@@ -8,17 +8,20 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
+	wsHandler "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
 // WebSocketHandler handles WebSocket connections
 type WebSocketHandler struct {
-	clientManager *client.ClientManager
+	clientManager  *client.ClientManager
+	sekiroHandler  *wsHandler.Handler
 }
 
 // NewWebSocketHandler creates a new WebSocketHandler
-func NewWebSocketHandler(manager *client.ClientManager) *WebSocketHandler {
+func NewWebSocketHandler(manager *client.ClientManager, sekiroHandler *wsHandler.Handler) *WebSocketHandler {
 	return &WebSocketHandler{
 		clientManager: manager,
+		sekiroHandler: sekiroHandler,
 	}
 }
 
@@ -50,11 +53,9 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 
 	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
-	// TODO: 实际的连接管理将在后续任务实现
-	// 现在只是简单关闭连接
-	wsConn.Close()
-
-	c.Status(http.StatusOK)
+	// 使用完整的 Sekiro WebSocket 处理器处理连接
+	ctx := context.Background()
+	h.sekiroHandler.HandleConnection(ctx, wsConn, group, clientID)
 }
 
 // upgradeWebSocket performs the WebSocket upgrade
@@ -103,33 +104,14 @@ func (h *WebSocketHandler) HandleWebSocketUpgrade(c *gin.Context, onConnect func
 
 	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
-	// 启动连接处理器
+	// 启动连接处理器（使用完整的 Sekiro WebSocket 处理器）
 	go func() {
 		defer conn.Close()
-		if onConnect != nil {
-			onConnect(conn)
-		}
-		h.handleWebSocketConnection(context.Background(), conn, group, clientID)
+		ctx := context.Background()
+		h.sekiroHandler.HandleConnection(ctx, conn, group, clientID)
 	}()
 
 	c.Status(http.StatusOK)
-}
-
-// handleWebSocketConnection handles the WebSocket connection
-func (h *WebSocketHandler) handleWebSocketConnection(ctx context.Context, conn *websocket.Conn, group, clientID string) {
-	// TODO: 实际的 WebSocket 消息处理将在后续任务实现
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				logger.Debugf("WebSocket connection closed: %v", err)
-				return
-			}
-		}
-	}
 }
 
 // IsWebSocketUpgrade checks if request is a WebSocket upgrade request

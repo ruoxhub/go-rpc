@@ -6,7 +6,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
 )
+
+// configServiceRef 配置服务引用（用于手动触发刷新）
+var configServiceRef pkgconfig.Service
+
+// SetConfigService 设置配置服务引用
+func SetConfigService(service pkgconfig.Service) {
+	configServiceRef = service
+}
 
 // SysConfigHandler 系统配置处理器
 type SysConfigHandler struct{}
@@ -87,6 +96,17 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
+
+	// 配置更新后，立即触发配置服务刷新
+	if configServiceRef != nil {
+		if err := configServiceRef.Refresh(); err != nil {
+			c.JSON(500, gin.H{"code": 500, "message": "配置已保存，但刷新失败：" + err.Error()})
+			return
+		}
+	}
+
+	// 记录审计日志
+	auditUpdateConfig(c, req.Key, req.Value)
 
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }

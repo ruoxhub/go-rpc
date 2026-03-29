@@ -137,12 +137,22 @@ func (h *UserHandler) UpdateQps(c *gin.Context) {
 		return
 	}
 
+	// 获取用户信息用于审计日志
+	var user model.UserInfo
+	if err := database.GetDB().Where("id = ?", req.UserID).First(&user).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": "user not found"})
+		return
+	}
+
 	if err := database.GetDB().Model(&model.UserInfo{}).
 		Where("id = ?", req.UserID).
 		Update("quota_qps", req.QuotaQps).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
+
+	// 记录审计日志
+	auditUpdateQps(c, "user", user.UserName, req.QuotaQps)
 
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }

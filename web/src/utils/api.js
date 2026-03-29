@@ -105,7 +105,8 @@ export const sysConfigApi = {
 
 export const anonymousGroupApi = {
   list: () => adminApi.get('/anonymous-groups'),
-  delete: (data) => adminApi.delete('/anonymous-groups', { data })
+  delete: (data) => adminApi.delete('/anonymous-groups', { data }),
+  convert: (data) => adminApi.post('/anonymous-groups/convert', data)
 }
 
 export const metricApi = {
@@ -130,6 +131,15 @@ export const alertApi = {
   updateRule: (id, data) => apiClient.put(`/alerts/rules/${id}`, data),
   deleteRule: (id) => apiClient.delete(`/alerts/rules/${id}`),
   getHistory: (params) => apiClient.get('/alerts/history', { params })
+}
+
+// 前端兼容 API 封装（/sekiro-api/frontend/*）
+export const frontendApi = {
+  listGroup: () => apiClient.get('/sekiro-api/frontend/listGroup'),
+  anonymousGroupList: () => apiClient.get('/sekiro-api/frontend/anonymousGroupList'),
+  groupDetail: (groupName) => apiClient.get('/sekiro-api/frontend/groupDetail', {
+    params: { groupName }
+  })
 }
 
 export { adminApi, apiClient, handleAuthFailure }

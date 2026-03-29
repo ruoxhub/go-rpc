@@ -24,6 +24,7 @@ type Config struct {
 	Cors           bool          `yaml:"Cors"`           // Enable CORS
 	RouterReplace  RouterReplace `yaml:"RouterReplace"`  // Route prefix replacement
 	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
+	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
 }
 
 // HttpsConfig holds HTTPS related configuration
@@ -48,6 +49,21 @@ type DatabaseConfig struct {
 	Password string `yaml:"Password"` // Database password
 	DBName   string `yaml:"DBName"`   // Database name
 	SSLMode  string `yaml:"SSLMode"`  // SSL mode
+}
+
+// AlertConfig holds alert notification configuration
+type AlertConfig struct {
+	SMTP SMTPConfig `yaml:"SMTP"` // SMTP configuration for email notifications
+}
+
+// SMTPConfig holds SMTP server configuration
+type SMTPConfig struct {
+	Host     string `yaml:"Host"`     // SMTP server host
+	Port     int    `yaml:"Port"`     // SMTP server port
+	Username string `yaml:"Username"` // SMTP username
+	Password string `yaml:"Password"` // SMTP password
+	From     string `yaml:"From"`     // Sender email address
+	UseTLS   bool   `yaml:"UseTLS"`   // Enable TLS
 }
 
 // DefaultConfig returns default configuration
@@ -76,6 +92,16 @@ func DefaultConfig() *Config {
 		Cors:     true,
 		Mode:     "release",
 		CloseLog: false,
+		Alert: AlertConfig{
+			SMTP: SMTPConfig{
+				Host:     "localhost",
+				Port:     25,
+				Username: "",
+				Password: "",
+				From:     "alert@sekiro.local",
+				UseTLS:   false,
+			},
+		},
 	}
 }
 

@@ -15,6 +15,52 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 )
 
+// DefaultGroupActions 默认分组 Actions 列表
+// 当设备连接到正式分组时，这些 Actions 会被自动添加到 group_actions 表中
+var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}
+
+// ensureDefaultActions ensures default actions exist for a group
+// 当设备连接到正式分组时，自动添加默认 Actions
+func (h *Handler) ensureDefaultActions(groupName string) {
+	for _, actionName := range DefaultGroupActions {
+		// 检查 action 是否已存在
+		var count int64
+		if err := database.GetDB().Model(&model.GroupAction{}).
+			Where("group_name = ? AND action_name = ?", groupName, actionName).
+			Count(&count).Error; err != nil {
+			logger.Warnf("Failed to check action existence: group=%s, action=%s, err=%v", groupName, actionName, err)
+			continue
+		}
+
+		if count == 0 {
+			// 添加默认 action
+			action := model.GroupAction{
+				GroupName:  groupName,
+				ActionName: actionName,
+				CreateDate: time.Now(),
+			}
+			if err := database.GetDB().Create(&action).Error; err != nil {
+				logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", groupName, actionName, err)
+			} else {
+				logger.Infof("Default action created: group=%s, action=%s", groupName, actionName)
+			}
+		}
+	}
+}
+
+// isGroupRegistered checks if a group exists in group_config table
+// 检查分组是否已注册（存在于 group_config 表中）
+func (h *Handler) isGroupRegistered(groupName string) bool {
+	var count int64
+	if err := database.GetDB().Model(&model.GroupConfig{}).
+		Where("group_name = ?", groupName).
+		Count(&count).Error; err != nil {
+		logger.Warnf("Failed to check group registration: group=%s, err=%v", groupName, err)
+		return false
+	}
+	return count > 0
+}
+
 // MessageType defines Sekiro message types
 type MessageType string
 
@@ -109,6 +155,17 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// Create Sekiro client
 	sekiroClient := client.NewSekiroClient(group, clientID, conn)
 	sekiroClient.SetStatus(client.StatusOnline)
+
+	// 检查分组是否已注册（存在于 group_config 表中）
+	isRegistered := h.isGroupRegistered(group)
+	if isRegistered {
+		logger.Infof("Connected to registered group: group=%s", group)
+		// 正式分组：自动添加默认 Actions
+		h.ensureDefaultActions(group)
+	} else {
+		logger.Infof("Connected to anonymous group (not registered): group=%s", group)
+		// 匿名分组：设备归入匿名分组管理
+	}
 
 	// Create or update device record in database
 	remoteIP := extractRemoteIP(conn)

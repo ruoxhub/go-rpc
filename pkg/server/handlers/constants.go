@@ -16,3 +16,7 @@ const (
 	// DefaultDeviceQPS 默认设备 QPS 限制
 	DefaultDeviceQPS = 10.0
 )
+
+// 默认 Actions 列表
+// 当设备连接到正式分组时，这些 Actions 会被自动添加到 group_actions 表中
+var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}

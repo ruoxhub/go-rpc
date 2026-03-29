@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Input, Spin, Empty, Alert, Tag, Space, Button, Popconfirm, message } from 'antd'
-import { SearchOutlined, DeleteOutlined, SyncOutlined } from '@ant-design/icons'
+import { Table, Input, Spin, Empty, Alert, Tag, Space, Button, Popconfirm, message, Modal, Form, InputNumber } from 'antd'
+import { SearchOutlined, DeleteOutlined, SyncOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { anonymousGroupApi } from '../utils/api'
 
 function AnonymousGroup() {
@@ -8,6 +8,9 @@ function AnonymousGroup() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [searchText, setSearchText] = useState('')
+  const [convertModalVisible, setConvertModalVisible] = useState(false)
+  const [convertingGroup, setConvertingGroup] = useState(null)
+  const [convertForm] = Form.useForm()
 
   // 加载匿名分组列表
   useEffect(() => {
@@ -40,6 +43,33 @@ function AnonymousGroup() {
     } catch (err) {
       // 错误已在拦截器中处理，此处只需刷新列表
       loadGroups()
+    }
+  }
+
+  const handleConvertGroup = (groupName) => {
+    setConvertingGroup(groupName)
+    setConvertModalVisible(true)
+    convertForm.setFieldsValue({
+      groupName,
+      quotaQpsGroup: 100,
+      quotaQpsPerDevice: 10
+    })
+  }
+
+  const handleConvertConfirm = async () => {
+    try {
+      const values = await convertForm.validateFields()
+      await anonymousGroupApi.convert({
+        groupName: values.groupName,
+        quotaQpsGroup: values.quotaQpsGroup,
+        quotaQpsPerDevice: values.quotaQpsPerDevice
+      })
+      message.success(`分组 ${values.groupName} 已转换为正式分组`)
+      setConvertModalVisible(false)
+      loadGroups()
+    } catch (err) {
+      // 错误已在拦截器中处理
+      console.error('Failed to convert group:', err)
     }
   }
 
@@ -104,6 +134,14 @@ function AnonymousGroup() {
       align: 'center',
       render: (_, record) => (
         <Space size="small">
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckCircleOutlined />}
+            onClick={() => handleConvertGroup(record.groupName)}
+          >
+            转为正式分组
+          </Button>
           <Button
             type="link"
             size="small"
@@ -189,6 +227,58 @@ function AnonymousGroup() {
           }}
         />
       )}
+
+      {/* 转换确认对话框 */}
+      <Modal
+        title="将匿名分组转换为正式分组"
+        open={convertModalVisible}
+        onOk={handleConvertConfirm}
+        onCancel={() => {
+          setConvertModalVisible(false)
+          convertForm.resetFields()
+        }}
+        okText="确认转换"
+        cancelText="取消"
+        width={500}
+      >
+        <Form
+          form={convertForm}
+          layout="vertical"
+          initialValues={{
+            quotaQpsGroup: 100,
+            quotaQpsPerDevice: 10
+          }}
+        >
+          <Form.Item
+            name="groupName"
+            label="分组名称"
+            rules={[{ required: true, message: '请输入分组名称' }]}
+          >
+            <Input disabled placeholder="请输入分组名称" />
+          </Form.Item>
+          <Form.Item
+            name="quotaQpsGroup"
+            label="分组 QPS 限制"
+            rules={[{ required: true, message: '请输入 QPS 限制' }]}
+          >
+            <InputNumber min={1} max={10000} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item
+            name="quotaQpsPerDevice"
+            label="设备 QPS 限制"
+            rules={[{ required: true, message: '请输入设备 QPS 限制' }]}
+          >
+            <InputNumber min={1} max={1000} style={{ width: '100%' }} />
+          </Form.Item>
+        </Form>
+        <Alert
+          message="转换后将自动添加默认 Actions"
+          description="系统将为该分组自动添加 invoke, execJs, getHtml, getCookie 四个默认 Action"
+          type="info"
+          showIcon
+          style={{ marginTop: 16 }}
+        />
+      </Modal>
     </div>
   )
 }

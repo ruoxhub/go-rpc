@@ -132,13 +132,15 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Database migration completed successfully")
 
-	// 启动配置服务（5 秒刷新间隔）
-	ctx := context.Background()
-	if err := s.configService.Start(ctx, 5*time.Second); err != nil {
-		logger.Errorf("Failed to start config service: %v", err)
-		// 配置服务启动失败不影响服务器启动
+	// 启动配置服务（仅启动时加载一次，后续在配置更新时手动触发刷新）
+	if err := s.configService.Refresh(); err != nil {
+		logger.Errorf("Failed to load config: %v", err)
+		// 配置加载失败不影响服务器启动
 	}
 	logger.Info("Config service started successfully")
+
+	// 设置配置服务引用到 handlers 包（用于手动触发刷新）
+	handlers.SetConfigService(s.configService)
 
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
@@ -146,6 +148,20 @@ func (s *Server) Start() error {
 
 	metricsReader := alert.NewDefaultMetricsReader()
 	s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
+
+	// 配置 SMTP 通知
+	if s.yamlConfig != nil {
+		smtpConfig := alert.SMTPConfig{
+			Host:     s.yamlConfig.Alert.SMTP.Host,
+			Port:     s.yamlConfig.Alert.SMTP.Port,
+			Username: s.yamlConfig.Alert.SMTP.Username,
+			Password: s.yamlConfig.Alert.SMTP.Password,
+			From:     s.yamlConfig.Alert.SMTP.From,
+			UseTLS:   s.yamlConfig.Alert.SMTP.UseTLS,
+		}
+		s.alertEvaluator.SetSMTPConfig(smtpConfig)
+	}
+
 	s.alertEvaluator.Start(context.Background())
 
 	mode := gin.ReleaseMode
@@ -204,6 +220,15 @@ func (s *Server) Start() error {
 func (s *Server) registerRoutes() {
 	webui.RegisterRoutes(s.httpServer.Engine())
 	s.httpServer.Engine().GET("/", webui.ServeIndex)
+
+	// 健康检查端点
+	s.httpServer.Engine().GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":    "healthy",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"version":   "1.0.0",
+		})
+	})
 
 	s.httpServer.Engine().NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||

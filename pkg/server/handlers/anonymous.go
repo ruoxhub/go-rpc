@@ -4,8 +4,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // AnonymousGroupHandler 匿名分组处理器
@@ -200,5 +203,117 @@ func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
 		"code":    0,
 		"message": "success",
 		"data":    result.RowsAffected,
+	})
+}
+
+// ConvertAnonymousGroupRequest 转换匿名分组请求
+type ConvertAnonymousGroupRequest struct {
+	GroupName         string  `json:"groupName" binding:"required"`
+	QuotaQpsGroup     float64 `json:"quotaQpsGroup"`
+	QuotaQpsPerDevice float64 `json:"quotaQpsPerDevice"`
+}
+
+// ConvertAnonymousGroup 将匿名分组转换为正式分组
+// POST /api/anonymous-groups/convert
+func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
+	var req ConvertAnonymousGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+
+	// 检查是否是匿名分组（即不存在于 group_config 表中）
+	var groupCount int64
+	if err := database.GetDB().Model(&model.GroupConfig{}).
+		Where("group_name = ?", req.GroupName).
+		Count(&groupCount).Error; err != nil {
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	if groupCount > 0 {
+		c.JSON(400, gin.H{
+			"code":    400,
+			"message": "该分组已是正式分组，无需转换",
+		})
+		return
+	}
+
+	// 从认证中间件获取当前用户信息
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		return
+	}
+
+	// 获取默认 QPS 配置
+	var defaultGroupQps float64 = 100
+	var defaultDeviceQps float64 = 10
+	cfgSvc, cfgExists := c.Get("configService")
+	if cfgExists {
+		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
+			defaultGroupQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaGroup, 100.0)
+			defaultDeviceQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaPerDevice, 10.0)
+		}
+	}
+
+	// 创建分组配置（事务中）
+	tx := database.GetDB().Begin()
+
+	group := model.GroupConfig{
+		GroupName:         req.GroupName,
+		UserName:          user.UserName,
+		QuotaQpsGroup:     req.QuotaQpsGroup,
+		QuotaQpsPerDevice: req.QuotaQpsPerDevice,
+		CreateDate:        time.Now(),
+	}
+
+	// 如果用户未指定 QPS，使用默认值
+	if group.QuotaQpsGroup <= 0 {
+		group.QuotaQpsGroup = defaultGroupQps
+	}
+	if group.QuotaQpsPerDevice <= 0 {
+		group.QuotaQpsPerDevice = defaultDeviceQps
+	}
+
+	if err := tx.Create(&group).Error; err != nil {
+		tx.Rollback()
+		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	// 为该分组自动添加默认 Actions
+	for _, actionName := range DefaultGroupActions {
+		var actionCount int64
+		if err := tx.Model(&model.GroupAction{}).
+			Where("group_name = ? AND action_name = ?", req.GroupName, actionName).
+			Count(&actionCount).Error; err != nil {
+			logger.Warnf("Failed to check action existence: group=%s, action=%s, err=%v", req.GroupName, actionName, err)
+			continue
+		}
+
+		if actionCount == 0 {
+			action := model.GroupAction{
+				GroupName:  req.GroupName,
+				ActionName: actionName,
+				CreateDate: time.Now(),
+			}
+			if err := tx.Create(&action).Error; err != nil {
+				logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", req.GroupName, actionName, err)
+			} else {
+				logger.Infof("Default action created during conversion: group=%s, action=%s", req.GroupName, actionName)
+			}
+		}
+	}
+
+	tx.Commit()
+
+	// 记录审计日志
+	auditConvertGroup(c, "anonymous:"+req.GroupName, req.GroupName)
+
+	c.JSON(200, gin.H{
+		"code":    0,
+		"message": "success",
+		"data":    group.ID,
 	})
 }

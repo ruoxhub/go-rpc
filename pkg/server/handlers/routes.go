@@ -67,6 +67,7 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 		{
 			anonGroups.GET("", anonymousHandler.ListOptimized) // 使用优化版本
 			anonGroups.DELETE("", anonymousHandler.Delete)     // 删除匿名分组
+			anonGroups.POST("/convert", anonymousHandler.ConvertAnonymousGroup) // 转换为正式分组
 		}
 
 		// 系统配置

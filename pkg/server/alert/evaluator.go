@@ -23,6 +23,7 @@ type Evaluator struct {
 	shutdown      chan struct{}
 	wg            sync.WaitGroup
 	metricsReader MetricsReader
+	notifier      Notifier
 }
 
 // MetricsReader 指标数据读取接口
@@ -42,6 +43,7 @@ func NewEvaluator(evalInterval time.Duration, metricsReader MetricsReader) *Eval
 		evalInterval:  evalInterval,
 		metricsReader: metricsReader,
 		shutdown:      make(chan struct{}),
+		notifier:      NewDefaultNotifier(),
 	}
 }
 
@@ -82,6 +84,22 @@ func (e *Evaluator) Stop() {
 // ReloadRules 重新加载规则
 func (e *Evaluator) ReloadRules() {
 	e.loadRules()
+}
+
+// SetNotifier 设置通知发送器
+func (e *Evaluator) SetNotifier(notifier Notifier) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.notifier = notifier
+}
+
+// SetSMTPConfig 设置 SMTP 配置（便捷方法）
+func (e *Evaluator) SetSMTPConfig(config SMTPConfig) {
+	if e.notifier != nil {
+		if dn, ok := e.notifier.(*DefaultNotifier); ok {
+			dn.SetSMTPConfig(config)
+		}
+	}
 }
 
 // loadRules 从数据库加载告警规则
@@ -240,29 +258,7 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 
 // sendNotification 发送告警通知
 func (e *Evaluator) sendNotification(rule model.AlertRule, history *model.AlertHistory) error {
-	// 发送 Webhook 通知
-	if rule.WebhookURL != "" {
-		if err := e.sendWebhook(rule.WebhookURL, history); err != nil {
-			return fmt.Errorf("webhook failed: %w", err)
-		}
-	}
-
-	// 发送邮件通知（预留接口）
-	if rule.Email != "" {
-		// TODO: 实现邮件发送
-		logger.Info("Email notification not implemented yet",
-			zap.String("email", rule.Email))
-	}
-
-	return nil
-}
-
-// sendWebhook 发送 Webhook 通知
-func (e *Evaluator) sendWebhook(url string, history *model.AlertHistory) error {
-	// TODO: 实现 Webhook 发送
-	// 这里可以调用 net/http 发送 POST 请求
-	logger.Debug("Webhook notification", zap.String("url", url))
-	return nil
+	return SendAlertNotification(e.notifier, rule, history)
 }
 
 // DefaultMetricsReader 默认指标读取器

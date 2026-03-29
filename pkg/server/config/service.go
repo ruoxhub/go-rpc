@@ -1,10 +1,10 @@
 package config
 
 import (
-	"context"
+	"hash/fnv"
+	"sort"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
@@ -38,8 +38,6 @@ const (
 
 // Service 配置服务接口
 type Service interface {
-	// Start 启动配置服务（后台刷新）
-	Start(ctx context.Context, refreshInterval time.Duration) error
 	// GetConfig 获取配置值（字符串）
 	GetConfig(key string) string
 	// GetConfigBool 获取配置值（布尔型）
@@ -58,6 +56,7 @@ type Service interface {
 type service struct {
 	configs sync.Map // 内存缓存 key=ConfigKey, value=string
 	mu      sync.RWMutex
+	lastConfigsHash uint64 // 上一次配置的哈希值，用于检测变化
 }
 
 // NewService 创建配置服务实例
@@ -65,20 +64,6 @@ func NewService() Service {
 	return &service{
 		configs: sync.Map{},
 	}
-}
-
-// Start 启动配置服务（加载初始配置并启动后台刷新）
-func (s *service) Start(ctx context.Context, refreshInterval time.Duration) error {
-	// 初始加载
-	if err := s.Refresh(); err != nil {
-		logger.Error("初始加载配置失败", zap.Error(err))
-		// 不返回错误，继续启动（使用空配置）
-	}
-
-	// 启动后台刷新 goroutine
-	go s.startBackgroundRefresh(ctx, refreshInterval)
-
-	return nil
 }
 
 // GetConfig 获取配置值
@@ -175,32 +160,47 @@ func (s *service) Refresh() error {
 		newConfigs[cfg.ConfigKey] = cfg.ConfigValue
 	}
 
-	// 原子性替换所有配置
-	s.configs = sync.Map{}
-	for key, val := range newConfigs {
-		s.configs.Store(key, val)
+	// 计算新配置的哈希值，用于检测变化
+	newHash := s.computeConfigsHash(newConfigs)
+
+	// 对比哈希值，只有配置真正变化时才更新
+	s.mu.Lock()
+	hasChanged := s.lastConfigsHash != newHash
+	if hasChanged {
+		// 原子性替换所有配置
+		s.configs = sync.Map{}
+		for key, val := range newConfigs {
+			s.configs.Store(key, val)
+		}
+		s.lastConfigsHash = newHash
+	}
+	s.mu.Unlock()
+
+	// 仅在配置变化时记录日志
+	if hasChanged {
+		logger.Info("配置已更新", zap.Int("count", len(configs)))
 	}
 
-	logger.Info("配置刷新成功", zap.Int("count", len(configs)))
 	return nil
 }
 
-// startBackgroundRefresh 后台定期刷新配置
-func (s *service) startBackgroundRefresh(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := s.Refresh(); err != nil {
-				logger.Error("后台刷新配置失败", zap.Error(err))
-			}
-		case <-ctx.Done():
-			logger.Info("停止配置后台刷新")
-			return
-		}
+// computeConfigsHash 计算配置映射的哈希值
+func (s *service) computeConfigsHash(configs map[string]string) uint64 {
+	h := fnv.New64a()
+	// 为了确定性，按 key 排序后计算
+	keys := make([]string, 0, len(configs))
+	for k := range configs {
+		keys = append(keys, k)
 	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write([]byte("="))
+		h.Write([]byte(configs[k]))
+		h.Write([]byte("\n"))
+	}
+	return h.Sum64()
 }
 
 // 确保 service 实现 Service 接口

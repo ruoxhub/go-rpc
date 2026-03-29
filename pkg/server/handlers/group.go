@@ -201,6 +201,10 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	// 记录审计日志
+	auditDeleteGroup(c, req.GroupName)
+
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
@@ -280,6 +284,9 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 		return
 	}
 
+	// 记录审计日志
+	auditUpdateQps(c, "group", req.GroupName, req.QuotaQpsGroup)
+
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
@@ -345,6 +352,9 @@ func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
+
+	// 记录审计日志
+	auditDeleteDevice(c, req.GroupName, req.DeviceID)
 
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
@@ -432,6 +442,9 @@ func (h *GroupHandler) DeleteAction(c *gin.Context) {
 		return
 	}
 
+	// 记录审计日志
+	auditDeleteAction(c, req.GroupName, req.ActionName)
+
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
 
@@ -470,6 +483,9 @@ func (h *GroupHandler) DisableDevice(c *gin.Context) {
 			return
 		}
 	}
+
+	// 记录审计日志
+	auditDisableDevice(c, req.GroupName, req.DeviceID)
 
 	c.JSON(200, gin.H{"code": 0, "message": "success"})
 }
