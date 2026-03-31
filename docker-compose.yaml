@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  sekiro-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sekiro-server
+    restart: unless-stopped
+    ports:
+      - "${SEKIRO_PORT:-5612}:5612"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Shanghai
+    env_file:
+      - .env
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - sekiro-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5612/business/groupList"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: sekiro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ${DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+      - ./deploy/postgres/migration.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - sekiro-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sekiro}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  sekiro-network:
+    driver: bridge

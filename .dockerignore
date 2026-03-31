@@ -1,0 +1,54 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Build outputs
+build/
+dist/
+bin/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Dependencies
+vendor/
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+
+# Environment
+.env
+
+# Docker compose local overrides
+docker-compose.override.yaml
+docker-compose.local.yaml
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Tests
+test-results/
+
+# Node
+web/node_modules/
+web/package-lock.json
+
+# Misc
+.DS_Store
+Thumbs.db

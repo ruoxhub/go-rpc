@@ -1,0 +1,47 @@
+# Sekiro RPC Server Configuration
+# This file is mounted into the Docker container
+
+# Basic listen configuration
+# Format: host:port or :port (binds to all interfaces)
+BasicListen: ":5612"
+
+# Alternatively, specify host and port separately
+Host: "0.0.0.0"
+Port: 5612
+
+# Default timeout for RPC calls in seconds
+DefaultTimeOut: 30
+
+# Enable or disable logging
+CloseLog: false
+
+# Enable or disable web access logging
+CloseWebLog: false
+
+# Running mode: debug or release
+Mode: release
+
+# Enable CORS (Cross-Origin Resource Sharing)
+Cors: true
+
+# HTTPS configuration (optional)
+HttpsServices:
+  IsEnable: false
+  HttpsListen: ":5643"
+  PemPath: "certs/server.pem"
+  KeyPath: "certs/server.key"
+
+# Route prefix replacement (optional)
+# Useful when deploying behind a reverse proxy
+RouterReplace:
+  IsEnable: false
+  ReplaceRoute: "/sekiro"
+
+# Database configuration
+Database:
+  Host: "postgres"
+  Port: 5432
+  User: "postgres"
+  Password: "sekiro2024"
+  DBName: "sekiro"
+  SSLMode: "disable"
