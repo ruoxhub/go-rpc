@@ -6,6 +6,9 @@ WORKDIR /build
 # 安装依赖
 RUN apk add --no-cache git ca-certificates
 
+# 配置 Go 代理 (加速下载)
+ENV GOPROXY=https://goproxy.cn,direct
+
 # 复制 go.mod 和 go.sum
 COPY go.mod go.sum ./
 RUN go mod download
