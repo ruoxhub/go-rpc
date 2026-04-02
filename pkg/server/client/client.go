@@ -25,6 +25,7 @@ type SekiroClient struct {
 	IsHealthy bool // whether the client is healthy
 	FailCount int  // consecutive failure count
 	mu        sync.RWMutex
+	writeMu   sync.Mutex // protects WebSocket writes from concurrent access
 }
 
 // NewSekiroClient creates a new SekiroClient
@@ -110,4 +111,19 @@ func (c *SekiroClient) ResetHealth() {
 	defer c.mu.Unlock()
 	c.FailCount = 0
 	c.IsHealthy = true
+}
+
+// AcquireWriteLock acquires the write lock for WebSocket operations
+func (c *SekiroClient) AcquireWriteLock() {
+	c.writeMu.Lock()
+}
+
+// ReleaseWriteLock releases the write lock
+func (c *SekiroClient) ReleaseWriteLock() {
+	c.writeMu.Unlock()
+}
+
+// GetWriteLock returns the write mutex for use with defer
+func (c *SekiroClient) GetWriteLock() *sync.Mutex {
+	return &c.writeMu
 }

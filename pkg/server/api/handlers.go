@@ -225,7 +225,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 	}
 
 	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
 	if err != nil {
 		h.timeoutManager.Remove(sequence)
 		// Mark client failure on send error
@@ -437,7 +437,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 	}
 
 	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
 	if err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
@@ -598,7 +598,7 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 	}
 
 	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
 	if err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
@@ -760,7 +760,7 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 	}
 
 	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON)
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
 	if err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()

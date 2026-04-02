@@ -49,3 +49,8 @@ dist/
 build/
 jsRpc/
 .gocache
+sekiro-server
+
+# Environment files
+.env
+.omc/

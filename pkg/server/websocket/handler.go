@@ -246,7 +246,7 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 	var msg SekiroMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		logger.Errorf("Failed to parse message: %v", err)
-		h.sendError(conn, "invalid message format", "")
+		h.sendError(conn, "invalid message format", "", nil)
 		return
 	}
 
@@ -265,7 +265,11 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 		h.handleHeartbeat(conn, &msg)
 	default:
 		logger.Warnf("Unknown message type: %s", msg.Type)
-		h.sendError(conn, "unknown message type", sequence)
+		var sekiroClient *client.SekiroClient
+		if msg.Group != "" && msg.ClientID != "" {
+			sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
+		}
+		h.sendError(conn, "unknown message type", sequence, sekiroClient)
 	}
 }
 
@@ -273,9 +277,10 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
 	logger.Debugf("Heartbeat received from %s/%s", msg.Group, msg.ClientID)
 
+	var sekiroClient *client.SekiroClient
 	// Mark client as healthy on successful heartbeat
 	if msg.Group != "" && msg.ClientID != "" {
-		sekiroClient := h.clientManager.GetClient(msg.Group, msg.ClientID)
+		sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
 		if sekiroClient != nil {
 			sekiroClient.MarkSuccess()
 		}
@@ -293,7 +298,7 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
 		Type:      MessageTypeHeartbeat,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(conn, &response)
+	h.sendMessage(conn, &response, sekiroClient)
 }
 
 // handleInvokeResponse handles invoke response messages
@@ -389,11 +394,17 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *SekiroMessage,
 }
 
 // sendMessage sends a message to the client
-func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage) {
+func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage, sekiroClient *client.SekiroClient) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		logger.Errorf("Failed to marshal message: %v", err)
 		return
+	}
+
+	// Acquire write lock to prevent concurrent writes
+	if sekiroClient != nil {
+		sekiroClient.GetWriteLock().Lock()
+		defer sekiroClient.GetWriteLock().Unlock()
 	}
 
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -403,19 +414,19 @@ func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage) {
 }
 
 // sendError sends an error message to the client
-func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string) {
+func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string, sekiroClient *client.SekiroClient) {
 	msg := SekiroMessage{
 		Type:      "error",
 		Error:     errorMsg,
 		Sequence:  sequence,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(conn, &msg)
+	h.sendMessage(conn, &msg, sekiroClient)
 }
 
 // SendInvokeRequest sends an invoke request to a client
 // The message format is compatible with the JavaScript client
-func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clientID string, data []byte) error {
+func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clientID string, data []byte, sekiroClient *client.SekiroClient) error {
 	// Parse the request data
 	var reqData map[string]interface{}
 	if err := json.Unmarshal(data, &reqData); err != nil {
@@ -449,6 +460,12 @@ func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clien
 	}
 
 	logger.Infof("Sending invoke message: %s", string(msgDataJSON))
+
+	// Acquire write lock to prevent concurrent writes
+	if sekiroClient != nil {
+		sekiroClient.GetWriteLock().Lock()
+		defer sekiroClient.GetWriteLock().Unlock()
+	}
 
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := conn.WriteMessage(websocket.TextMessage, msgDataJSON); err != nil {

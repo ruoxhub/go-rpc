@@ -14,7 +14,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml.docker:/app/config.yaml:ro
       - ./logs:/app/logs
     depends_on:
       postgres:
@@ -22,32 +22,35 @@ services:
     networks:
       - sekiro-network
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5612/business/groupList"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:5612/business/groupList || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 30s
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: sekiro-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - ${DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
-      - ./deploy/postgres/migration.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    networks:
-      - sekiro-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sekiro}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: sekiro-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #     - ./deploy/postgres/migration.sql:/docker-entrypoint-initdb.d/init.sql:ro
+  #   networks:
+  #     - sekiro-network
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-sekiro}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
 
 networks:
   sekiro-network:
     driver: bridge
+
+volumes:
+  postgres-data:
