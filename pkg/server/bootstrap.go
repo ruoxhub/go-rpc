@@ -60,15 +60,21 @@ type Server struct {
 	metricsCollector metrics.MetricCollector
 	alertEvaluator   *alert.Evaluator
 	configService    pkgconfig.Service
+	// wsCancel cancels all WebSocket handler goroutines on shutdown
+	wsCtx    context.Context
+	wsCancel context.CancelFunc
 }
 
 func NewServer(config *Config) *Server {
+	wsCtx, wsCancel := context.WithCancel(context.Background())
 	return &Server{
 		config:         config,
 		shutdown:       make(chan struct{}),
 		clientManager:  client.NewClientManager(),
 		timeoutManager: forwarder.NewTimeoutManager(nil),
 		configService:  pkgconfig.NewService(),
+		wsCtx:          wsCtx,
+		wsCancel:       wsCancel,
 	}
 }
 
@@ -189,10 +195,10 @@ func (s *Server) Start() error {
 		ginCorsMiddleware(corsEnabled),
 		ginRouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
 		middleware.LoggingMiddleware(),
+		middleware.TraceMiddleware(),
 	)
 
 	s.registerRoutes()
-	s.httpServer.Use(middleware.TraceMiddleware())
 
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
 	listener, err := net.Listen("tcp", addr)
@@ -241,6 +247,7 @@ func (s *Server) registerRoutes() {
 	})
 
 	business := s.httpServer.Group("/business")
+	business.Use(middleware.NewAuthMiddleware().OptionalAuth())
 	{
 		business.GET("/groupList", s.apiHandler.HandleGroupList)
 		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
@@ -304,7 +311,7 @@ func (s *Server) handleRegister(c *gin.Context) {
 		return
 	}
 
-	go s.wsHandler.HandleConnection(context.Background(), wsConn, group, clientID)
+	go s.wsHandler.HandleConnection(s.wsCtx, wsConn, group, clientID)
 }
 
 func (s *Server) waitForShutdown() {
@@ -323,7 +330,17 @@ func (s *Server) waitForShutdown() {
 func (s *Server) Shutdown() {
 	logger.Info("Shutting down server...")
 
-	close(s.shutdown)
+	select {
+	case <-s.shutdown:
+		// Already closed
+	default:
+		close(s.shutdown)
+	}
+
+	// Cancel all WebSocket handler goroutines
+	if s.wsCancel != nil {
+		s.wsCancel()
+	}
 
 	if s.httpServer != nil {
 		s.httpServer.Shutdown()
@@ -357,7 +374,7 @@ func ginCorsMiddleware(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
-			c.Header("Access-Control-Allow-Origin", "*")
+			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
 			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
 			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")

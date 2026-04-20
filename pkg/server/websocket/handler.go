@@ -152,6 +152,15 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, group, clientID string) {
 	logger.Infof("WebSocket connection established: group=%s, clientId=%s", group, clientID)
 
+	// Recover from panics in gorilla/websocket (NextReader can panic on
+	// concurrent or closed connections). Without this, a panic kills the
+	// entire process with exit status 2.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Warnf("WebSocket handler recovered from panic: group=%s, clientId=%s, error=%v", group, clientID, r)
+		}
+	}()
+
 	// Create Sekiro client
 	sekiroClient := client.NewSekiroClient(group, clientID, conn)
 	sekiroClient.SetStatus(client.StatusOnline)
@@ -190,58 +199,74 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// Register client
 	h.clientManager.Register(sekiroClient)
 
+	// closed flag prevents ReadMessage calls after the connection is closed,
+	// avoiding gorilla/websocket "repeated read on failed websocket connection" panic.
+	var closed bool
+
 	// Ensure cleanup on exit
 	defer func() {
+		closed = true
 		sekiroClient.SetStatus(client.StatusOffline)
 		h.clientManager.Unregister(group, clientID)
 		conn.Close()
 		logger.Infof("WebSocket connection closed: group=%s, clientId=%s", group, clientID)
 	}()
 
-	// Start heartbeat checker
-	heartbeatTicker := time.NewTicker(h.heartbeatTimeout / 2)
-	defer heartbeatTicker.Stop()
-
 	// Message processing loop
+	// Use ReadMessage with read deadline as the blocking point instead of
+	// a select+default busy-loop which would spin the CPU.
 	for {
+		// Skip ReadMessage if connection is already closed (e.g. by concurrent invoke timeout)
+		if closed {
+			return
+		}
+
+		// Check context cancellation for graceful shutdown
 		select {
 		case <-ctx.Done():
+			logger.Infof("WebSocket handler context cancelled: group=%s, clientId=%s", group, clientID)
 			return
-		case <-heartbeatTicker.C:
-			// Check if client is still alive
-			if time.Since(sekiroClient.LastActive) > h.heartbeatTimeout {
-				logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
-				return
-			}
 		default:
-			// Set read deadline
-			conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout))
-
-			// Read message
-			_, message, err := conn.ReadMessage()
-			if err != nil {
-				// 区分正常关闭和异常断开
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-					logger.Debugf("WebSocket read error: %v", err)
-				} else {
-					// 正常关闭（如 CloseNormalClosure, CloseGoingAway）不记录为错误
-					logger.Debugf("WebSocket normal close: %v", err)
-				}
-				return
-			}
-
-			// Update last active time
-			sekiroClient.UpdateActive()
-
-			// Process message
-			h.processMessage(ctx, conn, message)
 		}
+
+		// Check heartbeat timeout
+		if time.Since(sekiroClient.LastActive) > h.heartbeatTimeout {
+			logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
+			return
+		}
+
+		// Set read deadline to half the heartbeat interval so we periodically
+		// wake up to check the heartbeat condition.
+		conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
+
+		// Read message (blocks until message arrives or deadline)
+		_, message, err := conn.ReadMessage()
+		if err != nil {
+			// Check if the error is a read deadline (timeout) which we use for heartbeat checks
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Read deadline reached — loop back to check heartbeat
+				continue
+			}
+			// Connection closed (normal or abnormal)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
+				logger.Debugf("WebSocket read error: %v", err)
+			} else {
+				logger.Debugf("WebSocket normal close: %v", err)
+			}
+			return
+		}
+
+		// Update last active time
+		sekiroClient.UpdateActive()
+
+		// Process message
+		h.processMessage(ctx, conn, message)
 	}
 }
 
 // processMessage processes a WebSocket message
 func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data []byte) {
-	logger.Infof("Received raw message: %s", string(data))
+	logger.Infof("Received raw message")
 
 	var msg SekiroMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -251,7 +276,7 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 	}
 
 	sequence := msg.GetSequence()
-	logger.Infof("Parsed message: type=%s, sequence=%s, status=%d, Data=%s, Error=%s", msg.Type, sequence, msg.Status, string(msg.Data), msg.Error)
+	logger.Infof("Parsed message: type=%s, sequence=%s, status=%d, Error=%s", msg.Type, sequence, msg.Status, msg.Error)
 
 	// 如果消息类型为invoke_response，或者消息包含__sekiro_seq__和 status 字段但没有 type 字段
 	// 则视为 invoke_response（兼容 JavaScript 客户端的响应格式）
@@ -354,7 +379,6 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *SekiroMessage,
 			// 如果还有剩余内容，作为数据返回
 			if len(rawMsg) > 0 {
 				responseData, _ = json.Marshal(rawMsg)
-				logger.Infof("Invoke response: extracted data from object response: %s", string(responseData))
 			} else {
 				responseData = []byte("{}")
 			}
@@ -364,7 +388,7 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *SekiroMessage,
 		logger.Infof("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
 	}
 
-	logger.Infof("Invoke response received: sequence=%s, status=%d, Data=%s, Error=%s", sequence, msg.Status, string(responseData), errorMessage)
+	logger.Infof("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
 
 	// Complete the invoke request
 	response := &forwarder.InvokeResponse{
@@ -405,6 +429,8 @@ func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage, sekiroCl
 	if sekiroClient != nil {
 		sekiroClient.GetWriteLock().Lock()
 		defer sekiroClient.GetWriteLock().Unlock()
+	} else {
+		logger.Warnf("sendMessage called with nil sekiroClient, concurrent write risk on conn")
 	}
 
 	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
@@ -459,7 +485,7 @@ func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clien
 		return err
 	}
 
-	logger.Infof("Sending invoke message: %s", string(msgDataJSON))
+	logger.Infof("Sending invoke message")
 
 	// Acquire write lock to prevent concurrent writes
 	if sekiroClient != nil {

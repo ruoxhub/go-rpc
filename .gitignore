@@ -54,3 +54,4 @@ sekiro-server
 # Environment files
 .env
 .omc/
+graphify-out

@@ -188,20 +188,24 @@ func (m *TimeoutManager) Remove(id string) {
 
 // Complete completes an invoke request with a response
 func (m *TimeoutManager) Complete(id string, response *InvokeResponse) bool {
-	m.mu.RLock()
+	m.mu.Lock()
 	record, ok := m.records[id]
-	m.mu.RUnlock()
-
 	if !ok {
+		m.mu.Unlock()
 		return false
 	}
 
 	// Check if already timed out
 	if record.IsTimedOut() {
+		m.mu.Unlock()
 		return false
 	}
 
-	// Send response (non-blocking)
+	// Remove record under write lock to prevent concurrent cleanup
+	delete(m.records, id)
+	m.mu.Unlock()
+
+	// Send response (safe now since we hold the only reference)
 	select {
 	case record.ResponseChan <- response:
 		return true

@@ -14,13 +14,13 @@ services:
     env_file:
       - .env
     volumes:
-      - ./config.yaml.docker:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml:ro
       - ./logs:/app/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
+    # depends_on:
+    #   postgres:
+    #     condition: service_healthy
     networks:
-      - sekiro-network
+      - 1panel-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:5612/business/groupList || exit 1"]
       interval: 30s
@@ -49,8 +49,8 @@ services:
   #     start_period: 10s
 
 networks:
-  sekiro-network:
-    driver: bridge
+  1panel-network:
+    external: true
 
-volumes:
-  postgres-data:
+# volumes:
+#   postgres-data:

@@ -131,7 +131,7 @@ type MetricMinute struct {
 	Tag3       string    `json:"tag3" gorm:"size:64"`
 	Tag4       string    `json:"tag4" gorm:"size:64"`
 	Tag5       string    `json:"tag5" gorm:"size:64"`
-	Type       string    `json:"type" gorm:"size:8;not null"`
+	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
 	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
 }
@@ -151,7 +151,7 @@ type MetricHour struct {
 	Tag3       string    `json:"tag3" gorm:"size:64"`
 	Tag4       string    `json:"tag4" gorm:"size:64"`
 	Tag5       string    `json:"tag5" gorm:"size:64"`
-	Type       string    `json:"type" gorm:"size:8;not null"`
+	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
 	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
 }
@@ -171,7 +171,7 @@ type MetricDay struct {
 	Tag3       string    `json:"tag3" gorm:"size:64"`
 	Tag4       string    `json:"tag4" gorm:"size:64"`
 	Tag5       string    `json:"tag5" gorm:"size:64"`
-	Type       string    `json:"type" gorm:"size:8;not null"`
+	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
 	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
 }

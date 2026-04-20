@@ -38,6 +38,18 @@ type clientManagerIface interface {
 	GetGroup(groupName string) *client.SekiroGroup
 }
 
+// RequestBuilder defines the interface for building request data
+type RequestBuilder interface {
+	BuildRequestData() (action string, params interface{}, err error)
+	GetTimeout() time.Duration
+	GetSequence(group string) string
+	ShouldRecordMetrics() bool
+	GetMetricAPI(action string) string
+	GetGroup() string
+	GetClientID() string
+	GetConstantInvoke() string
+}
+
 // InvokeRequest represents the invoke request body
 type InvokeRequest struct {
 	Group          string      `json:"group"`
@@ -114,7 +126,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 // HandleInvoke handles /business/invoke request
 // POST/GET /business/invoke
 func (h *APIHandler) HandleInvoke(c *gin.Context) {
-	startTime := time.Now() // 记录开始时间用于延迟统计
+	startTime := time.Now()
 	var req InvokeRequest
 
 	// 根据请求方法绑定数据
@@ -134,17 +146,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		req.Action = c.Query("action")
 	}
 
-	logger.Infof("Invoke request: group=%s, clientId=%s, action=%s", req.Group, req.ClientID, req.Action)
-
 	// 参数验证
-	if req.Group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
-		return
-	}
-
 	if req.Action == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
@@ -153,177 +155,17 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		return
 	}
 
-	// 空转调用保护检查
-	if h.configService != nil && h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
-		// 检查是否是空转调用（constantInvoke=true 但没有实际处理逻辑）
-		if req.ConstantInvoke == "true" || req.ConstantInvoke == "1" {
-			logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", req.Group, req.Action)
-			c.JSON(http.StatusOK, gin.H{
-				"status":  -1,
-				"message": "空转调用被拒绝，请联系管理员配置实际处理逻辑",
-			})
-			return
-		}
+	// 使用通用请求处理方法
+	builder := &InvokeBuilder{
+		Group:          req.Group,
+		ClientID:       req.ClientID,
+		ConstantInvoke: req.ConstantInvoke,
+		Action:         req.Action,
+		Params:         req.Params,
+		Timeout:        time.Duration(req.Timeout) * time.Second,
 	}
 
-	// 分配客户端
-	var targetClient *client.SekiroClient
-	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, req.Action, req.Params)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	if targetClient == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "no client available",
-		})
-		return
-	}
-
-	// 构建 Sekiro 请求数据
-	reqData := map[string]interface{}{
-		"action": req.Action,
-		"params": req.Params,
-	}
-
-	reqDataJSON, err := marshalJSON(reqData)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to marshal request data: " + err.Error(),
-		})
-		return
-	}
-
-	// 生成唯一的 sequence ID
-	sequence := fmt.Sprintf("%s-%s-%d", req.Group, req.Action, time.Now().UnixNano())
-
-	// 创建 invoke 记录
-	timeout := time.Duration(req.Timeout) * time.Second
-	if timeout <= 0 {
-		timeout = 30 * time.Second // 默认 30 秒超时
-	}
-	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	// 获取 WebSocket 连接并发送请求
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Invalid client connection",
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-		})
-		return
-	}
-
-	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
-	if err != nil {
-		h.timeoutManager.Remove(sequence)
-		// Mark client failure on send error
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Failed to send request: " + err.Error(),
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-		})
-		return
-	}
-
-	logger.Infof("Invoke request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
-
-	// 等待响应
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{
-				Error:  err.Error(),
-				Status: -1,
-			}
-		} else {
-			responseChan <- resp
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
-		// Mark client failure on timeout
-		targetClient.MarkFailure()
-		// 记录超时指标
-		if h.metricsCollector != nil {
-			h.metricsCollector.Incr("invoke.total", map[string]string{"group": req.Group, "api": req.Action, "status": "timeout"}, 1)
-			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": req.Group, "api": req.Action}, float64(time.Since(startTime).Milliseconds()))
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Request timeout",
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-		})
-		return
-	case resp := <-responseChan:
-		// Mark client health based on response
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-
-		// 记录调用指标
-		if h.metricsCollector != nil {
-			status := "success"
-			if resp.Status < 0 || resp.Error != "" {
-				status = "failure"
-			}
-			h.metricsCollector.Incr("invoke.total", map[string]string{"group": req.Group, "api": req.Action, "status": status}, 1)
-			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": req.Group, "api": req.Action}, float64(time.Since(startTime).Milliseconds()))
-		}
-
-		if resp.Error != "" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":   resp.Status,
-				"message":  resp.Error,
-				"group":    req.Group,
-				"clientId": targetClient.ClientID,
-			})
-			return
-		}
-
-		// 解析响应数据
-		var responseData interface{}
-		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
-			// 如果响应不是有效 JSON，当作字符串处理
-			responseData = string(resp.Data)
-		}
-
-		// 如果 status 为 -1 但没有 Error，说明是异常情况
-		message := "success"
-		if resp.Status < 0 {
-			message = "unknown error"
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":   resp.Status,
-			"message":  message,
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-			"data":     responseData,
-		})
-	}
+	h.handleForwardRequest(c, builder, startTime)
 }
 
 // marshalJSON is a helper function for JSON marshaling
@@ -364,17 +206,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 		req.Code = c.Query("code")
 	}
 
-	logger.Infof("ExecJS request: group=%s, clientId=%s", req.Group, req.ClientID)
-
 	// 参数验证
-	if req.Group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
-		return
-	}
-
 	if req.Code == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"status":  -1,
@@ -383,128 +215,15 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 		return
 	}
 
-	// 分配客户端
-	var targetClient *client.SekiroClient
-	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", req.Code)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
-		return
+	startTime := time.Now()
+	builder := &ExecJSBuilder{
+		Group:          req.Group,
+		ClientID:       req.ClientID,
+		ConstantInvoke: req.ConstantInvoke,
+		Code:           req.Code,
 	}
 
-	if targetClient == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "no client available",
-		})
-		return
-	}
-
-	// 构建 Sekiro 请求数据 - 使用_execjs action
-	reqData := map[string]interface{}{
-		"action": "_execjs",
-		"params": req.Code,
-	}
-
-	reqDataJSON, err := marshalJSON(reqData)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to marshal request data: " + err.Error(),
-		})
-		return
-	}
-
-	// 生成唯一的 sequence ID
-	sequence := fmt.Sprintf("%s-_execjs-%d", req.Group, time.Now().UnixNano())
-
-	// 创建 invoke 记录
-	timeout := 30 * time.Second // 默认 30 秒超时
-	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	// 获取 WebSocket 连接并发送请求
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Invalid client connection",
-		})
-		return
-	}
-
-	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
-	if err != nil {
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to send request: " + err.Error(),
-		})
-		return
-	}
-
-	logger.Infof("ExecJS request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
-
-	// 等待响应
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{
-				Error:  err.Error(),
-				Status: -1,
-			}
-		} else {
-			responseChan <- resp
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Request timeout",
-		})
-		return
-	case resp := <-responseChan:
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-
-		if resp.Error != "" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":  resp.Status,
-				"message": resp.Error,
-			})
-			return
-		}
-
-		// 解析响应数据
-		var responseData interface{}
-		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
-			responseData = string(resp.Data)
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"status":   resp.Status,
-			"message":  "success",
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-			"data":     responseData,
-		})
-	}
+	h.handleForwardRequest(c, builder, startTime)
 }
 
 // HandleGetCookie handles /business/cookie request
@@ -533,140 +252,14 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 		req.ConstantInvoke = c.Query("constantInvoke")
 	}
 
-	logger.Infof("GetCookie request: group=%s, clientId=%s", req.Group, req.ClientID)
-
-	// 参数验证
-	if req.Group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
-		return
+	startTime := time.Now()
+	builder := &GetCookieBuilder{
+		Group:          req.Group,
+		ClientID:       req.ClientID,
+		ConstantInvoke: req.ConstantInvoke,
 	}
 
-	// 分配客户端
-	var targetClient *client.SekiroClient
-	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", "document.cookie")
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	if targetClient == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "no client available",
-		})
-		return
-	}
-
-	// 构建 Sekiro 请求数据 - 执行 document.cookie
-	reqData := map[string]interface{}{
-		"action": "_execjs",
-		"params": "document.cookie",
-	}
-
-	reqDataJSON, err := marshalJSON(reqData)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to marshal request data: " + err.Error(),
-		})
-		return
-	}
-
-	// 生成唯一的 sequence ID
-	sequence := fmt.Sprintf("%s-_cookie-%d", req.Group, time.Now().UnixNano())
-
-	// 创建 invoke 记录
-	timeout := 30 * time.Second // 默认 30 秒超时
-	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	// 获取 WebSocket 连接并发送请求
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Invalid client connection",
-		})
-		return
-	}
-
-	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
-	if err != nil {
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to send request: " + err.Error(),
-		})
-		return
-	}
-
-	logger.Infof("GetCookie request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
-
-	// 等待响应
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{
-				Error:  err.Error(),
-				Status: -1,
-			}
-		} else {
-			responseChan <- resp
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Request timeout",
-		})
-		return
-	case resp := <-responseChan:
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-
-		if resp.Error != "" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":  resp.Status,
-				"message": resp.Error,
-			})
-			return
-		}
-
-		// 解析响应数据
-		var responseData interface{}
-		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
-			responseData = string(resp.Data)
-		}
-
-		// 返回 cookie 数据
-		c.JSON(http.StatusOK, gin.H{
-			"status":   resp.Status,
-			"message":  "success",
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-			"data":     responseData,
-		})
-	}
+	h.handleForwardRequest(c, builder, startTime)
 }
 
 // HandleGetHtml handles /business/html request
@@ -695,140 +288,14 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 		req.ConstantInvoke = c.Query("constantInvoke")
 	}
 
-	logger.Infof("GetHtml request: group=%s, clientId=%s", req.Group, req.ClientID)
-
-	// 参数验证
-	if req.Group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
-		return
+	startTime := time.Now()
+	builder := &GetHTMLBuilder{
+		Group:          req.Group,
+		ClientID:       req.ClientID,
+		ConstantInvoke: req.ConstantInvoke,
 	}
 
-	// 分配客户端
-	var targetClient *client.SekiroClient
-	targetClient, err := h.selectTargetClient(req.Group, req.ClientID, req.ConstantInvoke, "_execjs", "document.documentElement.outerHTML")
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	if targetClient == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "no client available",
-		})
-		return
-	}
-
-	// 构建 Sekiro 请求数据 - 执行 document.documentElement.outerHTML
-	reqData := map[string]interface{}{
-		"action": "_execjs",
-		"params": "document.documentElement.outerHTML",
-	}
-
-	reqDataJSON, err := marshalJSON(reqData)
-	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to marshal request data: " + err.Error(),
-		})
-		return
-	}
-
-	// 生成唯一的 sequence ID
-	sequence := fmt.Sprintf("%s-_html-%d", req.Group, time.Now().UnixNano())
-
-	// 创建 invoke 记录
-	timeout := 30 * time.Second // 默认 30 秒超时
-	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	// 获取 WebSocket 连接并发送请求
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Invalid client connection",
-		})
-		return
-	}
-
-	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient)
-	if err != nil {
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to send request: " + err.Error(),
-		})
-		return
-	}
-
-	logger.Infof("GetHtml request sent: sequence=%s, group=%s, clientId=%s", sequence, req.Group, targetClient.ClientID)
-
-	// 等待响应
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{
-				Error:  err.Error(),
-				Status: -1,
-			}
-		} else {
-			responseChan <- resp
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Request timeout",
-		})
-		return
-	case resp := <-responseChan:
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-
-		if resp.Error != "" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":  resp.Status,
-				"message": resp.Error,
-			})
-			return
-		}
-
-		// 解析响应数据
-		var responseData interface{}
-		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
-			responseData = string(resp.Data)
-		}
-
-		// 返回 HTML 数据
-		c.JSON(http.StatusOK, gin.H{
-			"status":   resp.Status,
-			"message":  "success",
-			"group":    req.Group,
-			"clientId": targetClient.ClientID,
-			"data":     responseData,
-		})
-	}
+	h.handleForwardRequest(c, builder, startTime)
 }
 
 func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.SekiroClient, error) {
@@ -881,4 +348,341 @@ func buildConsistentHashKey(groupName, action string, payload interface{}) strin
 		return groupName + ":" + action
 	}
 	return groupName + ":" + action + ":" + string(encoded)
+}
+
+// ==================== Request Builder Implementations ====================
+
+// maxInvokeTimeout is the maximum allowed timeout for invoke requests
+const maxInvokeTimeout = 5 * time.Minute
+
+// InvokeBuilder handles standard invoke requests
+type InvokeBuilder struct {
+	Group          string
+	ClientID       string
+	ConstantInvoke string
+	Action         string
+	Params         interface{}
+	Timeout        time.Duration
+}
+
+func (b *InvokeBuilder) BuildRequestData() (string, interface{}, error) {
+	return b.Action, b.Params, nil
+}
+
+func (b *InvokeBuilder) GetTimeout() time.Duration {
+	if b.Timeout <= 0 {
+		return 30 * time.Second
+	}
+	if b.Timeout > maxInvokeTimeout {
+		return maxInvokeTimeout
+	}
+	return b.Timeout
+}
+
+func (b *InvokeBuilder) GetSequence(group string) string {
+	return fmt.Sprintf("%s-%s-%d", group, b.Action, time.Now().UnixNano())
+}
+
+func (b *InvokeBuilder) ShouldRecordMetrics() bool {
+	return true
+}
+
+func (b *InvokeBuilder) GetMetricAPI(action string) string {
+	return b.Action
+}
+
+func (b *InvokeBuilder) GetGroup() string          { return b.Group }
+func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
+func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+
+// ExecJSBuilder handles execjs requests
+type ExecJSBuilder struct {
+	Group          string
+	ClientID       string
+	ConstantInvoke string
+	Code           string
+}
+
+func (b *ExecJSBuilder) BuildRequestData() (string, interface{}, error) {
+	return "_execjs", b.Code, nil
+}
+
+func (b *ExecJSBuilder) GetTimeout() time.Duration {
+	return 30 * time.Second
+}
+
+func (b *ExecJSBuilder) GetSequence(group string) string {
+	return fmt.Sprintf("%s-_execjs-%d", group, time.Now().UnixNano())
+}
+
+func (b *ExecJSBuilder) ShouldRecordMetrics() bool {
+	return false
+}
+
+func (b *ExecJSBuilder) GetMetricAPI(action string) string {
+	return action
+}
+
+func (b *ExecJSBuilder) GetGroup() string          { return b.Group }
+func (b *ExecJSBuilder) GetClientID() string       { return b.ClientID }
+func (b *ExecJSBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+
+// GetCookieBuilder handles cookie requests
+type GetCookieBuilder struct {
+	Group          string
+	ClientID       string
+	ConstantInvoke string
+}
+
+func (b *GetCookieBuilder) BuildRequestData() (string, interface{}, error) {
+	return "_execjs", "document.cookie", nil
+}
+
+func (b *GetCookieBuilder) GetTimeout() time.Duration {
+	return 30 * time.Second
+}
+
+func (b *GetCookieBuilder) GetSequence(group string) string {
+	return fmt.Sprintf("%s-_cookie-%d", group, time.Now().UnixNano())
+}
+
+func (b *GetCookieBuilder) ShouldRecordMetrics() bool {
+	return false
+}
+
+func (b *GetCookieBuilder) GetMetricAPI(action string) string {
+	return action
+}
+
+func (b *GetCookieBuilder) GetGroup() string          { return b.Group }
+func (b *GetCookieBuilder) GetClientID() string       { return b.ClientID }
+func (b *GetCookieBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+
+// GetHTMLBuilder handles html requests
+type GetHTMLBuilder struct {
+	Group          string
+	ClientID       string
+	ConstantInvoke string
+}
+
+func (b *GetHTMLBuilder) BuildRequestData() (string, interface{}, error) {
+	return "_execjs", "document.documentElement.outerHTML", nil
+}
+
+func (b *GetHTMLBuilder) GetTimeout() time.Duration {
+	return 30 * time.Second
+}
+
+func (b *GetHTMLBuilder) GetSequence(group string) string {
+	return fmt.Sprintf("%s-_html-%d", group, time.Now().UnixNano())
+}
+
+func (b *GetHTMLBuilder) ShouldRecordMetrics() bool {
+	return false
+}
+
+func (b *GetHTMLBuilder) GetMetricAPI(action string) string {
+	return action
+}
+
+func (b *GetHTMLBuilder) GetGroup() string          { return b.Group }
+func (b *GetHTMLBuilder) GetClientID() string       { return b.ClientID }
+func (b *GetHTMLBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+
+// handleForwardRequest is the generic handler for forwarding requests to Sekiro clients
+func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder, startTime time.Time) {
+	// 从 builder 获取参数（已由具体 handler 绑定）
+	group := builder.GetGroup()
+	clientID := builder.GetClientID()
+	constantInvoke := builder.GetConstantInvoke()
+
+	// 获取 action 用于日志
+	action, _, _ := builder.BuildRequestData()
+	logger.Infof("Request: group=%s, clientId=%s, action=%s", group, clientID, action)
+
+	// 参数验证
+	if group == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "group parameter required",
+		})
+		return
+	}
+
+	// 空转调用保护检查（仅 Invoke 需要）
+	if builder.ShouldRecordMetrics() && h.configService != nil && h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
+		if constantInvoke == "true" || constantInvoke == "1" {
+			logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", group, action)
+			c.JSON(http.StatusOK, gin.H{
+				"status":  -1,
+				"message": "空转调用被拒绝，请联系管理员配置实际处理逻辑",
+			})
+			return
+		}
+	}
+
+	// 构建请求数据
+	reqAction, reqParams, err := builder.BuildRequestData()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to build request data: " + err.Error(),
+		})
+		return
+	}
+
+	// 分配客户端
+	targetClient, err := h.selectTargetClient(group, clientID, constantInvoke, reqAction, reqParams)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if targetClient == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "no client available",
+		})
+		return
+	}
+
+	// 构建 Sekiro 请求数据
+	reqData := map[string]interface{}{
+		"action": reqAction,
+		"params": reqParams,
+	}
+
+	reqDataJSON, err := marshalJSON(reqData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"status":  -1,
+			"message": "Failed to marshal request data: " + err.Error(),
+		})
+		return
+	}
+
+	// 生成唯一的 sequence ID
+	sequence := builder.GetSequence(group)
+
+	// 创建 invoke 记录
+	timeout := builder.GetTimeout()
+	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
+	invokeRecord.Timeout = timeout
+
+	// 获取 WebSocket 连接并发送请求
+	conn, ok := targetClient.Connection.(*websocket.Conn)
+	if !ok {
+		h.timeoutManager.Remove(sequence)
+		c.JSON(http.StatusOK, gin.H{
+			"status":   -1,
+			"message":  "Invalid client connection",
+			"group":    group,
+			"clientId": targetClient.ClientID,
+		})
+		return
+	}
+
+	// 发送 invoke 请求
+	err = h.wsHandler.SendInvokeRequest(conn, sequence, group, targetClient.ClientID, reqDataJSON, targetClient)
+	if err != nil {
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		c.JSON(http.StatusOK, gin.H{
+			"status":   -1,
+			"message":  "Failed to send request: " + err.Error(),
+			"group":    group,
+			"clientId": targetClient.ClientID,
+		})
+		return
+	}
+
+	logger.Infof("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+
+	// 等待响应
+	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
+	defer cancel()
+
+	responseChan := make(chan *forwarder.InvokeResponse, 1)
+	go func() {
+		resp, err := h.timeoutManager.Wait(sequence)
+		if err != nil {
+			responseChan <- &forwarder.InvokeResponse{
+				Error:  err.Error(),
+				Status: -1,
+			}
+		} else {
+			responseChan <- resp
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		h.timeoutManager.Remove(sequence)
+		targetClient.MarkFailure()
+		// 记录超时指标
+		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
+			metricAPI := builder.GetMetricAPI(reqAction)
+			h.metricsCollector.Incr("invoke.total", map[string]string{"group": group, "api": metricAPI, "status": "timeout"}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": group, "api": metricAPI}, float64(time.Since(startTime).Milliseconds()))
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"status":   -1,
+			"message":  "Request timeout",
+			"group":    group,
+			"clientId": targetClient.ClientID,
+		})
+		return
+	case resp := <-responseChan:
+		// Mark client health based on response
+		if resp.Status >= 0 && resp.Error == "" {
+			targetClient.MarkSuccess()
+		} else {
+			targetClient.MarkFailure()
+		}
+
+		// 记录调用指标
+		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
+			status := "success"
+			if resp.Status < 0 || resp.Error != "" {
+				status = "failure"
+			}
+			metricAPI := builder.GetMetricAPI(reqAction)
+			h.metricsCollector.Incr("invoke.total", map[string]string{"group": group, "api": metricAPI, "status": status}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": group, "api": metricAPI}, float64(time.Since(startTime).Milliseconds()))
+		}
+
+		if resp.Error != "" {
+			c.JSON(http.StatusOK, gin.H{
+				"status":   resp.Status,
+				"message":  resp.Error,
+				"group":    group,
+				"clientId": targetClient.ClientID,
+			})
+			return
+		}
+
+		// 解析响应数据
+		var responseData interface{}
+		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
+			// 如果响应不是有效 JSON，当作字符串处理
+			responseData = string(resp.Data)
+		}
+
+		// 如果 status 为 -1 但没有 Error，说明是异常情况
+		message := "success"
+		if resp.Status < 0 {
+			message = "unknown error"
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status":   resp.Status,
+			"message":  message,
+			"group":    group,
+			"clientId": targetClient.ClientID,
+			"data":     responseData,
+		})
+	}
 }
