@@ -111,27 +111,14 @@ function GroupDetail() {
                 )}
               </Descriptions.Item>
               <Descriptions.Item label="设备 QPS 限制">
-                {editing ? (
-                  <Form form={qpsForm} onFinish={handleSaveQps} layout="inline">
-                    <Space>
-                      <Form.Item name="quotaQpsGroup" label="分组 QPS">
-                        <InputNumber min={1} />
-                      </Form.Item>
-                      <Form.Item name="quotaQpsPerDevice" label="设备 QPS">
-                        <InputNumber min={-1} />
-                      </Form.Item>
-                      <Button type="primary" htmlType="submit">保存</Button>
-                      <Button onClick={handleCancelEdit}>取消</Button>
-                    </Space>
-                  </Form>
-                ) : (
-                  <Space>
-                    {groupInfo.quotaQpsPerDevice === -1 ? '不限制' : groupInfo.quotaQpsPerDevice}
+                <Space>
+                  {groupInfo.quotaQpsPerDevice === -1 ? '不限制' : groupInfo.quotaQpsPerDevice}
+                  {!editing && (
                     <Button type="primary" size="small" icon={<EditOutlined />} onClick={handleEditQps}>
                       编辑
                     </Button>
-                  </Space>
-                )}
+                  )}
+                </Space>
               </Descriptions.Item>
             </Descriptions>
           )}

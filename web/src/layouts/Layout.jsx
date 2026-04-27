@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu } from 'antd'
 import {
@@ -13,6 +13,7 @@ import {
   BellOutlined,
   HistoryOutlined
 } from '@ant-design/icons'
+import { userApi } from '../utils/api'
 
 const { Sider, Content, Footer } = Layout
 
@@ -68,6 +69,22 @@ function LayoutComponent() {
   const navigate = useNavigate()
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(false)
+  const [userName, setUserName] = useState('')
+
+  // 获取当前用户信息
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const result = await userApi.getCurrentUser()
+        if (result.data) {
+          setUserName(result.data.userName)
+        }
+      } catch (error) {
+        console.error('加载用户信息失败:', error)
+      }
+    }
+    loadUser()
+  }, [])
 
   // 检查是否是分组详情页面
   const isGroupDetail = location.pathname.startsWith('/group/')
@@ -88,7 +105,7 @@ function LayoutComponent() {
             <circle cx="16" cy="16" r="14" stroke="white" strokeWidth="2" fill="none" />
             <path d="M10 16L14 20L22 12" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <span className="sidebar-title">ruoxing</span>
+          <span className="sidebar-title">{userName || '加载中...'}</span>
         </div>
         <Menu
           mode="inline"

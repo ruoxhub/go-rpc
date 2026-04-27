@@ -1,12 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Card, Empty, Select, Table, Space, Button, Popconfirm, message, Modal, Form, Input } from 'antd'
+import { Card, Empty, Table, Space, Button, Popconfirm, message, Modal, Form, Input } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { groupApi } from '../utils/api'
 
-const { Option } = Select
-
 function GroupAction({ groupName, onRefresh }) {
-  const [timeRange, setTimeRange] = useState('hours')
   const [actions, setActions] = useState([])
   const [loading, setLoading] = useState(false)
   const [addModalVisible, setAddModalVisible] = useState(false)
@@ -110,16 +107,7 @@ function GroupAction({ groupName, onRefresh }) {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Select
-          value={timeRange}
-          onChange={(value) => setTimeRange(value)}
-          style={{ width: 150 }}
-        >
-          <Option value="minutes">分钟</Option>
-          <Option value="hours">小时</Option>
-          <Option value="days">天</Option>
-        </Select>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAddAction}>
           添加 Action
         </Button>

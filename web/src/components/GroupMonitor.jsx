@@ -12,7 +12,6 @@ function GroupMonitor({ groupName }) {
   const [dashboardData, setDashboardData] = useState(null)
   const [dashboardLoading, setDashboardLoading] = useState(false)
   const [dashboardError, setDashboardError] = useState(false)
-  const chartRef = useRef(null)
 
   // 加载监控数据
   const loadMetrics = async () => {
@@ -317,7 +316,6 @@ function GroupMonitor({ groupName }) {
       <Card title="调用量趋势" style={{ marginBottom: 24 }}>
         {metricsData.length > 0 ? (
           <ReactECharts
-            ref={chartRef}
             option={callTrendOption()}
             style={{ height: 350 }}
             opts={{ renderer: 'canvas' }}
@@ -333,7 +331,6 @@ function GroupMonitor({ groupName }) {
           <Card title="QPS 趋势">
             {metricsData.filter(m => m.type === 'qps').length > 0 ? (
               <ReactECharts
-                ref={chartRef}
                 option={qpsTrendOption()}
                 style={{ height: 300 }}
                 opts={{ renderer: 'canvas' }}
@@ -346,7 +343,6 @@ function GroupMonitor({ groupName }) {
         <Col span={8}>
           <Card title="在线设备状态" style={{ height: 300 }}>
             <ReactECharts
-              ref={chartRef}
               option={deviceStatusOption()}
               style={{ height: 260 }}
               opts={{ renderer: 'canvas' }}

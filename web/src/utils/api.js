@@ -27,7 +27,7 @@ const handleAuthFailure = () => {
   localStorage.removeItem('api_token')
   localStorage.removeItem('login_token')
   if (window.location.pathname !== '/login') {
-    window.location.href = '/login'
+    window.location.replace('/login')
   }
 }
 
@@ -51,8 +51,15 @@ const setupResponseInterceptor = (apiInstance) => {
       const status = error.response?.status
       const errorMsg = error.response?.data?.message || error.message || '请求失败'
 
-      if (status === 401 || status === 403) {
+      if (status === 401) {
         handleAuthFailure()
+      }
+
+      if (status === 403) {
+        if (!error.config?.silent) {
+          message.error('权限不足')
+        }
+        return Promise.reject(error)
       }
 
       if (!error.config?.silent) {

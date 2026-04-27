@@ -1,18 +1,35 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { Spin } from 'antd'
 
 function AuthGuard({ children }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const [checked, setChecked] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
 
   useEffect(() => {
     const apiToken = localStorage.getItem('api_token')
+    const isAuth = !!apiToken
+    setAuthenticated(isAuth)
 
-    // 如果没有 token 且不在登录页，跳转到登录页
-    if (!apiToken && location.pathname !== '/login') {
-      navigate('/login', { state: { from: location } })
+    if (!isAuth && location.pathname !== '/login') {
+      navigate('/login', { state: { from: location }, replace: true })
     }
+    setChecked(true)
   }, [navigate, location])
+
+  if (!checked) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin size="large" />
+      </div>
+    )
+  }
+
+  if (!authenticated && location.pathname !== '/login') {
+    return null
+  }
 
   return children
 }

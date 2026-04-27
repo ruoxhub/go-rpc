@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Card, Input, Button, Space, message, Divider } from 'antd'
+import { Card, Input, Button, Space, message, Divider, Form } from 'antd'
 import { CopyOutlined, ReloadOutlined } from '@ant-design/icons'
 import { copyToClipboard } from '../utils'
 import { userApi } from '../utils/api'
@@ -83,7 +83,7 @@ function Dashboard() {
 
       <Card title="API TOKEN" style={{ marginBottom: 24 }}>
         <Space.Compact style={{ width: '100%' }}>
-          <Input value={apiToken} readOnly style={{ flex: 1 }} />
+          <Input id="api-token" name="apiToken" value={apiToken} readOnly style={{ flex: 1 }} />
           <Button icon={<CopyOutlined />} onClick={handleCopyToken} />
           <Button icon={<ReloadOutlined />} onClick={handleRefreshToken} />
         </Space.Compact>
@@ -91,25 +91,35 @@ function Dashboard() {
 
       <Card title="修改密码">
         <Divider />
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          <Space style={{ width: '100%' }}>
-            <Input.Password
-              placeholder="新密码"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              style={{ width: 300 }}
-            />
-            <Input.Password
-              placeholder="再次输入密码"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              style={{ width: 300 }}
-            />
-            <Button type="primary" onClick={handleChangePassword}>
-              应用
-            </Button>
+        <Form layout="inline">
+          <Space direction="vertical" style={{ width: '100%' }} size="large">
+            <Space style={{ width: '100%' }}>
+              <Form.Item label="新密码" style={{ marginBottom: 0 }}>
+                <Input.Password
+                  id="new-password"
+                  name="newPassword"
+                  placeholder="新密码"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  style={{ width: 300 }}
+                />
+              </Form.Item>
+              <Form.Item label="确认密码" style={{ marginBottom: 0 }}>
+                <Input.Password
+                  id="confirm-password"
+                  name="confirmPassword"
+                  placeholder="再次输入密码"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  style={{ width: 300 }}
+                />
+              </Form.Item>
+              <Button type="primary" onClick={handleChangePassword}>
+                应用
+              </Button>
+            </Space>
           </Space>
-        </Space>
+        </Form>
       </Card>
     </div>
   )

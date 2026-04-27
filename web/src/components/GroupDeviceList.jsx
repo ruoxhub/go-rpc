@@ -95,8 +95,8 @@ function GroupDeviceList({ groupName, onRefresh }) {
   ]
 
   const filteredDevices = devices.filter((device) =>
-    device.deviceId.toLowerCase().includes(searchText.toLowerCase()) ||
-    device.deviceIp.toLowerCase().includes(searchText.toLowerCase())
+    (device.deviceId?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
+    (device.deviceIp?.toLowerCase() || '').includes(searchText.toLowerCase())
   )
 
   const handleDelete = async (deviceId) => {
