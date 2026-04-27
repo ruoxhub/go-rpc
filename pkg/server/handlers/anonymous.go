@@ -8,7 +8,6 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
 	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 )
 
 // AnonymousGroupHandler 匿名分组处理器
@@ -95,13 +94,22 @@ func (h *AnonymousGroupHandler) List(c *gin.Context) {
 
 // ListOptimized 优化版本：使用数据库聚合查询
 func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
+	user, ok := getAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+	if !user.IsAdmin {
+		c.JSON(403, gin.H{"code": 403, "message": "需要管理员权限"})
+		return
+	}
+
 	db := database.GetDB()
 
 	// 使用 SQL 直接分组统计
 	type GroupStats struct {
-		GroupName string  `json:"group_name"`
-		Total     int64   `json:"total"`
-		ActiveSQL string  `json:"-"` // 用于计算活跃数
+		GroupName string `json:"group_name"`
+		Total     int64  `json:"total"`
+		ActiveSQL string `json:"-"` // 用于计算活跃数
 	}
 
 	// 查询匿名分组的统计信息
@@ -167,6 +175,15 @@ type DeleteAnonymousGroupRequest struct {
 // Delete 删除匿名分组
 // 注意：匿名分组没有对应的 group_config 记录，只需要删除 group_device 表中的记录
 func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
+	user, ok := getAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+	if !user.IsAdmin {
+		c.JSON(403, gin.H{"code": 403, "message": "需要管理员权限"})
+		return
+	}
+
 	var req DeleteAnonymousGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
@@ -216,6 +233,15 @@ type ConvertAnonymousGroupRequest struct {
 // ConvertAnonymousGroup 将匿名分组转换为正式分组
 // POST /api/anonymous-groups/convert
 func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
+	user, ok := getAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+	if !user.IsAdmin {
+		c.JSON(403, gin.H{"code": 403, "message": "需要管理员权限"})
+		return
+	}
+
 	var req ConvertAnonymousGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
@@ -240,12 +266,6 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	}
 
 	// 从认证中间件获取当前用户信息
-	user, exists := middleware.GetCurrentUser(c)
-	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
-		return
-	}
-
 	// 获取默认 QPS 配置
 	var defaultGroupQps float64 = 100
 	var defaultDeviceQps float64 = 10

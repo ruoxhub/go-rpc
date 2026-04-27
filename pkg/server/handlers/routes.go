@@ -15,7 +15,7 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 	// 创建处理器实例
 	userHandler := NewUserHandler()
 	groupHandler := NewGroupHandler()
-	sysConfigHandler := NewSysConfigHandler()
+	sysConfigHandler := NewSysConfigHandler(cfgSvc)
 	anonymousHandler := NewAnonymousGroupHandler()
 	metricHandler := NewMetricHandler()
 	traceHandler := NewTraceHandler()
@@ -24,13 +24,18 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 	// API 路由组（需要认证）
 	api := r.Group("/api")
 	api.Use(
-		authMiddleware.Authenticate(),        // 应用认证中间件
+		func(c *gin.Context) {
+			c.Set("configService", cfgSvc)
+			c.Next()
+		},
+		authMiddleware.Authenticate(),                // 应用认证中间件
 		middleware.AnonymousAccessMiddleware(cfgSvc), // 匿名访问控制
 		middleware.RateLimitMiddleware(cfgSvc),       // QPS 限流
 	)
 	{
 		// 用户管理
 		users := api.Group("/users")
+		users.Use(authMiddleware.RequireAdmin())
 		{
 			users.GET("", userHandler.List)
 			users.POST("", userHandler.Add)
@@ -65,13 +70,14 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 		// 匿名分组
 		anonGroups := api.Group("/anonymous-groups")
 		{
-			anonGroups.GET("", anonymousHandler.ListOptimized) // 使用优化版本
-			anonGroups.DELETE("", anonymousHandler.Delete)     // 删除匿名分组
+			anonGroups.GET("", anonymousHandler.ListOptimized)                  // 使用优化版本
+			anonGroups.DELETE("", anonymousHandler.Delete)                      // 删除匿名分组
 			anonGroups.POST("/convert", anonymousHandler.ConvertAnonymousGroup) // 转换为正式分组
 		}
 
 		// 系统配置
 		sysConfig := api.Group("/sysconfig")
+		sysConfig.Use(authMiddleware.RequireAdmin())
 		{
 			sysConfig.GET("", sysConfigHandler.List)
 			sysConfig.PUT("", sysConfigHandler.Update)
@@ -101,6 +107,7 @@ func SetupWebRoutes(r *gin.Engine, alertEvaluator *alert.Evaluator, cfgSvc confi
 
 		// 告警管理
 		alerts := api.Group("/alerts")
+		alerts.Use(authMiddleware.RequireAdmin())
 		{
 			alerts.GET("/rules", alertHandler.GetAlertRules)
 			alerts.GET("/rules/:id", alertHandler.GetAlertRule)

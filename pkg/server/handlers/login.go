@@ -9,6 +9,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
 	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
 )
 
@@ -79,8 +80,7 @@ func HandleLogin(c *gin.Context) {
 // HandleGetUserInfo 获取当前用户信息
 // GET /sekiro-api/user-info/userInfo
 func HandleGetUserInfo(c *gin.Context) {
-	// 从 header 获取 token
-	token := c.GetHeader("sekiro-token")
+	token := middleware.ExtractAuthTokenFromRequest(c)
 	if token == "" {
 		c.JSON(200, gin.H{
 			"status":  -1,
@@ -90,9 +90,8 @@ func HandleGetUserInfo(c *gin.Context) {
 		return
 	}
 
-	// 查询用户
-	var user model.UserInfo
-	if err := database.GetDB().Where("api_token = ?", token).First(&user).Error; err != nil {
+	user, err := middleware.FindUserByToken(token)
+	if err != nil {
 		c.JSON(200, gin.H{
 			"status":  -1,
 			"message": "请重新登录",

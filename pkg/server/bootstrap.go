@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/config"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
 	"github.com/sekiro-go/sekiro-go/pkg/server/api"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
@@ -26,6 +28,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 	webui "github.com/sekiro-go/sekiro-go/web"
+	"gorm.io/gorm"
 )
 
 // Config holds server configuration
@@ -145,9 +148,6 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Config service started successfully")
 
-	// 设置配置服务引用到 handlers 包（用于手动触发刷新）
-	handlers.SetConfigService(s.configService)
-
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
 	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
 	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService)
@@ -208,6 +208,7 @@ func (s *Server) Start() error {
 
 	logger.Infof("Sekiro server starting on %s", addr)
 	logger.Infof("CORS enabled: %v", corsEnabled)
+	logger.Debug("Legacy detector path is not wired into the active server bootstrap")
 	if routeReplaceEnabled {
 		logger.Infof("Route prefix replacement enabled: %s", routePrefix)
 	}
@@ -301,6 +302,9 @@ func (s *Server) handleRegister(c *gin.Context) {
 		})
 		return
 	}
+	if !s.authorizeRegisterAccess(c, group) {
+		return
+	}
 
 	wsConn, err := s.httpServer.WSUpgrader().Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
@@ -312,6 +316,40 @@ func (s *Server) handleRegister(c *gin.Context) {
 	}
 
 	go s.wsHandler.HandleConnection(s.wsCtx, wsConn, group, clientID)
+}
+
+func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool {
+	db := database.GetDB()
+	if db == nil {
+		return true
+	}
+
+	var group model.GroupConfig
+	if err := db.Where("group_name = ?", groupName).First(&group).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return true
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "failed to verify group access",
+		})
+		return false
+	}
+
+	user, err := middleware.FindUserByToken(middleware.ExtractAuthTokenFromRequest(c))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "registered group requires a valid sekiro token",
+		})
+		return false
+	}
+	if !user.IsAdmin && user.UserName != group.UserName {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": "no access to registered group",
+		})
+		return false
+	}
+
+	return true
 }
 
 func (s *Server) waitForShutdown() {
@@ -351,6 +389,9 @@ func (s *Server) Shutdown() {
 	if s.alertEvaluator != nil {
 		s.alertEvaluator.Stop()
 	}
+	if s.metricsCollector != nil {
+		s.metricsCollector.Shutdown()
+	}
 
 	s.clientManager.CleanupAll()
 	logger.Info("Server stopped")
@@ -374,11 +415,10 @@ func ginCorsMiddleware(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
-			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Origin", "*")
 			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
 			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
 			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
-			c.Header("Access-Control-Allow-Credentials", "true")
 		}
 
 		if c.Request.Method == "OPTIONS" {

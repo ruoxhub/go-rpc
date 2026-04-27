@@ -6,18 +6,23 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type limiterEntry struct {
+	limiter *rate.Limiter
+	qps     float64
+}
+
 // RateLimiter QPS 限流器
 // 使用令牌桶算法实现
 type RateLimiter struct {
-	mu       sync.RWMutex
-	limiters map[string]*rate.Limiter // key: userID 或 groupID
+	mu         sync.RWMutex
+	limiters   map[string]*limiterEntry // key: userID 或 groupID
 	defaultQps float64
 }
 
 // NewRateLimiter 创建限流器实例
 func NewRateLimiter(defaultQps float64) *RateLimiter {
 	return &RateLimiter{
-		limiters:   make(map[string]*rate.Limiter),
+		limiters:   make(map[string]*limiterEntry),
 		defaultQps: defaultQps,
 	}
 }
@@ -25,26 +30,29 @@ func NewRateLimiter(defaultQps float64) *RateLimiter {
 // getLimiter 获取或创建限流器
 func (rl *RateLimiter) getLimiter(key string, qps float64) *rate.Limiter {
 	rl.mu.RLock()
-	limiter, ok := rl.limiters[key]
+	entry, ok := rl.limiters[key]
 	rl.mu.RUnlock()
 
-	if ok {
-		return limiter
+	if ok && sameQPS(entry.qps, qps) {
+		return entry.limiter
 	}
 
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	// 双重检查
-	if limiter, ok := rl.limiters[key]; ok {
-		return limiter
+	if entry, ok := rl.limiters[key]; ok && sameQPS(entry.qps, qps) {
+		return entry.limiter
 	}
 
 	// 创建新的限流器
 	// rate.Limit(qps) 表示每秒允许 qps 个请求
 	// Burst 设置为 qps 的 2 倍，允许短时突发
-	limiter = rate.NewLimiter(rate.Limit(qps), int(qps*2)+1)
-	rl.limiters[key] = limiter
+	limiter := rate.NewLimiter(rate.Limit(qps), int(qps*2)+1)
+	rl.limiters[key] = &limiterEntry{
+		limiter: limiter,
+		qps:     qps,
+	}
 
 	return limiter
 }
@@ -83,7 +91,7 @@ func (rl *RateLimiter) Remove(key string) {
 func (rl *RateLimiter) Cleanup() {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-	rl.limiters = make(map[string]*rate.Limiter)
+	rl.limiters = make(map[string]*limiterEntry)
 }
 
 // SetDefaultQPS 设置默认 QPS
@@ -94,4 +102,12 @@ func (rl *RateLimiter) SetDefaultQPS(qps float64) {
 // GetDefaultQPS 获取默认 QPS
 func (rl *RateLimiter) GetDefaultQPS() float64 {
 	return rl.defaultQps
+}
+
+func sameQPS(a, b float64) bool {
+	const epsilon = 0.000001
+	if a > b {
+		return a-b < epsilon
+	}
+	return b-a < epsilon
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,12 +12,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
+	"github.com/sekiro-go/sekiro-go/pkg/database"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/config"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
 	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/server/router"
 	ws "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
+	"gorm.io/gorm"
 )
 
 // APIHandler handles HTTP API requests
@@ -48,6 +53,7 @@ type RequestBuilder interface {
 	GetGroup() string
 	GetClientID() string
 	GetConstantInvoke() string
+	GetAccessToken() string
 }
 
 // InvokeRequest represents the invoke request body
@@ -55,6 +61,7 @@ type InvokeRequest struct {
 	Group          string      `json:"group"`
 	ClientID       string      `json:"clientId,omitempty"`
 	ConstantInvoke string      `json:"constantInvoke,omitempty"`
+	SekiroToken    string      `json:"sekiro_token,omitempty"`
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
@@ -65,6 +72,7 @@ type ExecJSRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
+	SekiroToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 	Code           string `json:"code" form:"code"`
 }
 
@@ -73,6 +81,7 @@ type GetCookieRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
+	SekiroToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -91,10 +100,18 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 // GET /business/groupList
 func (h *APIHandler) HandleGroupList(c *gin.Context) {
 	groups := h.clientManager.GetAllGroups()
+	filtered, err := h.filterAccessibleGroups(c, groups)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  -1,
+			"message": err.Error(),
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"status":  0,
 		"message": "success",
-		"data":    groups,
+		"data":    filtered,
 	})
 }
 
@@ -107,6 +124,9 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 			"status":  -1,
 			"message": "group parameter required",
 		})
+		return
+	}
+	if !h.authorizeRegisteredGroupAccess(c, group, c.Query("sekiro_token")) {
 		return
 	}
 
@@ -128,6 +148,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 func (h *APIHandler) HandleInvoke(c *gin.Context) {
 	startTime := time.Now()
 	var req InvokeRequest
+	accessToken := resolveAccessToken(c)
 
 	// 根据请求方法绑定数据
 	if c.Request.Method == http.MethodPost {
@@ -136,6 +157,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
+			req.SekiroToken = accessToken
 			req.Action = c.Query("action")
 		}
 	} else {
@@ -143,7 +165,11 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
+		req.SekiroToken = accessToken
 		req.Action = c.Query("action")
+	}
+	if req.SekiroToken == "" {
+		req.SekiroToken = accessToken
 	}
 
 	// 参数验证
@@ -160,6 +186,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
+		AccessToken:    req.SekiroToken,
 		Action:         req.Action,
 		Params:         req.Params,
 		Timeout:        time.Duration(req.Timeout) * time.Second,
@@ -192,18 +219,24 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 	}()
 
 	var req ExecJSRequest
+	accessToken := resolveAccessToken(c)
 	if c.Request.Method == http.MethodPost {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
+			req.SekiroToken = accessToken
 			req.Code = c.Query("code")
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
+		req.SekiroToken = accessToken
 		req.Code = c.Query("code")
+	}
+	if req.SekiroToken == "" {
+		req.SekiroToken = accessToken
 	}
 
 	// 参数验证
@@ -220,6 +253,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
+		AccessToken:    req.SekiroToken,
 		Code:           req.Code,
 	}
 
@@ -240,16 +274,22 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 	}()
 
 	var req GetCookieRequest
+	accessToken := resolveAccessToken(c)
 	if c.Request.Method == http.MethodPost {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
+			req.SekiroToken = accessToken
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
+		req.SekiroToken = accessToken
+	}
+	if req.SekiroToken == "" {
+		req.SekiroToken = accessToken
 	}
 
 	startTime := time.Now()
@@ -257,6 +297,7 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
+		AccessToken:    req.SekiroToken,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
@@ -276,16 +317,22 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 	}()
 
 	var req GetCookieRequest
+	accessToken := resolveAccessToken(c)
 	if c.Request.Method == http.MethodPost {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
+			req.SekiroToken = accessToken
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
+		req.SekiroToken = accessToken
+	}
+	if req.SekiroToken == "" {
+		req.SekiroToken = accessToken
 	}
 
 	startTime := time.Now()
@@ -293,6 +340,7 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
+		AccessToken:    req.SekiroToken,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
@@ -360,6 +408,7 @@ type InvokeBuilder struct {
 	Group          string
 	ClientID       string
 	ConstantInvoke string
+	AccessToken    string
 	Action         string
 	Params         interface{}
 	Timeout        time.Duration
@@ -394,12 +443,14 @@ func (b *InvokeBuilder) GetMetricAPI(action string) string {
 func (b *InvokeBuilder) GetGroup() string          { return b.Group }
 func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+func (b *InvokeBuilder) GetAccessToken() string    { return b.AccessToken }
 
 // ExecJSBuilder handles execjs requests
 type ExecJSBuilder struct {
 	Group          string
 	ClientID       string
 	ConstantInvoke string
+	AccessToken    string
 	Code           string
 }
 
@@ -426,12 +477,14 @@ func (b *ExecJSBuilder) GetMetricAPI(action string) string {
 func (b *ExecJSBuilder) GetGroup() string          { return b.Group }
 func (b *ExecJSBuilder) GetClientID() string       { return b.ClientID }
 func (b *ExecJSBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+func (b *ExecJSBuilder) GetAccessToken() string    { return b.AccessToken }
 
 // GetCookieBuilder handles cookie requests
 type GetCookieBuilder struct {
 	Group          string
 	ClientID       string
 	ConstantInvoke string
+	AccessToken    string
 }
 
 func (b *GetCookieBuilder) BuildRequestData() (string, interface{}, error) {
@@ -457,12 +510,14 @@ func (b *GetCookieBuilder) GetMetricAPI(action string) string {
 func (b *GetCookieBuilder) GetGroup() string          { return b.Group }
 func (b *GetCookieBuilder) GetClientID() string       { return b.ClientID }
 func (b *GetCookieBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+func (b *GetCookieBuilder) GetAccessToken() string    { return b.AccessToken }
 
 // GetHTMLBuilder handles html requests
 type GetHTMLBuilder struct {
 	Group          string
 	ClientID       string
 	ConstantInvoke string
+	AccessToken    string
 }
 
 func (b *GetHTMLBuilder) BuildRequestData() (string, interface{}, error) {
@@ -488,6 +543,7 @@ func (b *GetHTMLBuilder) GetMetricAPI(action string) string {
 func (b *GetHTMLBuilder) GetGroup() string          { return b.Group }
 func (b *GetHTMLBuilder) GetClientID() string       { return b.ClientID }
 func (b *GetHTMLBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
+func (b *GetHTMLBuilder) GetAccessToken() string    { return b.AccessToken }
 
 // handleForwardRequest is the generic handler for forwarding requests to Sekiro clients
 func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder, startTime time.Time) {
@@ -506,6 +562,9 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 			"status":  -1,
 			"message": "group parameter required",
 		})
+		return
+	}
+	if !h.authorizeRegisteredGroupAccess(c, group, builder.GetAccessToken()) {
 		return
 	}
 
@@ -685,4 +744,86 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 			"data":     responseData,
 		})
 	}
+}
+
+func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, token string) bool {
+	db := database.GetDB()
+	if db == nil {
+		return true
+	}
+
+	var group model.GroupConfig
+	if err := db.Where("group_name = ?", groupName).First(&group).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return true
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  -1,
+			"message": "failed to verify group access: " + err.Error(),
+		})
+		return false
+	}
+
+	if token == "" {
+		token = middleware.ExtractAuthTokenFromRequest(c)
+	}
+	user, err := middleware.FindUserByToken(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"status":  -1,
+			"message": "registered group requires a valid sekiro token",
+		})
+		return false
+	}
+
+	if !user.IsAdmin && user.UserName != group.UserName {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  -1,
+			"message": "no access to registered group",
+		})
+		return false
+	}
+
+	c.Set(middleware.ContextUserKey, user)
+	return true
+}
+
+func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]string, error) {
+	db := database.GetDB()
+	if db == nil {
+		return groups, nil
+	}
+
+	token := middleware.ExtractAuthTokenFromRequest(c)
+	var user *model.UserInfo
+	if token != "" {
+		resolved, err := middleware.FindUserByToken(token)
+		if err == nil {
+			user = resolved
+			c.Set(middleware.ContextUserKey, user)
+		}
+	}
+
+	filtered := make([]string, 0, len(groups))
+	for _, groupName := range groups {
+		var group model.GroupConfig
+		err := db.Where("group_name = ?", groupName).First(&group).Error
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				filtered = append(filtered, groupName)
+				continue
+			}
+			return nil, fmt.Errorf("failed to verify group access: %w", err)
+		}
+
+		if user != nil && (user.IsAdmin || user.UserName == group.UserName) {
+			filtered = append(filtered, groupName)
+		}
+	}
+
+	return filtered, nil
+}
+
+func resolveAccessToken(c *gin.Context) string {
+	return middleware.ExtractAuthTokenFromRequest(c)
 }

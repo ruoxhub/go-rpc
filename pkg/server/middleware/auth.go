@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"gorm.io/gorm"
 )
 
 const (
@@ -27,9 +29,8 @@ func NewAuthMiddleware() *AuthMiddleware {
 // 从 Authorization header 中提取 Bearer token，查询用户信息并存入 context
 func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 获取 Authorization header
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		token := ExtractAuthTokenFromRequest(c)
+		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    401,
 				"message": "未提供认证信息",
@@ -38,22 +39,9 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 			return
 		}
 
-		// 解析 Bearer token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "认证格式错误，应为 Bearer <token>",
-			})
-			c.Abort()
-			return
-		}
-
-		token := parts[1]
-
 		// 查询用户信息
-		var user model.UserInfo
-		if err := database.GetDB().Where("api_token = ?", token).First(&user).Error; err != nil {
+		user, err := FindUserByToken(token)
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    401,
 				"message": "无效的认证 token",
@@ -63,7 +51,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 		}
 
 		// 将用户信息存入 context
-		c.Set(ContextUserKey, &user)
+		c.Set(ContextUserKey, user)
 		logger.Debugf("用户认证成功：userName=%s, userID=%d", user.UserName, user.ID)
 
 		c.Next()
@@ -74,28 +62,68 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 // 如果提供了有效的 token 则设置用户信息，否则继续但不设置用户
 func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		token := ExtractAuthTokenFromRequest(c)
+		if token == "" {
 			c.Next()
 			return
 		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.Next()
-			return
-		}
-
-		token := parts[1]
-
-		var user model.UserInfo
-		if err := database.GetDB().Where("api_token = ?", token).First(&user).Error; err == nil {
-			c.Set(ContextUserKey, &user)
+		if user, err := FindUserByToken(token); err == nil {
+			c.Set(ContextUserKey, user)
 			logger.Debugf("用户认证成功（可选）：userName=%s, userID=%d", user.UserName, user.ID)
 		}
 
 		c.Next()
 	}
+}
+
+func ExtractBearerToken(authHeader string) string {
+	if authHeader == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || parts[0] != "Bearer" {
+		return ""
+	}
+
+	return parts[1]
+}
+
+func ExtractAuthTokenFromRequest(c *gin.Context) string {
+	if token := ExtractBearerToken(c.GetHeader("Authorization")); token != "" {
+		return token
+	}
+	if token := c.GetHeader("sekiro-token"); token != "" {
+		return token
+	}
+	if token := c.Query("sekiro_token"); token != "" {
+		return token
+	}
+	if token := c.PostForm("sekiro_token"); token != "" {
+		return token
+	}
+	return ""
+}
+
+func FindUserByToken(token string) (*model.UserInfo, error) {
+	if token == "" {
+		return nil, errors.New("empty token")
+	}
+
+	db := database.GetDB()
+	if db == nil {
+		return nil, errors.New("database not initialized")
+	}
+
+	var user model.UserInfo
+	if err := db.Where("api_token = ?", token).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("invalid token")
+		}
+		return nil, err
+	}
+
+	return &user, nil
 }
 
 // GetCurrentUser 从 context 中获取当前用户信息

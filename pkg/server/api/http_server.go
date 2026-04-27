@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,7 +53,7 @@ func NewHTTPServer(cfg *Config) *HTTPServer {
 		wsUpgrader: &websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin:     func(r *http.Request) bool { return true },
+			CheckOrigin:     sameOriginOrNoOrigin,
 		},
 	}
 
@@ -139,4 +140,18 @@ func (s *HTTPServer) Server() *http.Server {
 // WSUpgrader returns the WebSocket upgrader
 func (s *HTTPServer) WSUpgrader() *websocket.Upgrader {
 	return s.wsUpgrader
+}
+
+func sameOriginOrNoOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+
+	if !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+		return false
+	}
+
+	originHost := strings.TrimPrefix(strings.TrimPrefix(origin, "http://"), "https://")
+	return strings.EqualFold(originHost, r.Host)
 }

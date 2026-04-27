@@ -8,8 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
 	"github.com/sekiro-go/sekiro-go/pkg/database"
 	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"go.uber.org/zap"
 )
 
 // MetricType 指标类型
@@ -32,6 +34,8 @@ type MetricCollector interface {
 	Observe(name string, tags map[string]string, value float64)
 	// RecordLatency 记录延迟（自动计算 P50/P90/P99）
 	RecordLatency(name string, tags map[string]string, durationMs float64)
+	// Shutdown 停止后台刷新并尽力落盘剩余指标
+	Shutdown()
 }
 
 // collector 采集器实现
@@ -39,17 +43,20 @@ type collector struct {
 	mu       sync.Mutex
 	buckets  map[string]*metricBucket
 	interval time.Duration
+	stopChan chan struct{}
+	wg       sync.WaitGroup
+	once     sync.Once
 }
 
 // metricBucket 指标桶（用于批量写入）
 type metricBucket struct {
-	Name        string
-	TimeKey     string
-	Tags        map[string]string
-	Type        MetricType
-	Value       float64
-	Count       int64
-	Sum         float64
+	Name         string
+	TimeKey      string
+	Tags         map[string]string
+	Type         MetricType
+	Value        float64
+	Count        int64
+	Sum          float64
 	Observations []float64 // 存储所有观测值用于计算百分位数
 }
 
@@ -58,8 +65,10 @@ func NewCollector(interval time.Duration) MetricCollector {
 	c := &collector{
 		buckets:  make(map[string]*metricBucket),
 		interval: interval,
+		stopChan: make(chan struct{}),
 	}
 	// 启动定期聚合协程
+	c.wg.Add(1)
 	go c.flushLoop()
 	return c
 }
@@ -113,10 +122,10 @@ func (c *collector) Observe(name string, tags map[string]string, value float64) 
 	bucket, ok := c.buckets[key]
 	if !ok {
 		bucket = &metricBucket{
-			Name:     name,
-			Tags:     tags,
-			Type:     MetricTypeHistogram,
-			TimeKey:  time.Now().Format("200601021504"),
+			Name:         name,
+			Tags:         tags,
+			Type:         MetricTypeHistogram,
+			TimeKey:      time.Now().Format("200601021504"),
 			Observations: make([]float64, 0),
 		}
 		c.buckets[key] = bucket
@@ -167,11 +176,17 @@ func (c *collector) tagsMD5(tags map[string]string) string {
 
 // flushLoop 定期刷新协程
 func (c *collector) flushLoop() {
+	defer c.wg.Done()
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		c.flush()
+	for {
+		select {
+		case <-ticker.C:
+			c.flush()
+		case <-c.stopChan:
+			return
+		}
 	}
 }
 
@@ -191,8 +206,18 @@ func (c *collector) flush() {
 		metrics = append(metrics, c.toMetricRecords(bucket, percentiles)...)
 	}
 
-	if len(metrics) > 0 {
-		database.GetDB().CreateInBatches(metrics, 100)
+	if len(metrics) == 0 {
+		return
+	}
+
+	db := database.GetDB()
+	if db == nil {
+		logger.Warn("metric collector flush skipped: database not initialized")
+		return
+	}
+
+	if err := db.CreateInBatches(metrics, 100).Error; err != nil {
+		logger.Error("metric collector flush failed", zap.Error(err), zap.Int("count", len(metrics)))
 	}
 }
 
@@ -239,7 +264,7 @@ func (c *collector) toMetricRecords(bucket *metricBucket, percentiles map[float6
 	// 延迟百分位数
 	for p, v := range percentiles {
 		records = append(records, model.MetricMinute{
-			Name:    fmt.Sprintf("%s_p%d", bucket.Name, int(p)),
+			Name:    fmt.Sprintf("%s.p%d", bucket.Name, int(p)),
 			TimeKey: bucket.TimeKey,
 			TagsMD5: c.tagsMD5(bucket.Tags),
 			Type:    "latency",
@@ -250,4 +275,13 @@ func (c *collector) toMetricRecords(bucket *metricBucket, percentiles map[float6
 	}
 
 	return records
+}
+
+// Shutdown 停止后台刷新并落盘剩余指标
+func (c *collector) Shutdown() {
+	c.once.Do(func() {
+		close(c.stopChan)
+		c.wg.Wait()
+		c.flush()
+	})
 }

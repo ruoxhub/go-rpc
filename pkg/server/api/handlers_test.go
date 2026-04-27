@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
 	"github.com/sekiro-go/sekiro-go/pkg/server/router"
 )
 
@@ -269,6 +271,68 @@ func TestHandleInvoke_SpecifiedClientNotFound(t *testing.T) {
 
 	if result["message"] != "client missing not found in group test-group" {
 		t.Fatalf("Unexpected error response: %v", result)
+	}
+}
+
+func TestFilterAccessibleGroupsWithoutDatabaseReturnsOriginalGroups(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestAPIHandler(newMockClientManager())
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/groupList", nil)
+
+	groups := []string{"g1", "g2"}
+	filtered, err := handler.filterAccessibleGroups(c, groups)
+	if err != nil {
+		t.Fatalf("filterAccessibleGroups() error = %v", err)
+	}
+	if len(filtered) != len(groups) {
+		t.Fatalf("filtered len = %d, want %d", len(filtered), len(groups))
+	}
+}
+
+func TestAuthorizeRegisteredGroupAccessWithoutDatabaseAllowsRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestAPIHandler(newMockClientManager())
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/invoke?group=g1", nil)
+
+	if !handler.authorizeRegisteredGroupAccess(c, "g1", "") {
+		t.Fatal("expected authorizeRegisteredGroupAccess to allow when database is unavailable")
+	}
+}
+
+func TestNewRequestBuildersExposeAccessToken(t *testing.T) {
+	invoke := &InvokeBuilder{AccessToken: "token-1"}
+	execJS := &ExecJSBuilder{AccessToken: "token-2"}
+	cookie := &GetCookieBuilder{AccessToken: "token-3"}
+	html := &GetHTMLBuilder{AccessToken: "token-4"}
+
+	if invoke.GetAccessToken() != "token-1" || execJS.GetAccessToken() != "token-2" ||
+		cookie.GetAccessToken() != "token-3" || html.GetAccessToken() != "token-4" {
+		t.Fatal("request builders should expose access token")
+	}
+}
+
+func TestHandleGroupListAccessibleGroupsUsesContextUserWhenPresent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestAPIHandler(newMockClientManager())
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/groupList", nil)
+	c.Set(middleware.ContextUserKey, &model.UserInfo{ID: 1, UserName: "alice", IsAdmin: true})
+
+	groups := []string{"g1"}
+	filtered, err := handler.filterAccessibleGroups(c, groups)
+	if err != nil {
+		t.Fatalf("filterAccessibleGroups() error = %v", err)
+	}
+	if len(filtered) != 1 || filtered[0] != "g1" {
+		t.Fatalf("unexpected filtered groups: %v", filtered)
 	}
 }
 

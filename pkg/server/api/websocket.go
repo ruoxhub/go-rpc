@@ -7,20 +7,17 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
 	wsHandler "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
 )
 
 // WebSocketHandler handles WebSocket connections
 type WebSocketHandler struct {
-	clientManager  *client.ClientManager
-	sekiroHandler  *wsHandler.Handler
+	sekiroHandler *wsHandler.Handler
 }
 
 // NewWebSocketHandler creates a new WebSocketHandler
-func NewWebSocketHandler(manager *client.ClientManager, sekiroHandler *wsHandler.Handler) *WebSocketHandler {
+func NewWebSocketHandler(sekiroHandler *wsHandler.Handler) *WebSocketHandler {
 	return &WebSocketHandler{
-		clientManager: manager,
 		sekiroHandler: sekiroHandler,
 	}
 }
@@ -64,10 +61,7 @@ func (h *WebSocketHandler) upgradeWebSocket(w http.ResponseWriter, r *http.Reque
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			// 允许所有来源，生产环境应该根据实际需求配置
-			return true
-		},
+		CheckOrigin:     sameOriginOrNoOrigin,
 	}
 
 	// WebSocket 升级

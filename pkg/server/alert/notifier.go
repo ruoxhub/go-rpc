@@ -15,6 +15,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var smtpSendMail = smtp.SendMail
+
 // WebhookPayload Webhook 通知载荷
 type WebhookPayload struct {
 	RuleName     string  `json:"rule_name"`
@@ -52,7 +54,7 @@ func (c *DefaultHTTPClient) Do(req *http.Request) (*http.Response, error) {
 // DefaultNotifier 默认通知发送器
 type DefaultNotifier struct {
 	httpClient HTTPClient
-	smtpConfig   SMTPConfig
+	smtpConfig SMTPConfig
 }
 
 // SMTPConfig SMTP 配置
@@ -147,9 +149,9 @@ func (n *DefaultNotifier) SendEmail(to string, subject string, body string) erro
 	// 根据是否使用 TLS 选择认证方式
 	var err error
 	if n.smtpConfig.UseTLS {
-		err = n.sendEmailTLS(addr, msg)
+		err = n.sendEmailTLS(addr, to, msg)
 	} else {
-		err = n.sendEmailPlain(addr, msg)
+		err = n.sendEmailPlain(addr, to, msg)
 	}
 
 	if err != nil {
@@ -164,14 +166,14 @@ func (n *DefaultNotifier) SendEmail(to string, subject string, body string) erro
 }
 
 // sendEmailTLS 使用 TLS 发送邮件
-func (n *DefaultNotifier) sendEmailTLS(addr string, msg []byte) error {
+func (n *DefaultNotifier) sendEmailTLS(addr, to string, msg []byte) error {
 	auth := smtp.PlainAuth("", n.smtpConfig.Username, n.smtpConfig.Password, n.smtpConfig.Host)
-	return smtp.SendMail(addr+":587", auth, n.smtpConfig.From, []string{n.smtpConfig.From}, msg)
+	return smtpSendMail(addr, auth, n.smtpConfig.From, []string{to}, msg)
 }
 
 // sendEmailPlain 不使用 TLS 发送邮件
-func (n *DefaultNotifier) sendEmailPlain(addr string, msg []byte) error {
-	return smtp.SendMail(addr, nil, n.smtpConfig.From, []string{n.smtpConfig.From}, msg)
+func (n *DefaultNotifier) sendEmailPlain(addr, to string, msg []byte) error {
+	return smtpSendMail(addr, nil, n.smtpConfig.From, []string{to}, msg)
 }
 
 // BuildEmailBody 构建邮件正文（HTML 格式）

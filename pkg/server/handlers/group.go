@@ -43,13 +43,18 @@ type GroupInfoVO struct {
 // List 获取分组列表
 func (h *GroupHandler) List(c *gin.Context) {
 	db := database.GetDB()
+	user, exists := middleware.GetCurrentUser(c)
+	if !exists || user == nil {
+		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		return
+	}
 
 	// 优化版本：使用单次 JOIN + GROUP BY 查询替代 N+1 查询
 	// 查询所有分组及其设备统计信息
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
 	var stats []GroupStats
-	err := db.Table("group_config gc").
+	query := db.Table("group_config gc").
 		Select(`
 			gc.id,
 			gc.group_name,
@@ -61,7 +66,11 @@ func (h *GroupHandler) List(c *gin.Context) {
 			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
 			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
 		`, activeThreshold, activeThreshold).
-		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name").
+		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name")
+	if !user.IsAdmin {
+		query = query.Where("gc.user_name = ?", user.UserName)
+	}
+	err := query.
 		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
 		Order("gc.create_date DESC").
 		Scan(&stats).Error
@@ -179,6 +188,9 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
 		return
 	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+		return
+	}
 
 	tx := database.GetDB().Begin()
 
@@ -212,9 +224,8 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 func (h *GroupHandler) GetDetail(c *gin.Context) {
 	groupName := c.Param("groupName")
 
-	var group model.GroupConfig
-	if err := database.GetDB().Where("group_name = ?", groupName).First(&group).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "group not found"})
+	group, ok := authorizeGroupAccess(c, groupName)
+	if !ok {
 		return
 	}
 
@@ -268,6 +279,9 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
 		return
 	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+		return
+	}
 
 	updates := make(map[string]interface{})
 	if req.QuotaQpsGroup > 0 {
@@ -302,6 +316,9 @@ type DeviceInfoVO struct {
 
 func (h *GroupHandler) GetDevices(c *gin.Context) {
 	groupName := c.Param("groupName")
+	if _, ok := authorizeGroupAccess(c, groupName); !ok {
+		return
+	}
 
 	var devices []model.GroupDevice
 	if err := database.GetDB().Where("group_name = ?", groupName).Find(&devices).Error; err != nil {
@@ -346,6 +363,9 @@ func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
 		return
 	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+		return
+	}
 
 	if err := database.GetDB().Where("group_name = ? AND device_id = ?", req.GroupName, req.DeviceID).
 		Delete(&model.GroupDevice{}).Error; err != nil {
@@ -362,6 +382,9 @@ func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 // GetGroupActions 获取分组 Action 列表
 func (h *GroupHandler) GetActions(c *gin.Context) {
 	groupName := c.Param("groupName")
+	if _, ok := authorizeGroupAccess(c, groupName); !ok {
+		return
+	}
 
 	var actions []model.GroupAction
 	if err := database.GetDB().Where("group_name = ?", groupName).Find(&actions).Error; err != nil {
@@ -387,6 +410,9 @@ func (h *GroupHandler) AddAction(c *gin.Context) {
 	var req AddActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
 		return
 	}
 
@@ -435,6 +461,9 @@ func (h *GroupHandler) DeleteAction(c *gin.Context) {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
 		return
 	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+		return
+	}
 
 	if err := database.GetDB().Where("group_name = ? AND action_name = ?", req.GroupName, req.ActionName).
 		Delete(&model.GroupAction{}).Error; err != nil {
@@ -460,6 +489,9 @@ func (h *GroupHandler) DisableDevice(c *gin.Context) {
 	var req DisableDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		return
+	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
 		return
 	}
 

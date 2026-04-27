@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,20 @@ import (
 	"github.com/sekiro-go/sekiro-go/pkg/utils/traceid"
 	"go.uber.org/zap"
 )
+
+type traceSnapshot struct {
+	ParentSpanID string
+	Group        string
+	DeviceID     string
+	API          string
+	Caller       string
+	Method       string
+	UserAgent    string
+	ContentType  string
+	StatusCode   int
+	UserID       int64
+	UserName     string
+}
 
 // TraceMiddleware 追踪采集中间件
 // 为每个请求生成或提取 TraceID，记录请求追踪信息
@@ -49,12 +64,34 @@ func TraceMiddleware() gin.HandlerFunc {
 			errorMessage = c.Errors.String()
 		}
 
-		// 9. 异步写入追踪记录 (不阻塞请求)
-		go recordTrace(c, traceID, spanID, startTime, durationMs, status, errorMessage)
+		// 9. 先快照请求信息，再异步写入追踪记录，避免引用 gin.Context 池化对象
+		snapshot := buildTraceSnapshot(c)
+		go recordTrace(snapshot, traceID, spanID, startTime, durationMs, status, errorMessage)
 	}
 }
 
-func recordTrace(c *gin.Context, traceID, spanID string, startTime time.Time,
+func buildTraceSnapshot(c *gin.Context) traceSnapshot {
+	snapshot := traceSnapshot{
+		ParentSpanID: c.GetHeader("X-Parent-Span-ID"),
+		Group:        c.Query("group"),
+		DeviceID:     c.Query("clientId"),
+		API:          c.Request.URL.Path,
+		Caller:       c.ClientIP(),
+		Method:       c.Request.Method,
+		UserAgent:    c.Request.UserAgent(),
+		ContentType:  c.ContentType(),
+		StatusCode:   c.Writer.Status(),
+	}
+
+	if user, exists := GetCurrentUser(c); exists && user != nil {
+		snapshot.UserID = user.ID
+		snapshot.UserName = user.UserName
+	}
+
+	return snapshot
+}
+
+func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.Time,
 	durationMs int64, status, errorMessage string) {
 
 	// 检查数据库是否已初始化
@@ -63,17 +100,14 @@ func recordTrace(c *gin.Context, traceID, spanID string, startTime time.Time,
 		return
 	}
 
-	// 获取父 SpanID（如果有）
-	parentSpanID := c.GetHeader("X-Parent-Span-ID")
-
 	record := model.TraceRecord{
 		TraceID:      traceID,
 		SpanID:       spanID,
-		ParentSpanID: parentSpanID,
-		Group:        c.Query("group"),
-		DeviceID:     c.Query("clientId"),
-		API:          c.Request.URL.Path,
-		Caller:       c.ClientIP(),
+		ParentSpanID: snapshot.ParentSpanID,
+		Group:        snapshot.Group,
+		DeviceID:     snapshot.DeviceID,
+		API:          snapshot.API,
+		Caller:       snapshot.Caller,
 		StartTime:    startTime,
 		EndTime:      startTime.Add(time.Duration(durationMs) * time.Millisecond),
 		DurationMs:   durationMs,
@@ -83,21 +117,24 @@ func recordTrace(c *gin.Context, traceID, spanID string, startTime time.Time,
 
 	// 额外数据
 	extraData := map[string]interface{}{
-		"method":       c.Request.Method,
-		"user_agent":   c.Request.UserAgent(),
-		"content_type": c.ContentType(),
-		"status_code":  c.Writer.Status(),
+		"method":       snapshot.Method,
+		"user_agent":   snapshot.UserAgent,
+		"content_type": snapshot.ContentType,
+		"status_code":  snapshot.StatusCode,
 	}
 
-	if c.GetInt("userId") > 0 {
-		extraData["user_id"] = c.GetInt("userId")
+	if snapshot.UserID > 0 {
+		extraData["user_id"] = snapshot.UserID
 	}
-	if userName, exists := c.Get("currentUserName"); exists {
-		extraData["user_name"] = userName
+	if snapshot.UserName != "" {
+		extraData["user_name"] = snapshot.UserName
 	}
 
-	// TODO: 将 extraData 序列化为 JSON 字符串存储
-	// 简化实现：暂时不存储 extraData
+	if data, err := json.Marshal(extraData); err == nil {
+		record.ExtraData = string(data)
+	} else {
+		logger.Error("序列化追踪额外数据失败", zap.Error(err))
+	}
 
 	if err := database.GetDB().Create(&record).Error; err != nil {
 		logger.Error("写入追踪记录失败", zap.Error(err))

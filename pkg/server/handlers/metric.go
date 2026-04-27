@@ -19,17 +19,17 @@ func NewMetricHandler() *MetricHandler {
 
 // MetricDataVO 指标数据 VO
 type MetricDataVO struct {
-	Name      string    `json:"name"`
-	TimeKey   string    `json:"timeKey"`
-	TagsMD5   string    `json:"tagsMd5"`
-	Type      string    `json:"type"`
-	Value     float64   `json:"value"`
-	Tags      []string  `json:"tags"`
+	Name    string   `json:"name"`
+	TimeKey string   `json:"timeKey"`
+	TagsMD5 string   `json:"tagsMd5"`
+	Type    string   `json:"type"`
+	Value   float64  `json:"value"`
+	Tags    []string `json:"tags"`
 }
 
 // GetMetricsRequest 获取指标请求
 type GetMetricsRequest struct {
-	Name     string `json:"name" form:"name"`
+	Name      string `json:"name" form:"name"`
 	TimeRange string `json:"timeRange" form:"timeRange"` // minutes, hours, days
 	StartTime string `json:"startTime" form:"startTime"`
 	EndTime   string `json:"endTime" form:"endTime"`
@@ -169,18 +169,18 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 
 	// 获取 P50/P90/P99 指标
 	var latencyMetrics []model.MetricMinute
-	if err := query.Where("name LIKE ?", "%.p%").Find(&latencyMetrics).Error; err != nil {
+	if err := query.Where("name LIKE ? OR name LIKE ? OR name LIKE ?", "%.p%", "%_p%", "%.latency").Find(&latencyMetrics).Error; err != nil {
 		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
 
 	// 按 API 分组
 	type LatencyStats struct {
-		API    string  `json:"api"`
-		Group  string  `json:"group"`
-		P50    float64 `json:"p50"`
-		P90    float64 `json:"p90"`
-		P99    float64 `json:"p99"`
+		API   string  `json:"api"`
+		Group string  `json:"group"`
+		P50   float64 `json:"p50"`
+		P90   float64 `json:"p90"`
+		P99   float64 `json:"p99"`
 	}
 
 	apiStats := make(map[string]*LatencyStats)
@@ -195,11 +195,11 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 
 		// 从 name 中提取百分位数并赋值，如 "invoke.latency.p50" -> p50
 		stats := apiStats[key]
-		if strings.Contains(m.Name, ".p50") {
+		if strings.Contains(m.Name, ".p50") || strings.HasSuffix(m.Name, "_p50") {
 			stats.P50 = m.Value
-		} else if strings.Contains(m.Name, ".p90") {
+		} else if strings.Contains(m.Name, ".p90") || strings.HasSuffix(m.Name, "_p90") {
 			stats.P90 = m.Value
-		} else if strings.Contains(m.Name, ".p99") {
+		} else if strings.Contains(m.Name, ".p99") || strings.HasSuffix(m.Name, "_p99") {
 			stats.P99 = m.Value
 		}
 	}

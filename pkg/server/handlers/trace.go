@@ -154,6 +154,11 @@ func (h *TraceHandler) GetTraceStats(c *gin.Context) {
 	var minLatency int64
 	query.Select("MIN(duration_ms)").Scan(&minLatency)
 
+	successRate := 0.0
+	if total > 0 {
+		successRate = float64(successCount) / float64(total) * 100
+	}
+
 	c.JSON(200, gin.H{
 		"code":    0,
 		"message": "success",
@@ -161,7 +166,7 @@ func (h *TraceHandler) GetTraceStats(c *gin.Context) {
 			"total":        total,
 			"successCount": successCount,
 			"failureCount": failureCount,
-			"successRate":  float64(successCount) / float64(total) * 100,
+			"successRate":  successRate,
 			"avgLatency":   avgLatency,
 			"maxLatency":   maxLatency,
 			"minLatency":   minLatency,

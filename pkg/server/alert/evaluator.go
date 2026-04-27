@@ -200,9 +200,14 @@ func (e *Evaluator) checkThreshold(value float64, operator string, threshold flo
 func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 	// 检查是否最近已触发过（防抖，5 分钟内不重复触发）
 	var recentCount int64
-	database.GetDB().Table("alert_history").
-		Where("rule_id = ? AND triggered_at > ?", time.Now().Add(-AlertDedupeWindow)).
-		Count(&recentCount)
+	if err := database.GetDB().Table("alert_history").
+		Where("rule_id = ? AND triggered_at > ?", rule.ID, time.Now().Add(-AlertDedupeWindow)).
+		Count(&recentCount).Error; err != nil {
+		logger.Error("Failed to check alert dedupe window",
+			zap.String("rule", rule.Name),
+			zap.Error(err))
+		return
+	}
 
 	if recentCount > 0 {
 		return // 最近已触发过，跳过

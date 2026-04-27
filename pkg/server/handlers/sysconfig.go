@@ -9,20 +9,14 @@ import (
 	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
 )
 
-// configServiceRef 配置服务引用（用于手动触发刷新）
-var configServiceRef pkgconfig.Service
-
-// SetConfigService 设置配置服务引用
-func SetConfigService(service pkgconfig.Service) {
-	configServiceRef = service
+// SysConfigHandler 系统配置处理器
+type SysConfigHandler struct {
+	configService pkgconfig.Service
 }
 
-// SysConfigHandler 系统配置处理器
-type SysConfigHandler struct{}
-
 // NewSysConfigHandler 创建系统配置处理器
-func NewSysConfigHandler() *SysConfigHandler {
-	return &SysConfigHandler{}
+func NewSysConfigHandler(service pkgconfig.Service) *SysConfigHandler {
+	return &SysConfigHandler{configService: service}
 }
 
 // ConfigVO 配置项 VO
@@ -42,18 +36,18 @@ func (h *SysConfigHandler) List(c *gin.Context) {
 
 	// 配置项中文标签映射
 	labelMap := map[string]string{
-		"sekiro.user.allowRegister":           "是否允许注册用户",
-		"sekiro.outIpTestUrl":                 "出口 ip 探测 URL",
-		"sekiro.systemNotice":                 "系统通告信息",
-		"sekiro.docNotice":                    "文档首页通告信息",
-		"sekiro.allowAnonymousAccess":         "是否允许匿名访问",
-		"sekiro.anonymousAccessRateLimit":     "匿名访问 qps 限制",
-		"sekiro.defaultRegisterQuotaUser":     "注册用户默认 qps 限制",
-		"sekiro.defaultRegisterQuotaGroup":    "注册 group 默认 qps 限制",
-		"sekiro.useCustomSSLCertificate":      "使用自定义 ssl 证书",
+		"sekiro.user.allowRegister":            "是否允许注册用户",
+		"sekiro.outIpTestUrl":                  "出口 ip 探测 URL",
+		"sekiro.systemNotice":                  "系统通告信息",
+		"sekiro.docNotice":                     "文档首页通告信息",
+		"sekiro.allowAnonymousAccess":          "是否允许匿名访问",
+		"sekiro.anonymousAccessRateLimit":      "匿名访问 qps 限制",
+		"sekiro.defaultRegisterQuotaUser":      "注册用户默认 qps 限制",
+		"sekiro.defaultRegisterQuotaGroup":     "注册 group 默认 qps 限制",
+		"sekiro.useCustomSSLCertificate":       "使用自定义 ssl 证书",
 		"sekiro.autoGenSSLCertificateHostList": "为配置的 host 自动生成 ssl 证书",
-		"sekiro.open443Website":               "开启 443 服务端口",
-		"sekiro.defendIdleInvoke":             "空转调用保护",
+		"sekiro.open443Website":                "开启 443 服务端口",
+		"sekiro.defendIdleInvoke":              "空转调用保护",
 	}
 
 	var vos []ConfigVO
@@ -98,8 +92,8 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 	}
 
 	// 配置更新后，立即触发配置服务刷新
-	if configServiceRef != nil {
-		if err := configServiceRef.Refresh(); err != nil {
+	if h.configService != nil {
+		if err := h.configService.Refresh(); err != nil {
 			c.JSON(500, gin.H{"code": 500, "message": "配置已保存，但刷新失败：" + err.Error()})
 			return
 		}
@@ -185,11 +179,11 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    logs,
-		"total":   total,
-		"page":    pageInt,
+		"code":     0,
+		"message":  "success",
+		"data":     logs,
+		"total":    total,
+		"page":     pageInt,
 		"pageSize": pageSizeInt,
 	})
 }

@@ -298,7 +298,15 @@ class BaseClient {
    * @returns {string}
    */
   buildWebSocketURL() {
-    const host = this.config.sekiroHost || 'ws://127.0.0.1:5612';
+    let host = this.config.sekiroHost || 'ws://127.0.0.1:5612';
+    // 自动协议适配：如果页面是 HTTPS，浏览器会阻止 ws:// 连接（混合内容策略）
+    // 此处自动将 ws:// 升级为 wss://，需要服务端启用 HTTPS (端口 5643)
+    if (window.location.protocol === 'https:' && host.startsWith('ws://')) {
+      host = host.replace('ws://', 'wss://');
+      // 默认 ws 端口 5612 -> wss 端口 5643
+      host = host.replace(':5612/', ':5643/');
+      this.log(`检测到 HTTPS 页面，自动升级为安全连接: ${host}`);
+    }
     const clientId = Math.random().toString(36).substr(2, 9);
     return `${host}/business/register?group=${this.group}&clientId=${clientId}`;
   }

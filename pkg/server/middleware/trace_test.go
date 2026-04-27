@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/sekiro-go/sekiro-go/pkg/model"
 	"github.com/sekiro-go/sekiro-go/pkg/utils/traceid"
 	"github.com/stretchr/testify/assert"
 )
@@ -68,4 +69,29 @@ func TestTraceMiddleware_StatusTracking(t *testing.T) {
 
 	// 验证响应状态
 	assert.Equal(t, 200, w.Code)
+}
+
+func TestBuildTraceSnapshotUsesAuthenticatedUser(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest("POST", "/business/invoke?group=test-group&clientId=test-client", nil)
+	c.Request.Header.Set("X-Parent-Span-ID", "parent-span")
+	c.Set(ContextUserKey, &model.UserInfo{
+		ID:       7,
+		UserName: "alice",
+	})
+	c.Status(202)
+
+	snapshot := buildTraceSnapshot(c)
+
+	assert.Equal(t, "parent-span", snapshot.ParentSpanID)
+	assert.Equal(t, "test-group", snapshot.Group)
+	assert.Equal(t, "test-client", snapshot.DeviceID)
+	assert.Equal(t, "/business/invoke", snapshot.API)
+	assert.Equal(t, "POST", snapshot.Method)
+	assert.Equal(t, 202, snapshot.StatusCode)
+	assert.EqualValues(t, 7, snapshot.UserID)
+	assert.Equal(t, "alice", snapshot.UserName)
 }
