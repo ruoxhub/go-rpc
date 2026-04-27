@@ -71,6 +71,8 @@ const (
 	MessageTypeInvoke MessageType = "invoke"
 	// MessageTypeInvokeResponse is the invoke response message type
 	MessageTypeInvokeResponse MessageType = "invoke_response"
+	// MessageTypeInvokeStream is the invoke streaming response message type
+	MessageTypeInvokeStream MessageType = "invoke_stream"
 	// MessageTypeBind is the bind message type (deprecated)
 	MessageTypeBind MessageType = "bind"
 )
@@ -78,13 +80,14 @@ const (
 // SekiroMessage represents a Sekiro protocol message
 type SekiroMessage struct {
 	Type      MessageType     `json:"type"`
-	Sequence  string          `json:"sequence,omitempty"` // Sekiro 协议字段
+	Sequence  string          `json:"sequence,omitempty"`       // Sekiro 协议字段
 	SekiroSeq string          `json:"__sekiro_seq__,omitempty"` // JavaScript 客户端使用的字段
 	Group     string          `json:"group,omitempty"`
 	ClientID  string          `json:"clientId,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	Error     string          `json:"error,omitempty"`
 	Status    int             `json:"status,omitempty"`
+	Done      bool            `json:"done,omitempty"`
 	Timestamp int64           `json:"timestamp,omitempty"`
 }
 
@@ -288,6 +291,8 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 	switch msg.Type {
 	case MessageTypeHeartbeat:
 		h.handleHeartbeat(conn, &msg)
+	case MessageTypeInvokeStream:
+		h.handleInvokeStream(&msg)
 	default:
 		logger.Warnf("Unknown message type: %s", msg.Type)
 		var sekiroClient *client.SekiroClient
@@ -295,6 +300,31 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 			sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
 		}
 		h.sendError(conn, "unknown message type", sequence, sekiroClient)
+	}
+}
+
+// handleInvokeStream handles a streaming invoke response chunk.
+func (h *Handler) handleInvokeStream(msg *SekiroMessage) {
+	sequence := msg.GetSequence()
+	if sequence == "" {
+		logger.Warnf("Invoke stream chunk missing sequence number")
+		return
+	}
+
+	chunk := &forwarder.StreamChunk{
+		Data:   msg.Data,
+		Error:  msg.Error,
+		Status: msg.Status,
+		Done:   msg.Done,
+	}
+	if !h.timeoutManager.PushStreamChunk(sequence, chunk) {
+		logger.Debugf("Invoke stream chunk for missing request: sequence=%s", sequence)
+		return
+	}
+	if msg.Done || msg.Error != "" {
+		if !h.timeoutManager.CompleteStream(sequence) {
+			logger.Debugf("Invoke stream completion for missing request: sequence=%s", sequence)
+		}
 	}
 }
 

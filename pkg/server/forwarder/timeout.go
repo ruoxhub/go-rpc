@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+var streamPushTimeout = 5 * time.Second
+
 // InvokeRecord tracks a single invoke request with timeout management
 type InvokeRecord struct {
 	// ID is the unique identifier for this invoke request
@@ -35,6 +37,78 @@ type InvokeResponse struct {
 	Error string
 	// Status is the response status code
 	Status int
+}
+
+// StreamChunk represents one streaming response chunk.
+type StreamChunk struct {
+	Data   []byte
+	Error  string
+	Status int
+	Done   bool
+}
+
+// StreamRecord tracks a streaming invoke request.
+type StreamRecord struct {
+	ID        string
+	Group     string
+	ClientID  string
+	CreatedAt time.Time
+	Timeout   time.Duration
+	ChunkChan chan *StreamChunk
+	timedOut  bool
+	closed    bool
+	closeErr  string
+	mu        sync.Mutex
+}
+
+func (r *StreamRecord) IsExpired() bool {
+	return time.Since(r.CreatedAt) > r.Timeout
+}
+
+func (r *StreamRecord) SetTimedOut() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.timedOut = true
+}
+
+func (r *StreamRecord) Close() {
+	r.CloseWithError("")
+}
+
+func (r *StreamRecord) CloseWithError(err string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	r.closed = true
+	r.closeErr = err
+	close(r.ChunkChan)
+}
+
+func (r *StreamRecord) TerminalError() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.closeErr
+}
+
+func (r *StreamRecord) Push(chunk *StreamChunk) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return false
+	}
+	timer := time.NewTimer(streamPushTimeout)
+	defer timer.Stop()
+	select {
+	case r.ChunkChan <- chunk:
+		return true
+	case <-timer.C:
+		r.closed = true
+		r.closeErr = "stream backpressure timeout"
+		close(r.ChunkChan)
+		return false
+	}
 }
 
 // IsTimedOut returns true if the request has timed out
@@ -71,6 +145,8 @@ func (r *InvokeRecord) Close() {
 type TimeoutManager struct {
 	// records stores all active invoke records
 	records map[string]*InvokeRecord
+	// streams stores all active stream records
+	streams map[string]*StreamRecord
 	// mu protects concurrent access
 	mu sync.RWMutex
 	// defaultTimeout is the default timeout for requests
@@ -107,6 +183,7 @@ func NewTimeoutManager(config *TimeoutManagerConfig) *TimeoutManager {
 
 	m := &TimeoutManager{
 		records:         make(map[string]*InvokeRecord),
+		streams:         make(map[string]*StreamRecord),
 		defaultTimeout:  config.DefaultTimeout,
 		cleanupInterval: config.CleanupInterval,
 		stopChan:        make(chan struct{}),
@@ -145,6 +222,13 @@ func (m *TimeoutManager) cleanupExpired() {
 			record.SetTimedOut()
 			record.Close()
 			delete(m.records, id)
+		}
+	}
+	for id, stream := range m.streams {
+		if stream.IsExpired() {
+			stream.SetTimedOut()
+			stream.Close()
+			delete(m.streams, id)
 		}
 	}
 }
@@ -254,7 +338,11 @@ func (m *TimeoutManager) Shutdown() {
 	for _, record := range m.records {
 		record.Close()
 	}
+	for _, stream := range m.streams {
+		stream.Close()
+	}
 	m.records = make(map[string]*InvokeRecord)
+	m.streams = make(map[string]*StreamRecord)
 }
 
 // Count returns the number of active records
@@ -262,6 +350,80 @@ func (m *TimeoutManager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.records)
+}
+
+// RegisterStream registers a streaming invoke request.
+func (m *TimeoutManager) RegisterStream(id, group, clientID string, timeout time.Duration) *StreamRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if timeout <= 0 {
+		timeout = m.defaultTimeout
+	}
+
+	record := &StreamRecord{
+		ID:        id,
+		Group:     group,
+		ClientID:  clientID,
+		CreatedAt: time.Now(),
+		Timeout:   timeout,
+		ChunkChan: make(chan *StreamChunk, 16),
+	}
+	m.streams[id] = record
+	return record
+}
+
+// GetStream gets a stream record by ID.
+func (m *TimeoutManager) GetStream(id string) *StreamRecord {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.streams[id]
+}
+
+// PushStreamChunk sends a chunk to a registered stream.
+func (m *TimeoutManager) PushStreamChunk(id string, chunk *StreamChunk) bool {
+	m.mu.RLock()
+	record := m.streams[id]
+	m.mu.RUnlock()
+	if record == nil {
+		return false
+	}
+	if record.Push(chunk) {
+		return true
+	}
+	m.mu.Lock()
+	if m.streams[id] == record {
+		delete(m.streams, id)
+	}
+	m.mu.Unlock()
+	return false
+}
+
+// CompleteStream closes and removes a registered stream.
+func (m *TimeoutManager) CompleteStream(id string) bool {
+	m.mu.Lock()
+	record, ok := m.streams[id]
+	if ok {
+		delete(m.streams, id)
+	}
+	m.mu.Unlock()
+	if !ok {
+		return false
+	}
+	record.Close()
+	return true
+}
+
+// RemoveStream removes a stream record by ID.
+func (m *TimeoutManager) RemoveStream(id string) {
+	_ = m.CompleteStream(id)
+}
+
+// StreamCount returns the number of active stream records.
+func (m *TimeoutManager) StreamCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.streams)
 }
 
 // Timeout errors

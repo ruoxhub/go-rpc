@@ -86,7 +86,10 @@ func performRequest(r *gin.Engine, method, path string, body interface{}) *httpt
 	var req *http.Request
 
 	if body != nil {
-		jsonBody, _ := json.Marshal(body)
+		jsonBody, ok := body.(json.RawMessage)
+		if !ok {
+			jsonBody, _ = json.Marshal(body)
+		}
 		req, _ = http.NewRequest(method, path, bytes.NewBuffer(jsonBody))
 		req.Header.Set("Content-Type", "application/json")
 	} else {

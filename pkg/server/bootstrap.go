@@ -175,14 +175,7 @@ func (s *Server) Start() error {
 		mode = gin.DebugMode
 	}
 
-	httpCfg := &api.Config{
-		Host:         s.config.Host,
-		Port:         s.config.Port,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		Mode:         mode,
-	}
-	s.httpServer = api.NewHTTPServer(httpCfg)
+	s.httpServer = api.NewHTTPServer(s.newHTTPConfig(mode))
 
 	corsEnabled := s.yamlConfig != nil && s.yamlConfig.Cors
 	routeReplaceEnabled := s.yamlConfig != nil && s.yamlConfig.RouterReplace.IsEnable
@@ -240,7 +233,8 @@ func (s *Server) registerRoutes() {
 	s.httpServer.Engine().NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/sekiro-api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/business/") {
+			strings.HasPrefix(c.Request.URL.Path, "/business/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/v1/") {
 			c.JSON(404, gin.H{"error": "Not found"})
 			return
 		}
@@ -262,6 +256,12 @@ func (s *Server) registerRoutes() {
 	}
 
 	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator, s.configService)
+
+	v1 := s.httpServer.Group("/v1")
+	v1.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	{
+		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
+	}
 
 	sekiroAPI := s.httpServer.Group("/sekiro-api")
 	// 为 /sekiro-api 路由添加配置服务上下文
@@ -289,6 +289,16 @@ func (s *Server) registerRoutes() {
 			frontend.GET("/anonymousGroupList", handlers.HandleFrontendAnonymousGroupList)
 			frontend.GET("/groupDetail", handlers.HandleFrontendGroupDetail)
 		}
+	}
+}
+
+func (s *Server) newHTTPConfig(mode string) *api.Config {
+	return &api.Config{
+		Host:         s.config.Host,
+		Port:         s.config.Port,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		Mode:         mode,
 	}
 }
 
