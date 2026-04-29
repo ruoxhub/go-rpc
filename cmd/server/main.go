@@ -5,7 +5,7 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/sekiro-go/sekiro-go/pkg/server"
+	"github.com/mrh30000/go-rpc/pkg/server"
 )
 
 var (

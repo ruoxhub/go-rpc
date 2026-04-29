@@ -6,7 +6,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 func TestSekiroMatcher(t *testing.T) {

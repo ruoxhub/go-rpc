@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	wsHandler "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	wsHandler "github.com/mrh30000/go-rpc/pkg/server/websocket"
 )
 
 // WebSocketHandler handles WebSocket connections

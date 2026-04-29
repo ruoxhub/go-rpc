@@ -5,11 +5,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/config"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
-	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
+	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/server/config"
+	"github.com/mrh30000/go-rpc/pkg/server/middleware"
+	"github.com/mrh30000/go-rpc/pkg/utils/password"
 )
 
 // UserHandler handles user management APIs.

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
 )
 
 // commandType represents types of group commands

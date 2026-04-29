@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
 )
 
 func TestRouter_RouteBySpecifiedClient(t *testing.T) {

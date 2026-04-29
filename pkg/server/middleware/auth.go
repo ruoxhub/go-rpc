@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/model"
 	"gorm.io/gorm"
 )
 

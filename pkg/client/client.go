@@ -8,9 +8,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/compress"
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/compress"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 // SekiroClient represents a Sekiro client connection
@@ -27,11 +27,11 @@ type SekiroClient struct {
 
 // clientConnection holds the actual network connection and handlers
 type clientConnection struct {
-	conn       net.Conn
-	reader     *bufio.Reader
-	closed     bool
-	mu         sync.Mutex
-	sendSeq    int32
+	conn        net.Conn
+	reader      *bufio.Reader
+	closed      bool
+	mu          sync.Mutex
+	sendSeq     int32
 	respWaiters map[int32]chan *protocol.SekiroPacket
 }
 

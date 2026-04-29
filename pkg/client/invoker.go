@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 // SekiroInvoker represents a Sekiro invoker (caller)

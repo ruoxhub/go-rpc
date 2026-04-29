@@ -8,9 +8,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/compress"
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/compress"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 // SekiroHandler handles Sekiro protocol connections

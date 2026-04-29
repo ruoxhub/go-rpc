@@ -8,11 +8,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
 // DefaultGroupActions 默认分组 Actions 列表

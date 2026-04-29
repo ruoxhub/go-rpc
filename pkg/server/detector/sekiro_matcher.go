@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"net"
 
-	"github.com/sekiro-go/sekiro-go/pkg/compress"
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/compress"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 // SekiroMatcher matches Sekiro binary protocol

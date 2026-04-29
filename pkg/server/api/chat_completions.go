@@ -11,9 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
 const (

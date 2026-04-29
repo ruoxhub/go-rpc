@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
-	"github.com/sekiro-go/sekiro-go/pkg/server/config"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
+	"github.com/mrh30000/go-rpc/pkg/server/alert"
+	"github.com/mrh30000/go-rpc/pkg/server/config"
+	"github.com/mrh30000/go-rpc/pkg/server/middleware"
 )
 
 // SetupWebRoutes 设置 Web 管理界面路由

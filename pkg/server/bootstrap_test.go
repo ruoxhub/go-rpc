@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/server/api"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
-	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
+	"github.com/mrh30000/go-rpc/pkg/server/api"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/websocket"
 )
 
 func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {

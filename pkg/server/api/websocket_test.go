@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	wsHandler "github.com/sekiro-go/sekiro-go/pkg/server/websocket"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	wsHandler "github.com/mrh30000/go-rpc/pkg/server/websocket"
 )
 
 func TestIsWebSocketUpgrade(t *testing.T) {

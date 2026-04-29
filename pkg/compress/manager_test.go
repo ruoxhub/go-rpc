@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 func TestCompressorManager(t *testing.T) {
@@ -36,38 +36,38 @@ func TestCompressorManagerDoCompress(t *testing.T) {
 	manager := NewCompressorManager()
 
 	tests := []struct {
-		name          string
-		packetType    byte
+		name           string
+		packetType     byte
 		compressMethod string
-		inputData     []byte
+		inputData      []byte
 		expectCompress bool
 	}{
 		{
-			name:          "invoke response with gzip",
-			packetType:    byte(protocol.PacketTypeInvokeResponse),
+			name:           "invoke response with gzip",
+			packetType:     byte(protocol.PacketTypeInvokeResponse),
 			compressMethod: "gzip",
-			inputData:     []byte("test data"),
+			inputData:      []byte("test data"),
 			expectCompress: true,
 		},
 		{
-			name:          "S invoke response with gzip",
-			packetType:    byte(protocol.PacketTypeSInvokeResponse),
+			name:           "S invoke response with gzip",
+			packetType:     byte(protocol.PacketTypeSInvokeResponse),
 			compressMethod: "gzip",
-			inputData:     []byte("test data"),
+			inputData:      []byte("test data"),
 			expectCompress: true,
 		},
 		{
-			name:          "heartbeat packet",
-			packetType:    byte(protocol.PacketTypeHeartbeat),
+			name:           "heartbeat packet",
+			packetType:     byte(protocol.PacketTypeHeartbeat),
 			compressMethod: "gzip",
-			inputData:     []byte("test data"),
+			inputData:      []byte("test data"),
 			expectCompress: false,
 		},
 		{
-			name:          "no compress method",
-			packetType:    byte(protocol.PacketTypeInvokeResponse),
+			name:           "no compress method",
+			packetType:     byte(protocol.PacketTypeInvokeResponse),
 			compressMethod: "",
-			inputData:     []byte("test data"),
+			inputData:      []byte("test data"),
 			expectCompress: false,
 		},
 	}
@@ -121,9 +121,9 @@ func TestCompressorManagerHandleDecompress(t *testing.T) {
 	compressedData, _ := compressor.Compress(originalData)
 
 	packet := protocol.NewSekiroPacket()
-		packet.Type = byte(protocol.PacketTypeInvokeResponse)
-		packet.Data = compressedData
-		packet.AddHeader("compress_method", "gzip")
+	packet.Type = byte(protocol.PacketTypeInvokeResponse)
+	packet.Data = compressedData
+	packet.AddHeader("compress_method", "gzip")
 
 	// Decompress
 	err := manager.HandleDecompress(packet)

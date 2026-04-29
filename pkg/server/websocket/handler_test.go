@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
 func TestSekiroMessage_Marshal(t *testing.T) {

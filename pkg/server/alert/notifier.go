@@ -10,8 +10,8 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"
 )
 

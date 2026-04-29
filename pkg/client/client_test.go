@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sekiro-go/sekiro-go/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 // bufReadWriteCloser is a mock net.Conn implementation for testing

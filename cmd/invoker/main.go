@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/sekiro-go/sekiro-go/pkg/client"
+	"github.com/mrh30000/go-rpc/pkg/client"
 )
 
 var (

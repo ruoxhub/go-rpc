@@ -4,7 +4,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
 )
 
 // RoutingStrategy defines the routing strategy type

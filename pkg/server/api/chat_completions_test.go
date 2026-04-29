@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
 func TestChatCompletionContract(t *testing.T) {

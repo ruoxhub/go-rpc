@@ -8,11 +8,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
-	"github.com/sekiro-go/sekiro-go/pkg/server/router"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/middleware"
+	"github.com/mrh30000/go-rpc/pkg/server/router"
 )
 
 // MockClientManager provides mock implementation for testing.

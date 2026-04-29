@@ -5,8 +5,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/pkg/server/config"
-	"github.com/sekiro-go/sekiro-go/pkg/server/flow"
+	"github.com/mrh30000/go-rpc/pkg/server/config"
+	"github.com/mrh30000/go-rpc/pkg/server/flow"
 )
 
 const (

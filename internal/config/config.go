@@ -4,7 +4,7 @@ package config
 import (
 	"os"
 
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"gopkg.in/yaml.v3"
 )
 
