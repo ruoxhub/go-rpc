@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/utils/password"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/utils/password"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
