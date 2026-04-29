@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from tornado import ioloop, iostream
 
-from rpc.RpcCommon import _CommonRes, _RpcPacket, AbsRpcConn
+from .Common import _CommonRes, _RpcPacket, AbsRpcConn
 
 
 def _encode_rpc_fast_json(common_res: _CommonRes) -> bytes:
