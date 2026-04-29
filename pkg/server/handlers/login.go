@@ -20,7 +20,7 @@ type LoginRequest struct {
 }
 
 // HandleLogin 处理登录请求
-// POST /sekiro-api/user-info/login
+// POST /rpc-api/user-info/login
 func HandleLogin(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBind(&req); err != nil {
@@ -78,7 +78,7 @@ func HandleLogin(c *gin.Context) {
 }
 
 // HandleGetUserInfo 获取当前用户信息
-// GET /sekiro-api/user-info/userInfo
+// GET /rpc-api/user-info/userInfo
 func HandleGetUserInfo(c *gin.Context) {
 	token := middleware.ExtractAuthTokenFromRequest(c)
 	if token == "" {
@@ -113,7 +113,7 @@ func HandleGetUserInfo(c *gin.Context) {
 }
 
 // HandleSystemNotice 获取系统通知
-// GET /sekiro-api/system/systemNotice
+// GET /rpc-api/system/systemNotice
 func HandleSystemNotice(c *gin.Context) {
 	// 从 context 获取配置服务
 	cfgSvc, exists := c.Get("configService")
@@ -132,7 +132,7 @@ func HandleSystemNotice(c *gin.Context) {
 }
 
 // HandleSystemInfo 获取系统信息
-// GET /sekiro-api/system/systemInfo
+// GET /rpc-api/system/systemInfo
 func HandleSystemInfo(c *gin.Context) {
 	yamlConfig := config.DefaultConfig()
 
@@ -155,7 +155,7 @@ func HandleSystemInfo(c *gin.Context) {
 }
 
 // HandleFrontendListGroup 获取分组列表（前端兼容接口）
-// GET /sekiro-api/frontend/listGroup
+// GET /rpc-api/frontend/listGroup
 func HandleFrontendListGroup(c *gin.Context) {
 	db := database.GetDB()
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
@@ -220,14 +220,14 @@ func HandleFrontendListGroup(c *gin.Context) {
 }
 
 // HandleFrontendAnonymousGroupList 获取匿名分组列表（前端兼容接口）
-// GET /sekiro-api/frontend/anonymousGroupList
+// GET /rpc-api/frontend/anonymousGroupList
 func HandleFrontendAnonymousGroupList(c *gin.Context) {
 	anonymousHandler := NewAnonymousGroupHandler()
 	anonymousHandler.ListOptimized(c)
 }
 
 // HandleFrontendGroupDetail 获取分组详情（前端兼容接口）
-// GET /sekiro-api/frontend/groupDetail?groupName=xxx
+// GET /rpc-api/frontend/groupDetail?groupName=xxx
 func HandleFrontendGroupDetail(c *gin.Context) {
 	groupName := c.Query("groupName")
 	if groupName == "" {
@@ -252,7 +252,7 @@ type RegisterRequest struct {
 }
 
 // HandleRegister 处理注册请求
-// POST /sekiro-api/user-info/register
+// POST /rpc-api/user-info/register
 func HandleRegister(c *gin.Context) {
 	// 检查是否允许注册
 	cfgSvc, exists := c.Get("configService")
@@ -339,7 +339,7 @@ func HandleRegister(c *gin.Context) {
 	})
 }
 
-// HandleUserAdd 添加用户（兼容 /sekiro-api/user-info/add）
+// HandleUserAdd 添加用户（兼容 /rpc-api/user-info/add）
 func HandleUserAdd(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

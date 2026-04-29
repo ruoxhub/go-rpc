@@ -16,7 +16,7 @@ function Login() {
       params.append('userName', values.userName)
       params.append('password', values.password)
 
-      const response = await axios.post('/sekiro-api/user-info/login', params, {
+      const response = await axios.post('/rpc-api/user-info/login', params, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         }

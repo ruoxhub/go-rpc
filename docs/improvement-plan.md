@@ -22,11 +22,11 @@
 
 #### 1.1 匿名分组列表接口
 
-**路由：** `GET /sekiro-api/frontend/anonymousGroupList`
+**路由：** `GET /rpc-api/frontend/anonymousGroupList`
 
 **后端实现位置：** `pkg/server/handlers/anonymous.go`
 
-**当前状态：** 已有 `ListOptimized` 方法，但未绑定到 `/sekiro-api/frontend` 路由
+**当前状态：** 已有 `ListOptimized` 方法，但未绑定到 `/rpc-api/frontend` 路由
 
 **修复方案：**
 
@@ -54,11 +54,11 @@ func HandleFrontendAnonymousGroupList(c *gin.Context) {
 
 #### 1.2 分组详情接口
 
-**路由：** `GET /sekiro-api/frontend/groupDetail?groupName=xxx`
+**路由：** `GET /rpc-api/frontend/groupDetail?groupName=xxx`
 
 **后端实现位置：** `pkg/server/handlers/group.go`
 
-**当前状态：** 已有 `GetDetail` 方法，但未绑定到 `/sekiro-api/frontend` 路由
+**当前状态：** 已有 `GetDetail` 方法，但未绑定到 `/rpc-api/frontend` 路由
 
 **修复方案：**
 
@@ -104,7 +104,7 @@ func HandleFrontendGroupDetail(c *gin.Context) {
 **实施步骤：**
 
 1. 创建统一响应助手函数（`pkg/server/handlers/response.go`）
-2. 逐步迁移 `/sekiro-api/*` 端点使用统一格式
+2. 逐步迁移 `/rpc-api/*` 端点使用统一格式
 3. 前端axios拦截器适配新格式
 
 ---
@@ -112,7 +112,7 @@ func HandleFrontendGroupDetail(c *gin.Context) {
 ### 3. 修复 N+1 查询问题
 
 **受影响接口：**
-- `GET /sekiro-api/frontend/listGroup`
+- `GET /rpc-api/frontend/listGroup`
 
 **当前代码位置：** `pkg/server/handlers/login.go:160-193`
 
@@ -182,9 +182,9 @@ activeThreshold := time.Now().Add(-handlers.ClientInactiveThreshold)
 ```javascript
 // 前端兼容 API 封装
 export const frontendApi = {
-  listGroup: () => apiClient.get('/sekiro-api/frontend/listGroup'),
-  anonymousGroupList: () => apiClient.get('/sekiro-api/frontend/anonymousGroupList'),
-  groupDetail: (groupName) => apiClient.get('/sekiro-api/frontend/groupDetail', {
+  listGroup: () => apiClient.get('/rpc-api/frontend/listGroup'),
+  anonymousGroupList: () => apiClient.get('/rpc-api/frontend/anonymousGroupList'),
+  groupDetail: (groupName) => apiClient.get('/rpc-api/frontend/groupDetail', {
     params: { groupName }
   })
 }

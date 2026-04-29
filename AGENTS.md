@@ -27,7 +27,7 @@ go test -run TestGzipCompress ./pkg/compress/...
 go run cmd/server/main.go -c config.yaml
 
 # Frontend dev
-cd web && npm install && npm run dev   # port 3000, proxies /business|/api|/sekiro-api → localhost:5613
+cd web && npm install && npm run dev   # port 3000, proxies /business|/api|/rpc-api → localhost:5613
 
 # Frontend production build (embedded into Go binary via //go:embed)
 cd web && npm run build                # outputs to web/dist/

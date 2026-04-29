@@ -128,7 +128,7 @@ sekiro-go/
 | **handlers/** | Web 管理界面处理器 (user.go, group.go, metric.go, sysconfig.go, anonymous.go, **trace.go**, **alert.go**) |
 | **middleware/cors.go** | CORS 中间件 |
 | **middleware/auth.go** | Token 认证中间件，从 Authorization header 解析用户信息 |
-| **handlers/login.go** | 登录 API 处理器 (`/sekiro-api/user-info/login`) |
+| **handlers/login.go** | 登录 API 处理器 (`/rpc-api/user-info/login`) |
 
 ### 客户端 SDK (pkg/client)
 
@@ -279,31 +279,31 @@ type TraceRecord struct {
 | `/api/alerts/rules/:id` | GET/PUT/DELETE | 告警规则详情 |
 | `/api/alerts/history` | GET | 告警历史 |
 
-### 前端兼容 API (`/sekiro-api` 前缀)
+### 前端兼容 API (`/rpc-api` 前缀)
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
-| `/sekiro-api/user-info/login` | POST | 用户登录 |
-| `/sekiro-api/user-info/userInfo` | GET | 获取当前用户信息 |
-| `/sekiro-api/user-info/changePassword` | POST | 修改密码 |
-| `/sekiro-api/user-info/refreshToken` | POST | 刷新 Token |
-| `/sekiro-api/user-info/logout` | POST | 用户登出 |
-| `/sekiro-api/frontend/listGroup` | GET | 分组列表 |
-| `/sekiro-api/system/systemNotice` | GET | 系统通知 |
-| `/sekiro-api/system/systemInfo` | GET | 系统信息 |
-| `/sekiro-api/groupConfig/create` | POST | 创建分组 |
-| `/sekiro-api/groupConfig/delete` | POST | 删除分组 |
-| `/sekiro-api/groupConfig/updateQps` | POST | 更新分组 QPS |
-| `/sekiro-api/groupClient/list` | GET | 设备列表 |
-| `/sekiro-api/groupClient/remove` | POST | 删除设备 |
-| `/sekiro-api/groupClient/forbidden` | POST | 禁用设备 |
-| `/sekiro-api/groupActions/list` | GET | Action 列表 |
-| `/sekiro-api/groupActions/create` | POST | 创建 Action |
-| `/sekiro-api/groupActions/delete` | POST | 删除 Action |
-| `/sekiro-api/traces/list` | GET | 追踪列表 |
-| `/sekiro-api/traces/detail` | GET | 追踪详情 |
-| `/sekiro-api/alert/rules` | GET/POST/DELETE | 告警规则 |
-| `/sekiro-api/alert/history` | GET | 告警历史 |
+| `/rpc-api/user-info/login` | POST | 用户登录 |
+| `/rpc-api/user-info/userInfo` | GET | 获取当前用户信息 |
+| `/rpc-api/user-info/changePassword` | POST | 修改密码 |
+| `/rpc-api/user-info/refreshToken` | POST | 刷新 Token |
+| `/rpc-api/user-info/logout` | POST | 用户登出 |
+| `/rpc-api/frontend/listGroup` | GET | 分组列表 |
+| `/rpc-api/system/systemNotice` | GET | 系统通知 |
+| `/rpc-api/system/systemInfo` | GET | 系统信息 |
+| `/rpc-api/groupConfig/create` | POST | 创建分组 |
+| `/rpc-api/groupConfig/delete` | POST | 删除分组 |
+| `/rpc-api/groupConfig/updateQps` | POST | 更新分组 QPS |
+| `/rpc-api/groupClient/list` | GET | 设备列表 |
+| `/rpc-api/groupClient/remove` | POST | 删除设备 |
+| `/rpc-api/groupClient/forbidden` | POST | 禁用设备 |
+| `/rpc-api/groupActions/list` | GET | Action 列表 |
+| `/rpc-api/groupActions/create` | POST | 创建 Action |
+| `/rpc-api/groupActions/delete` | POST | 删除 Action |
+| `/rpc-api/traces/list` | GET | 追踪列表 |
+| `/rpc-api/traces/detail` | GET | 追踪详情 |
+| `/rpc-api/alert/rules` | GET/POST/DELETE | 告警规则 |
+| `/rpc-api/alert/history` | GET | 告警历史 |
 
 ## 配置
 
@@ -494,7 +494,7 @@ database.InitFromConfig(
 
 ### 认证流程
 
-1. 用户登录 (`POST /sekiro-api/user-info/login`) 验证用户名密码
+1. 用户登录 (`POST /rpc-api/user-info/login`) 验证用户名密码
 2. 成功后返回 `apiToken` 和 `loginToken` 保存到 localStorage
 3. 后续请求通过 `Authorization: Bearer <apiToken>` header 传递 token
 4. 认证中间件解析 token 获取用户信息，存入 `c.Set("currentUserName", ...)` 和 `c.Set("userId", ...)`

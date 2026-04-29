@@ -54,7 +54,7 @@ func TestHandleRegister_Success(t *testing.T) {
 
 	// 创建测试路由器
 	router := gin.New()
-	router.POST("/sekiro-api/user-info/register", HandleRegister)
+	router.POST("/rpc-api/user-info/register", HandleRegister)
 
 	// 准备注册请求
 	req := RegisterRequest{
@@ -62,7 +62,7 @@ func TestHandleRegister_Success(t *testing.T) {
 		Password: "testpass123",
 	}
 
-	w := performRequest(router, http.MethodPost, "/sekiro-api/user-info/register", req)
+	w := performRequest(router, http.MethodPost, "/rpc-api/user-info/register", req)
 
 	// 验证响应状态码
 	if w.Code != http.StatusOK {
@@ -101,14 +101,14 @@ func TestHandleRegister_DuplicateUser(t *testing.T) {
 	})
 
 	router := gin.New()
-	router.POST("/sekiro-api/user-info/register", HandleRegister)
+	router.POST("/rpc-api/user-info/register", HandleRegister)
 
 	req := RegisterRequest{
 		UserName: "existinguser",
 		Password: "newpass123",
 	}
 
-	w := performRequest(router, http.MethodPost, "/sekiro-api/user-info/register", req)
+	w := performRequest(router, http.MethodPost, "/rpc-api/user-info/register", req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
@@ -132,7 +132,7 @@ func TestHandleRegister_InvalidInput(t *testing.T) {
 	setupTestDB(t)
 
 	router := gin.New()
-	router.POST("/sekiro-api/user-info/register", HandleRegister)
+	router.POST("/rpc-api/user-info/register", HandleRegister)
 
 	// 测试空用户名
 	req := RegisterRequest{
@@ -140,7 +140,7 @@ func TestHandleRegister_InvalidInput(t *testing.T) {
 		Password: "testpass123",
 	}
 
-	w := performRequest(router, http.MethodPost, "/sekiro-api/user-info/register", req)
+	w := performRequest(router, http.MethodPost, "/rpc-api/user-info/register", req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w.Code)
@@ -152,7 +152,7 @@ func TestHandleRegister_InvalidInput(t *testing.T) {
 		Password: "",
 	}
 
-	w2 := performRequest(router, http.MethodPost, "/sekiro-api/user-info/register", req2)
+	w2 := performRequest(router, http.MethodPost, "/rpc-api/user-info/register", req2)
 
 	if w2.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400, got %d", w2.Code)

@@ -14,7 +14,7 @@ export default defineConfig({
         target: 'http://localhost:5613',
         changeOrigin: true
       },
-      '/sekiro-api': {
+      '/rpc-api': {
         target: 'http://localhost:5613',
         changeOrigin: true
       }

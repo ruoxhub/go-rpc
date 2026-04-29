@@ -140,11 +140,11 @@ export const alertApi = {
   getHistory: (params) => apiClient.get('/alerts/history', { params })
 }
 
-// 前端兼容 API 封装（/sekiro-api/frontend/*）
+// 前端兼容 API 封装（/rpc-api/frontend/*）
 export const frontendApi = {
-  listGroup: () => apiClient.get('/sekiro-api/frontend/listGroup'),
-  anonymousGroupList: () => apiClient.get('/sekiro-api/frontend/anonymousGroupList'),
-  groupDetail: (groupName) => apiClient.get('/sekiro-api/frontend/groupDetail', {
+  listGroup: () => apiClient.get('/rpc-api/frontend/listGroup'),
+  anonymousGroupList: () => apiClient.get('/rpc-api/frontend/anonymousGroupList'),
+  groupDetail: (groupName) => apiClient.get('/rpc-api/frontend/groupDetail', {
     params: { groupName }
   })
 }

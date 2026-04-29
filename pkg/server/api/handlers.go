@@ -61,7 +61,7 @@ type InvokeRequest struct {
 	Group          string      `json:"group"`
 	ClientID       string      `json:"clientId,omitempty"`
 	ConstantInvoke string      `json:"constantInvoke,omitempty"`
-	RpcToken    string      `json:"sekiro_token,omitempty"`
+	RpcToken       string      `json:"sekiro_token,omitempty"`
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
@@ -72,7 +72,7 @@ type ExecJSRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	RpcToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
+	RpcToken       string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 	Code           string `json:"code" form:"code"`
 }
 
@@ -81,7 +81,7 @@ type GetCookieRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	RpcToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
+	RpcToken       string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -723,25 +723,35 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 			return
 		}
 
-		// 解析响应数据
-		var responseData interface{}
-		if err := unmarshalJSON(resp.Data, &responseData); err != nil {
-			// 如果响应不是有效 JSON，当作字符串处理
-			responseData = string(resp.Data)
-		}
-
 		// 如果 status 为 -1 但没有 Error，说明是异常情况
 		message := "success"
 		if resp.Status < 0 {
 			message = "unknown error"
 		}
 
+		// 解析响应数据，如果是 JSON object 则平级展开
+		var responseMap map[string]interface{}
+		if err := unmarshalJSON(resp.Data, &responseMap); err == nil {
+			result := gin.H{
+				"status":   resp.Status,
+				"message":  message,
+				"group":    group,
+				"clientId": targetClient.ClientID,
+			}
+			for k, v := range responseMap {
+				result[k] = v
+			}
+			c.JSON(http.StatusOK, result)
+			return
+		}
+
+		// 如果响应不是有效 JSON，当作字符串处理
 		c.JSON(http.StatusOK, gin.H{
 			"status":   resp.Status,
 			"message":  message,
 			"group":    group,
 			"clientId": targetClient.ClientID,
-			"data":     responseData,
+			"data":     string(resp.Data),
 		})
 	}
 }
