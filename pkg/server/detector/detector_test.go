@@ -9,8 +9,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
-func TestSekiroMatcher(t *testing.T) {
-	matcher := NewSekiroMatcher()
+func TestRpcMatcher(t *testing.T) {
+	matcher := NewRpcMatcher()
 
 	tests := []struct {
 		name   string
@@ -90,7 +90,7 @@ func TestHttpMatcher(t *testing.T) {
 }
 
 func TestProtocolDetector(t *testing.T) {
-	sekiroMatcher := NewSekiroMatcher()
+	sekiroMatcher := NewRpcMatcher()
 	httpMatcher := NewHttpMatcher()
 
 	missHandler := func(ctx context.Context, conn net.Conn, buf []byte) error {

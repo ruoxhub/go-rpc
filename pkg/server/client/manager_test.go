@@ -8,7 +8,7 @@ func TestClientManager_Register(t *testing.T) {
 	manager := NewClientManager()
 	defer manager.CleanupAll()
 
-	client := NewSekiroClient("test-group", "client-1", nil)
+	client := NewRpcClient("test-group", "client-1", nil)
 	manager.Register(client)
 
 	// 验证客户端已注册
@@ -25,7 +25,7 @@ func TestClientManager_Unregister(t *testing.T) {
 	manager := NewClientManager()
 	defer manager.CleanupAll()
 
-	client := NewSekiroClient("test-group", "client-1", nil)
+	client := NewRpcClient("test-group", "client-1", nil)
 	manager.Register(client)
 
 	// 验证注册成功
@@ -53,9 +53,9 @@ func TestClientManager_GetAllGroups(t *testing.T) {
 	}
 
 	// 注册不同组的客户端
-	manager.Register(NewSekiroClient("group1", "client-1", nil))
-	manager.Register(NewSekiroClient("group2", "client-1", nil))
-	manager.Register(NewSekiroClient("group1", "client-2", nil))
+	manager.Register(NewRpcClient("group1", "client-1", nil))
+	manager.Register(NewRpcClient("group2", "client-1", nil))
+	manager.Register(NewRpcClient("group1", "client-2", nil))
 
 	groups = manager.GetAllGroups()
 	if len(groups) != 2 {
@@ -74,9 +74,9 @@ func TestClientManager_GetClientsByGroup(t *testing.T) {
 	}
 
 	// 注册客户端
-	manager.Register(NewSekiroClient("test-group", "client-1", nil))
-	manager.Register(NewSekiroClient("test-group", "client-2", nil))
-	manager.Register(NewSekiroClient("other-group", "client-3", nil))
+	manager.Register(NewRpcClient("test-group", "client-1", nil))
+	manager.Register(NewRpcClient("test-group", "client-2", nil))
+	manager.Register(NewRpcClient("other-group", "client-3", nil))
 
 	clients = manager.GetClientsByGroup("test-group")
 	if len(clients) != 2 {
@@ -95,11 +95,11 @@ func TestClientManager_AllocateClient(t *testing.T) {
 	}
 
 	// 注册在线客户端
-	c1 := NewSekiroClient("test-group", "client-1", nil)
+	c1 := NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(StatusOnline)
 	manager.Register(c1)
 
-	c2 := NewSekiroClient("test-group", "client-2", nil)
+	c2 := NewRpcClient("test-group", "client-2", nil)
 	c2.SetStatus(StatusOffline)
 	manager.Register(c2)
 
@@ -117,9 +117,9 @@ func TestClientManager_CleanupAll(t *testing.T) {
 	manager := NewClientManager()
 
 	// 注册客户端
-	manager.Register(NewSekiroClient("group1", "client-1", nil))
-	manager.Register(NewSekiroClient("group1", "client-2", nil))
-	manager.Register(NewSekiroClient("group2", "client-3", nil))
+	manager.Register(NewRpcClient("group1", "client-1", nil))
+	manager.Register(NewRpcClient("group1", "client-2", nil))
+	manager.Register(NewRpcClient("group2", "client-3", nil))
 
 	// 验证注册成功
 	if manager.GroupCount() != 2 {
@@ -152,7 +152,7 @@ func TestClientManager_GetGroup(t *testing.T) {
 	}
 
 	// 存在的组
-	manager.Register(NewSekiroClient("test-group", "client-1", nil))
+	manager.Register(NewRpcClient("test-group", "client-1", nil))
 	group = manager.GetGroup("test-group")
 	if group == nil {
 		t.Fatal("Expected group to exist")
@@ -170,7 +170,7 @@ func TestClientManager_HasGroup(t *testing.T) {
 		t.Error("Expected false for non-existent group")
 	}
 
-	manager.Register(NewSekiroClient("test-group", "client-1", nil))
+	manager.Register(NewRpcClient("test-group", "client-1", nil))
 
 	if !manager.HasGroup("test-group") {
 		t.Error("Expected true for existing group")
@@ -185,9 +185,9 @@ func TestClientManager_GroupCount(t *testing.T) {
 		t.Error("Expected 0 groups initially")
 	}
 
-	manager.Register(NewSekiroClient("group1", "client-1", nil))
-	manager.Register(NewSekiroClient("group2", "client-1", nil))
-	manager.Register(NewSekiroClient("group1", "client-2", nil))
+	manager.Register(NewRpcClient("group1", "client-1", nil))
+	manager.Register(NewRpcClient("group2", "client-1", nil))
+	manager.Register(NewRpcClient("group1", "client-2", nil))
 
 	if manager.GroupCount() != 2 {
 		t.Errorf("Expected 2 groups, got %d", manager.GroupCount())
@@ -202,9 +202,9 @@ func TestClientManager_ClientCount(t *testing.T) {
 		t.Error("Expected 0 clients initially")
 	}
 
-	manager.Register(NewSekiroClient("group1", "client-1", nil))
-	manager.Register(NewSekiroClient("group1", "client-2", nil))
-	manager.Register(NewSekiroClient("group2", "client-3", nil))
+	manager.Register(NewRpcClient("group1", "client-1", nil))
+	manager.Register(NewRpcClient("group1", "client-2", nil))
+	manager.Register(NewRpcClient("group2", "client-3", nil))
 
 	if manager.ClientCount() != 3 {
 		t.Errorf("Expected 3 clients, got %d", manager.ClientCount())

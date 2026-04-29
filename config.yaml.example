@@ -1,4 +1,4 @@
-# Sekiro Server Configuration
+# Rpc Server Configuration
 
 # Basic listen configuration
 # Format: host:port or :port (binds to all interfaces)

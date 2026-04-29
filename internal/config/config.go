@@ -1,4 +1,4 @@
-// Package config provides YAML configuration management for Sekiro server
+// Package config provides YAML configuration management for Rpc server
 package config
 
 import (

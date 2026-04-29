@@ -6,7 +6,7 @@ import android.support.annotation.Nullable;
 
 import java.util.UUID;
 
-import cn.iinti.sekiro3.business.api.SekiroClient;
+import cn.iinti.sekiro3.business.api.RpcClient;
 
 public class MainActivity extends Activity {
     @Override
@@ -18,8 +18,8 @@ public class MainActivity extends Activity {
             @Override
             public void run() {
                 // 在普通Android应用中使用sekiro
-                new SekiroClient("test-android", UUID.randomUUID().toString())
-                        .setupSekiroRequestInitializer((sekiroRequest, handlerRegistry) -> handlerRegistry.registerSekiroHandler(new ClientTimeHandler()))
+                new RpcClient("test-android", UUID.randomUUID().toString())
+                        .setupRpcRequestInitializer((sekiroRequest, handlerRegistry) -> handlerRegistry.registerRpcHandler(new ClientTimeHandler()))
                         .start();
             }
         }.start();

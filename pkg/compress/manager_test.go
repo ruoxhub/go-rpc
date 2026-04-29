@@ -77,7 +77,7 @@ func TestCompressorManagerDoCompress(t *testing.T) {
 			originalData := make([]byte, len(tt.inputData))
 			copy(originalData, tt.inputData)
 
-			packet := protocol.NewSekiroPacket()
+			packet := protocol.NewRpcPacket()
 			packet.Type = tt.packetType
 			packet.Data = tt.inputData
 			packet.AddHeader("compress_method", tt.compressMethod)
@@ -120,7 +120,7 @@ func TestCompressorManagerHandleDecompress(t *testing.T) {
 	compressor, _ := manager.GetCompressor("gzip")
 	compressedData, _ := compressor.Compress(originalData)
 
-	packet := protocol.NewSekiroPacket()
+	packet := protocol.NewRpcPacket()
 	packet.Type = byte(protocol.PacketTypeInvokeResponse)
 	packet.Data = compressedData
 	packet.AddHeader("compress_method", "gzip")

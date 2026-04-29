@@ -6,12 +6,12 @@
 using System;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using SekiroClientDotnet;
+using RpcClientDotnet;
 internal class Program
 {
     private static async Task Main(string[] args)
     {
-        var sekiroClient = new SekiroClient(
+        var sekiroClient = new RpcClient(
             host: "sekiro.iinti.cn",
             port: 5612,
             groupName: "test-dotnet");

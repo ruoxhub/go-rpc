@@ -1,4 +1,4 @@
-# Sekiro RPC Server Configuration
+# Rpc RPC Server Configuration
 # This file is mounted into the Docker container
 
 # Basic listen configuration

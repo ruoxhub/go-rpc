@@ -6,35 +6,35 @@ import (
 	"time"
 )
 
-func TestNewSekiroInvoker(t *testing.T) {
+func TestNewRpcInvoker(t *testing.T) {
 	serverList := []string{"localhost:5612", "192.168.1.100:5612"}
-	invoker := NewSekiroInvoker(serverList)
+	invoker := NewRpcInvoker(serverList)
 
 	if invoker == nil {
-		t.Fatal("NewSekiroInvoker() returned nil")
+		t.Fatal("NewRpcInvoker() returned nil")
 	}
 	if invoker.serverClients == nil {
 		t.Error("serverClients not initialized")
 	}
 }
 
-func TestNewSekiroInvokerWithToken(t *testing.T) {
+func TestNewRpcInvokerWithToken(t *testing.T) {
 	serverList := []string{"localhost:5612"}
-	invoker := NewSekiroInvokerWithToken("test-token", serverList)
+	invoker := NewRpcInvokerWithToken("test-token", serverList)
 
 	if invoker == nil {
-		t.Fatal("NewSekiroInvokerWithToken() returned nil")
+		t.Fatal("NewRpcInvokerWithToken() returned nil")
 	}
 	if invoker.apiToken != "test-token" {
 		t.Errorf("apiToken = %s, want 'test-token'", invoker.apiToken)
 	}
 }
 
-func TestNewSekiroInvokerEmptyServerList(t *testing.T) {
-	invoker := NewSekiroInvoker([]string{})
+func TestNewRpcInvokerEmptyServerList(t *testing.T) {
+	invoker := NewRpcInvoker([]string{})
 
 	if invoker == nil {
-		t.Fatal("NewSekiroInvoker() returned nil for empty server list")
+		t.Fatal("NewRpcInvoker() returned nil for empty server list")
 	}
 	if len(invoker.serverClients) != 0 {
 		t.Errorf("Expected 0 server clients, got %d", len(invoker.serverClients))
@@ -76,7 +76,7 @@ func TestInvokeResponseStruct(t *testing.T) {
 }
 
 func TestInvokerDestroy(t *testing.T) {
-	invoker := NewSekiroInvoker([]string{})
+	invoker := NewRpcInvoker([]string{})
 
 	// Destroy should not panic
 	invoker.Destroy()
@@ -88,7 +88,7 @@ func TestInvokerDestroy(t *testing.T) {
 }
 
 func TestGetNextClientEmptyList(t *testing.T) {
-	invoker := &SekiroInvoker{
+	invoker := &RpcInvoker{
 		serverClients: []*invokerClient{},
 	}
 
@@ -99,7 +99,7 @@ func TestGetNextClientEmptyList(t *testing.T) {
 }
 
 func TestGetNextClientRoundRobin(t *testing.T) {
-	invoker := &SekiroInvoker{
+	invoker := &RpcInvoker{
 		serverClients: []*invokerClient{
 			{serverAddr: "server1", alive: true},
 			{serverAddr: "server2", alive: true},
@@ -124,7 +124,7 @@ func TestGetNextClientRoundRobin(t *testing.T) {
 }
 
 func TestGenerateSerialNumber(t *testing.T) {
-	invoker := &SekiroInvoker{
+	invoker := &RpcInvoker{
 		serialCounter: 0,
 	}
 
@@ -140,7 +140,7 @@ func TestGenerateSerialNumber(t *testing.T) {
 }
 
 func TestGenerateSerialNumberConcurrent(t *testing.T) {
-	invoker := &SekiroInvoker{
+	invoker := &RpcInvoker{
 		serialCounter: 0,
 	}
 

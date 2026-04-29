@@ -48,7 +48,7 @@ func NewRouter() *Router {
 // If ClientID is specified, only that client is selected (no fallback)
 // If HashKey is specified without ClientID, uses consistent hash with round-robin fallback
 // If neither is specified, uses round-robin
-func (r *Router) Route(group *client.SekiroGroup, params RouteParams) *client.SekiroClient {
+func (r *Router) Route(group *client.RpcGroup, params RouteParams) *client.RpcClient {
 	if group == nil {
 		return nil
 	}
@@ -72,12 +72,12 @@ func (r *Router) Route(group *client.SekiroGroup, params RouteParams) *client.Se
 }
 
 // routeBySpecifiedClient routes to a specific client by ID
-func (r *Router) routeBySpecifiedClient(group *client.SekiroGroup, clientID string) *client.SekiroClient {
+func (r *Router) routeBySpecifiedClient(group *client.RpcGroup, clientID string) *client.RpcClient {
 	return group.GetClient(clientID)
 }
 
 // routeByConsistentHash routes based on consistent hash of the key
-func (r *Router) routeByConsistentHash(group *client.SekiroGroup, hashKey string) *client.SekiroClient {
+func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey string) *client.RpcClient {
 	// Get all clients from the group
 	clients := group.GetAllClients()
 	if len(clients) == 0 {
@@ -107,7 +107,7 @@ func (r *Router) routeByConsistentHash(group *client.SekiroGroup, hashKey string
 }
 
 // routeByRoundRobin routes to clients in round-robin order
-func (r *Router) routeByRoundRobin(group *client.SekiroGroup) *client.SekiroClient {
+func (r *Router) routeByRoundRobin(group *client.RpcGroup) *client.RpcClient {
 	clients := group.GetAllClients()
 	if len(clients) == 0 {
 		return nil
@@ -127,8 +127,8 @@ func (r *Router) routeByRoundRobin(group *client.SekiroGroup) *client.SekiroClie
 	return eligible[index]
 }
 
-func filterEligibleClients(clients []*client.SekiroClient, requireHealthy bool) []*client.SekiroClient {
-	filtered := make([]*client.SekiroClient, 0, len(clients))
+func filterEligibleClients(clients []*client.RpcClient, requireHealthy bool) []*client.RpcClient {
+	filtered := make([]*client.RpcClient, 0, len(clients))
 	for _, c := range clients {
 		if c.GetStatus() != client.StatusOnline {
 			continue

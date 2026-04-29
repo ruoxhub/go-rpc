@@ -8,7 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		A4E2901729B2D52700344117 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = A4E2901629B2D52700344117 /* main.m */; };
-		A4E2902029B2D53800344117 /* Sekiro.m in Sources */ = {isa = PBXBuildFile; fileRef = A4E2901F29B2D53800344117 /* Sekiro.m */; };
+		A4E2902029B2D53800344117 /* Rpc.m in Sources */ = {isa = PBXBuildFile; fileRef = A4E2901F29B2D53800344117 /* Rpc.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -26,8 +26,8 @@
 /* Begin PBXFileReference section */
 		A4E2901329B2D52700344117 /* sekiro-oc */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "sekiro-oc"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A4E2901629B2D52700344117 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		A4E2901E29B2D53800344117 /* Sekiro.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Sekiro.h; sourceTree = "<group>"; };
-		A4E2901F29B2D53800344117 /* Sekiro.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Sekiro.m; sourceTree = "<group>"; };
+		A4E2901E29B2D53800344117 /* Rpc.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Rpc.h; sourceTree = "<group>"; };
+		A4E2901F29B2D53800344117 /* Rpc.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = Rpc.m; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,8 +61,8 @@
 			isa = PBXGroup;
 			children = (
 				A4E2901629B2D52700344117 /* main.m */,
-				A4E2901E29B2D53800344117 /* Sekiro.h */,
-				A4E2901F29B2D53800344117 /* Sekiro.m */,
+				A4E2901E29B2D53800344117 /* Rpc.h */,
+				A4E2901F29B2D53800344117 /* Rpc.m */,
 			);
 			path = "sekiro-oc";
 			sourceTree = "<group>";
@@ -124,7 +124,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A4E2902029B2D53800344117 /* Sekiro.m in Sources */,
+				A4E2902029B2D53800344117 /* Rpc.m in Sources */,
 				A4E2901729B2D52700344117 /* main.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -4,8 +4,8 @@ package cn.iinti.sekiro.demoapp;
 import cn.iinti.sekiro3.business.api.interfaze.Action;
 import cn.iinti.sekiro3.business.api.interfaze.AutoBind;
 import cn.iinti.sekiro3.business.api.interfaze.RequestHandler;
-import cn.iinti.sekiro3.business.api.interfaze.SekiroRequest;
-import cn.iinti.sekiro3.business.api.interfaze.SekiroResponse;
+import cn.iinti.sekiro3.business.api.interfaze.RpcRequest;
+import cn.iinti.sekiro3.business.api.interfaze.RpcResponse;
 
 @Action("clientTime")
 public class ClientTimeHandler implements RequestHandler {
@@ -16,7 +16,7 @@ public class ClientTimeHandler implements RequestHandler {
     private Integer sleep;
 
     @Override
-    public void handleRequest(SekiroRequest sekiroRequest, SekiroResponse sekiroResponse) {
+    public void handleRequest(RpcRequest sekiroRequest, RpcResponse sekiroResponse) {
         if (sleep != null && sleep > 0) {
             try {
                 Thread.sleep(sleep * 1000);

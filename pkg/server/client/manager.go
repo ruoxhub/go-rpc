@@ -4,21 +4,21 @@ import (
 	"sync"
 )
 
-// ClientManager manages all SekiroGroups
+// ClientManager manages all RpcGroups
 type ClientManager struct {
-	groups map[string]*SekiroGroup
+	groups map[string]*RpcGroup
 	mu     sync.RWMutex
 }
 
 // NewClientManager creates a new ClientManager
 func NewClientManager() *ClientManager {
 	return &ClientManager{
-		groups: make(map[string]*SekiroGroup),
+		groups: make(map[string]*RpcGroup),
 	}
 }
 
 // getOrCreateGroup gets or creates a group
-func (m *ClientManager) getOrCreateGroup(groupName string) *SekiroGroup {
+func (m *ClientManager) getOrCreateGroup(groupName string) *RpcGroup {
 	m.mu.RLock()
 	group, ok := m.groups[groupName]
 	m.mu.RUnlock()
@@ -35,13 +35,13 @@ func (m *ClientManager) getOrCreateGroup(groupName string) *SekiroGroup {
 		return group
 	}
 
-	group = NewSekiroGroup(groupName)
+	group = NewRpcGroup(groupName)
 	m.groups[groupName] = group
 	return group
 }
 
 // Register registers a client
-func (m *ClientManager) Register(client *SekiroClient) {
+func (m *ClientManager) Register(client *RpcClient) {
 	group := m.getOrCreateGroup(client.Group)
 	group.Register(client)
 }
@@ -58,7 +58,7 @@ func (m *ClientManager) Unregister(groupName, clientID string) {
 }
 
 // GetClient gets a client by group and clientID
-func (m *ClientManager) GetClient(group, clientID string) *SekiroClient {
+func (m *ClientManager) GetClient(group, clientID string) *RpcClient {
 	m.mu.RLock()
 	groupInst, ok := m.groups[group]
 	m.mu.RUnlock()
@@ -70,7 +70,7 @@ func (m *ClientManager) GetClient(group, clientID string) *SekiroClient {
 }
 
 // GetClientsByGroup gets all clients in a group
-func (m *ClientManager) GetClientsByGroup(group string) []*SekiroClient {
+func (m *ClientManager) GetClientsByGroup(group string) []*RpcClient {
 	m.mu.RLock()
 	groupInst, ok := m.groups[group]
 	m.mu.RUnlock()
@@ -94,7 +94,7 @@ func (m *ClientManager) GetAllGroups() []string {
 }
 
 // AllocateClient allocates a client for invocation
-func (m *ClientManager) AllocateClient(group string) *SekiroClient {
+func (m *ClientManager) AllocateClient(group string) *RpcClient {
 	groupInst := m.getOrCreateGroup(group)
 	return groupInst.AllocateClient()
 }
@@ -107,7 +107,7 @@ func (m *ClientManager) CleanupAll() {
 	for _, group := range m.groups {
 		group.Close()
 	}
-	m.groups = make(map[string]*SekiroGroup)
+	m.groups = make(map[string]*RpcGroup)
 }
 
 // GroupCount returns the number of groups
@@ -130,7 +130,7 @@ func (m *ClientManager) ClientCount() int {
 }
 
 // GetGroup gets a group by name
-func (m *ClientManager) GetGroup(groupName string) *SekiroGroup {
+func (m *ClientManager) GetGroup(groupName string) *RpcGroup {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.groups[groupName]

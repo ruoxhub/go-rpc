@@ -1,11 +1,11 @@
-# Sekiro RPC - Go 语言实现
+# Rpc RPC - Go 语言实现
 
 [![Go Version](https://img.shields.io/badge/go-1.25.0-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-Apache2.0-green.svg)](LICENSE)
 
 SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台。
 
-这是 Java 版本 Sekiro 的 Go 语言实现，支持 WebSocket 通信、HTTP API、路由负载均衡等核心功能。
+这是 Java 版本 Rpc 的 Go 语言实现，支持 WebSocket 通信、HTTP API、路由负载均衡等核心功能。
 
 ## 目录
 
@@ -33,7 +33,7 @@ sekiro-go/
 │   └── invoker/              # 调用端示例
 │       └── main.go
 ├── pkg/                      # 核心包
-│   ├── client/               # 客户端 SDK (SekiroClient, SekiroInvoker)
+│   ├── client/               # 客户端 SDK (RpcClient, RpcInvoker)
 │   │   ├── client.go
 │   │   └── invoker.go
 │   ├── compress/             # 压缩算法 (Gzip, Snappy, None)
@@ -200,7 +200,7 @@ RouterReplace:
 
 | 功能 | 说明 |
 |------|------|
-| **协议检测** | 自动识别 Sekiro 二进制协议和 HTTP/WebSocket 协议 |
+| **协议检测** | 自动识别 Rpc 二进制协议和 HTTP/WebSocket 协议 |
 | **客户端管理** | 客户端注册、注销、状态管理、分组管理 |
 | **负载均衡** | 支持轮询、指定客户端、一致性 Hash 三种路由策略 |
 | **压缩支持** | Gzip、Snappy、None 三种压缩方式 |
@@ -221,7 +221,7 @@ import (
 
 func main() {
     // 创建客户端
-    c := client.NewSekiroClient("my-group", "my-client-id", "localhost", 5612)
+    c := client.NewRpcClient("my-group", "my-client-id", "localhost", 5612)
 
     // 启动客户端
     if err := c.Start(); err != nil {
@@ -252,7 +252,7 @@ import (
 
 func main() {
     // 创建调用端
-    invoker := client.NewSekiroInvoker([]string{"localhost:5612"})
+    invoker := client.NewRpcInvoker([]string{"localhost:5612"})
     defer invoker.Destroy()
 
     // 发起调用
@@ -274,21 +274,21 @@ func main() {
 
 ## SDK 使用
 
-### SekiroClient API
+### RpcClient API
 
 | 方法 | 说明 |
 |------|------|
-| `NewSekiroClient(group, clientID, serverHost string, serverPort int)` | 创建客户端实例 |
+| `NewRpcClient(group, clientID, serverHost string, serverPort int)` | 创建客户端实例 |
 | `Start() error` | 连接到服务器并启动消息处理 |
 | `Register(handler func([]byte) ([]byte, error))` | 注册请求处理器 |
 | `Destroy(waitSeconds int64)` | 销毁客户端连接 |
 
-### SekiroInvoker API
+### RpcInvoker API
 
 | 方法 | 说明 |
 |------|------|
-| `NewSekiroInvoker(serverList []string)` | 创建调用端实例 |
-| `NewSekiroInvokerWithToken(apiToken string, serverList []string)` | 创建带 API Token 的调用端 |
+| `NewRpcInvoker(serverList []string)` | 创建调用端实例 |
+| `NewRpcInvokerWithToken(apiToken string, serverList []string)` | 创建带 API Token 的调用端 |
 | `Invoke(req *InvokeRequest) (*InvokeResponse, error)` | 发起 RPC 调用 |
 | `Destroy()` | 销毁调用端 |
 
@@ -490,7 +490,7 @@ go test ./pkg/server/... -v
 ### 运行单个测试
 
 ```bash
-go test -run TestSekiroPacket ./pkg/protocol/...
+go test -run TestRpcPacket ./pkg/protocol/...
 go test -run TestGzipCompress ./pkg/compress/...
 ```
 
@@ -568,10 +568,10 @@ go build -o sekiro-invoker ./cmd/invoker
 
 ## 相关资源
 
-- [Java 版本 Sekiro](https://github.com/yuaotian/Sekiro)
+- [Java 版本 Rpc](https://github.com/yuaotian/Rpc)
 - [Gin 框架文档](https://gin-gonic.com/)
 - [gorilla/websocket](https://github.com/gorilla/websocket)
 
 ## 许可证
 
-与原 Sekiro 项目保持一致（Apache 2.0）。
+与原 Rpc 项目保持一致（Apache 2.0）。

@@ -8,15 +8,15 @@ import (
 
 func TestRouter_RouteBySpecifiedClient(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	// 注册客户端
-	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1 := client.NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(client.StatusOnline)
 	group.Register(c1)
 
-	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2 := client.NewRpcClient("test-group", "client-2", nil)
 	c2.SetStatus(client.StatusOnline)
 	group.Register(c2)
 
@@ -37,11 +37,11 @@ func TestRouter_RouteBySpecifiedClient(t *testing.T) {
 
 func TestRouter_RouteBySpecifiedClient_NotFound(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	// 注册客户端
-	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1 := client.NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(client.StatusOnline)
 	group.Register(c1)
 
@@ -59,12 +59,12 @@ func TestRouter_RouteBySpecifiedClient_NotFound(t *testing.T) {
 
 func TestRouter_RouteByConsistentHash(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	// 注册客户端
 	for i := 1; i <= 3; i++ {
-		c := client.NewSekiroClient("test-group", string(rune('a'+i-1)), nil)
+		c := client.NewRpcClient("test-group", string(rune('a'+i-1)), nil)
 		c.SetStatus(client.StatusOnline)
 		group.Register(c)
 	}
@@ -89,12 +89,12 @@ func TestRouter_RouteByConsistentHash(t *testing.T) {
 
 func TestRouter_RouteByRoundRobin(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	// 注册 3 个客户端
 	for i := 1; i <= 3; i++ {
-		c := client.NewSekiroClient("test-group", string(rune('a'+i-1)), nil)
+		c := client.NewRpcClient("test-group", string(rune('a'+i-1)), nil)
 		c.SetStatus(client.StatusOnline)
 		group.Register(c)
 	}
@@ -122,15 +122,15 @@ func TestRouter_RouteByRoundRobin(t *testing.T) {
 
 func TestRouter_Route_Priority(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	// 注册客户端
-	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1 := client.NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(client.StatusOnline)
 	group.Register(c1)
 
-	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2 := client.NewRpcClient("test-group", "client-2", nil)
 	c2.SetStatus(client.StatusOnline)
 	group.Register(c2)
 
@@ -166,7 +166,7 @@ func TestRouter_Route_NilGroup(t *testing.T) {
 
 func TestRouter_Route_EmptyGroup(t *testing.T) {
 	router := NewRouter()
-	group := client.NewSekiroGroup("test-group")
+	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
 	params := RouteParams{

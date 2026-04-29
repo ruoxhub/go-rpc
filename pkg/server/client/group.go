@@ -22,35 +22,35 @@ const (
 // groupCommand represents a command to the group goroutine
 type groupCommand struct {
 	typ      commandType
-	client   *SekiroClient
+	client   *RpcClient
 	clientID string
 	callback chan commandResult
 }
 
 // commandResult holds the result of a group command
 type commandResult struct {
-	client  *SekiroClient
-	clients []*SekiroClient
+	client  *RpcClient
+	clients []*RpcClient
 	err     error
 }
 
-// SekiroGroup manages clients in a single group using goroutine + channel
-type SekiroGroup struct {
+// RpcGroup manages clients in a single group using goroutine + channel
+type RpcGroup struct {
 	name        string
 	commandChan chan groupCommand
-	clients     map[string]*SekiroClient
+	clients     map[string]*RpcClient
 	order       []string
 	wg          sync.WaitGroup
 	closed      bool
 	mu          sync.Mutex
 }
 
-// NewSekiroGroup creates a new SekiroGroup
-func NewSekiroGroup(name string) *SekiroGroup {
-	g := &SekiroGroup{
+// NewRpcGroup creates a new RpcGroup
+func NewRpcGroup(name string) *RpcGroup {
+	g := &RpcGroup{
 		name:        name,
 		commandChan: make(chan groupCommand, 64),
-		clients:     make(map[string]*SekiroClient),
+		clients:     make(map[string]*RpcClient),
 		order:       make([]string, 0, 8),
 	}
 
@@ -61,7 +61,7 @@ func NewSekiroGroup(name string) *SekiroGroup {
 }
 
 // runLoop processes commands in a single goroutine
-func (g *SekiroGroup) runLoop() {
+func (g *RpcGroup) runLoop() {
 	defer g.wg.Done()
 
 	for cmd := range g.commandChan {
@@ -91,7 +91,7 @@ func (g *SekiroGroup) runLoop() {
 
 		case cmdAllocate:
 			// Allocate with health-aware logic
-			var allocated *SekiroClient
+			var allocated *RpcClient
 
 			// First try to find a healthy client
 			for _, c := range g.clients {
@@ -124,7 +124,7 @@ func (g *SekiroGroup) runLoop() {
 			for _, c := range g.clients {
 				c.Close()
 			}
-			g.clients = make(map[string]*SekiroClient)
+			g.clients = make(map[string]*RpcClient)
 			g.order = nil
 			cmd.callback <- commandResult{}
 			return
@@ -132,8 +132,8 @@ func (g *SekiroGroup) runLoop() {
 	}
 }
 
-func (g *SekiroGroup) snapshotClients() []*SekiroClient {
-	clients := make([]*SekiroClient, 0, len(g.order))
+func (g *RpcGroup) snapshotClients() []*RpcClient {
+	clients := make([]*RpcClient, 0, len(g.order))
 	for _, clientID := range g.order {
 		if c, ok := g.clients[clientID]; ok {
 			clients = append(clients, c)
@@ -142,7 +142,7 @@ func (g *SekiroGroup) snapshotClients() []*SekiroClient {
 	return clients
 }
 
-func (g *SekiroGroup) removeFromOrder(clientID string) {
+func (g *RpcGroup) removeFromOrder(clientID string) {
 	for i, id := range g.order {
 		if id != clientID {
 			continue
@@ -153,7 +153,7 @@ func (g *SekiroGroup) removeFromOrder(clientID string) {
 }
 
 // Register registers a client to the group
-func (g *SekiroGroup) Register(client *SekiroClient) {
+func (g *RpcGroup) Register(client *RpcClient) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -167,7 +167,7 @@ func (g *SekiroGroup) Register(client *SekiroClient) {
 }
 
 // Unregister unregisters a client from the group
-func (g *SekiroGroup) Unregister(clientID string) {
+func (g *RpcGroup) Unregister(clientID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -181,7 +181,7 @@ func (g *SekiroGroup) Unregister(clientID string) {
 }
 
 // GetClient gets a client by ID
-func (g *SekiroGroup) GetClient(clientID string) *SekiroClient {
+func (g *RpcGroup) GetClient(clientID string) *RpcClient {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -200,7 +200,7 @@ func (g *SekiroGroup) GetClient(clientID string) *SekiroClient {
 }
 
 // GetAllClients gets all clients in the group
-func (g *SekiroGroup) GetAllClients() []*SekiroClient {
+func (g *RpcGroup) GetAllClients() []*RpcClient {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -218,7 +218,7 @@ func (g *SekiroGroup) GetAllClients() []*SekiroClient {
 }
 
 // AllocateClient allocates a client for invocation
-func (g *SekiroGroup) AllocateClient() *SekiroClient {
+func (g *RpcGroup) AllocateClient() *RpcClient {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -236,7 +236,7 @@ func (g *SekiroGroup) AllocateClient() *SekiroClient {
 }
 
 // Close closes the group and all clients
-func (g *SekiroGroup) Close() {
+func (g *RpcGroup) Close() {
 	g.mu.Lock()
 	if g.closed {
 		g.mu.Unlock()
@@ -256,12 +256,12 @@ func (g *SekiroGroup) Close() {
 }
 
 // Name returns the group name
-func (g *SekiroGroup) Name() string {
+func (g *RpcGroup) Name() string {
 	return g.name
 }
 
 // ClientCount returns the number of clients in the group
-func (g *SekiroGroup) ClientCount() int {
+func (g *RpcGroup) ClientCount() int {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
@@ -279,12 +279,12 @@ func (g *SekiroGroup) ClientCount() int {
 }
 
 // HasClient checks if a client exists in the group
-func (g *SekiroGroup) HasClient(clientID string) bool {
+func (g *RpcGroup) HasClient(clientID string) bool {
 	return g.GetClient(clientID) != nil
 }
 
 // AllocateClientWithStatus allocates a client with specific status requirement
-func (g *SekiroGroup) AllocateClientWithStatus(status ClientStatus) *SekiroClient {
+func (g *RpcGroup) AllocateClientWithStatus(status ClientStatus) *RpcClient {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 

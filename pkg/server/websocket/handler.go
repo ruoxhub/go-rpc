@@ -61,7 +61,7 @@ func (h *Handler) isGroupRegistered(groupName string) bool {
 	return count > 0
 }
 
-// MessageType defines Sekiro message types
+// MessageType defines Rpc message types
 type MessageType string
 
 const (
@@ -77,11 +77,11 @@ const (
 	MessageTypeBind MessageType = "bind"
 )
 
-// SekiroMessage represents a Sekiro protocol message
-type SekiroMessage struct {
+// RpcMessage represents a Rpc protocol message
+type RpcMessage struct {
 	Type      MessageType     `json:"type"`
-	Sequence  string          `json:"sequence,omitempty"`       // Sekiro 协议字段
-	SekiroSeq string          `json:"__sekiro_seq__,omitempty"` // JavaScript 客户端使用的字段
+	Sequence  string          `json:"sequence,omitempty"`       // Rpc 协议字段
+	RpcSeq string          `json:"__sekiro_seq__,omitempty"` // JavaScript 客户端使用的字段
 	Group     string          `json:"group,omitempty"`
 	ClientID  string          `json:"clientId,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
@@ -92,9 +92,9 @@ type SekiroMessage struct {
 }
 
 // GetSequence 获取消息序列号，兼容两种字段格式
-func (m *SekiroMessage) GetSequence() string {
-	if m.SekiroSeq != "" {
-		return m.SekiroSeq
+func (m *RpcMessage) GetSequence() string {
+	if m.RpcSeq != "" {
+		return m.RpcSeq
 	}
 	return m.Sequence
 }
@@ -112,7 +112,7 @@ func extractRemoteIP(conn *websocket.Conn) string {
 	return ip
 }
 
-// Handler handles WebSocket connections for Sekiro clients
+// Handler handles WebSocket connections for Rpc clients
 type Handler struct {
 	clientManager  *client.ClientManager
 	timeoutManager *forwarder.TimeoutManager
@@ -164,8 +164,8 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		}
 	}()
 
-	// Create Sekiro client
-	sekiroClient := client.NewSekiroClient(group, clientID, conn)
+	// Create Rpc client
+	sekiroClient := client.NewRpcClient(group, clientID, conn)
 	sekiroClient.SetStatus(client.StatusOnline)
 
 	// 检查分组是否已注册（存在于 group_config 表中）
@@ -271,7 +271,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data []byte) {
 	logger.Infof("Received raw message")
 
-	var msg SekiroMessage
+	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		logger.Errorf("Failed to parse message: %v", err)
 		h.sendError(conn, "invalid message format", "", nil)
@@ -295,7 +295,7 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 		h.handleInvokeStream(&msg)
 	default:
 		logger.Warnf("Unknown message type: %s", msg.Type)
-		var sekiroClient *client.SekiroClient
+		var sekiroClient *client.RpcClient
 		if msg.Group != "" && msg.ClientID != "" {
 			sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
 		}
@@ -304,7 +304,7 @@ func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data
 }
 
 // handleInvokeStream handles a streaming invoke response chunk.
-func (h *Handler) handleInvokeStream(msg *SekiroMessage) {
+func (h *Handler) handleInvokeStream(msg *RpcMessage) {
 	sequence := msg.GetSequence()
 	if sequence == "" {
 		logger.Warnf("Invoke stream chunk missing sequence number")
@@ -329,10 +329,10 @@ func (h *Handler) handleInvokeStream(msg *SekiroMessage) {
 }
 
 // handleHeartbeat handles heartbeat messages
-func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
+func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *RpcMessage) {
 	logger.Debugf("Heartbeat received from %s/%s", msg.Group, msg.ClientID)
 
-	var sekiroClient *client.SekiroClient
+	var sekiroClient *client.RpcClient
 	// Mark client as healthy on successful heartbeat
 	if msg.Group != "" && msg.ClientID != "" {
 		sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
@@ -349,7 +349,7 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
 	}
 
 	// Send heartbeat response
-	response := SekiroMessage{
+	response := RpcMessage{
 		Type:      MessageTypeHeartbeat,
 		Timestamp: time.Now().UnixMilli(),
 	}
@@ -357,7 +357,7 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *SekiroMessage) {
 }
 
 // handleInvokeResponse handles invoke response messages
-func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *SekiroMessage, rawData []byte) {
+func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, rawData []byte) {
 	sequence := msg.GetSequence()
 	if sequence == "" {
 		logger.Warnf("Invoke response missing sequence number")
@@ -448,7 +448,7 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *SekiroMessage,
 }
 
 // sendMessage sends a message to the client
-func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage, sekiroClient *client.SekiroClient) {
+func (h *Handler) sendMessage(conn *websocket.Conn, msg *RpcMessage, sekiroClient *client.RpcClient) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		logger.Errorf("Failed to marshal message: %v", err)
@@ -470,8 +470,8 @@ func (h *Handler) sendMessage(conn *websocket.Conn, msg *SekiroMessage, sekiroCl
 }
 
 // sendError sends an error message to the client
-func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string, sekiroClient *client.SekiroClient) {
-	msg := SekiroMessage{
+func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string, sekiroClient *client.RpcClient) {
+	msg := RpcMessage{
 		Type:      "error",
 		Error:     errorMsg,
 		Sequence:  sequence,
@@ -482,7 +482,7 @@ func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string, sek
 
 // SendInvokeRequest sends an invoke request to a client
 // The message format is compatible with the JavaScript client
-func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clientID string, data []byte, sekiroClient *client.SekiroClient) error {
+func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clientID string, data []byte, sekiroClient *client.RpcClient) error {
 	// Parse the request data
 	var reqData map[string]interface{}
 	if err := json.Unmarshal(data, &reqData); err != nil {

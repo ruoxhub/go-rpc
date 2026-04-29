@@ -7,14 +7,14 @@
 
 
 #import <Foundation/Foundation.h>
-#include "Sekiro.h"
+#include "Rpc.h"
 
-void test(NSDictionary *request, SekiroResponse *response) {
+void test(NSDictionary *request, RpcResponse *response) {
     // 请注意，本方法调用时异步线程，不能在这里sleep，不能做网络等耗时操作，如果有必要，请在新线程中执行
     [response success:[@"\"ok replay objective-c\""  dataUsingEncoding:NSUTF8StringEncoding]];
 }
 
-void blokingTest(NSDictionary *request, SekiroResponse *response){
+void blokingTest(NSDictionary *request, RpcResponse *response){
     NSThread *thread = [[NSThread alloc] initWithBlock:^{
         // 这里有休眠，所以本方法不能直接在handler线程中调用，否则并发起不来
         [NSThread sleepForTimeInterval:2];
@@ -28,7 +28,7 @@ void blokingTest(NSDictionary *request, SekiroResponse *response){
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
         // https://sekiro.iinti.cn/business/invoke?group=test-objective-c&action=testAction
-        SekiroClient *client = [[SekiroClient alloc] init:@"test-objective-c"];
+        RpcClient *client = [[RpcClient alloc] init:@"test-objective-c"];
         [client registerAction:@"testAction" handler: test];
         [client registerAction:@"blokingActivon" handler:blokingTest];
         [client start];

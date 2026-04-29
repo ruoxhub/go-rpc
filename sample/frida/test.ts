@@ -1,11 +1,11 @@
-interface SekiroOption {
+interface RpcOption {
     serverHost?: string;
     serverPort?: number;
     clientId: string;
     sekiroGroup: string;
 }
 
-interface SekiroPacket {
+interface RpcPacket {
     type: number;
     serialNumber: number;
     headers: any;
@@ -16,14 +16,14 @@ interface SekiroPacket {
  * sekiro client base on frida socket api: https://frida.re/docs/javascript-api/#socket
  * sekiro socket internal protocol document: http://sekiro.iinti.cn/sekiro-doc/03_developer/1.protocol.html
  */
-class SekiroClient {
-    private readonly sekiroOption: SekiroOption;
+class RpcClient {
+    private readonly sekiroOption: RpcOption;
     private readonly fridaSocketConfig: TcpConnectOptions;
     private handlers: any = {};
     private readBuffer?: ArrayBuffer | undefined;
     private isConnecting = false;
 
-    constructor(sekiroOption: SekiroOption) {
+    constructor(sekiroOption: RpcOption) {
         this.sekiroOption = sekiroOption;
         sekiroOption.serverHost = sekiroOption.serverHost || "sekiro.iinti.cn";
         sekiroOption.serverPort = sekiroOption.serverPort || 5612;
@@ -66,7 +66,7 @@ class SekiroClient {
                         'SEKIRO_GROUP': this.sekiroOption.sekiroGroup,
                         'SEKIRO_CLIENT_ID': this.sekiroOption.clientId,
                     },
-                } as SekiroPacket)
+                } as RpcPacket)
 
             })
             .catch((reason: any) => {
@@ -76,8 +76,8 @@ class SekiroClient {
             });
     }
 
-    private connWrite(conn: SocketConnection, sekiroPacket: SekiroPacket) {
-        conn.output.write(this.encodeSekiroPacket(sekiroPacket))
+    private connWrite(conn: SocketConnection, sekiroPacket: RpcPacket) {
+        conn.output.write(this.encodeRpcPacket(sekiroPacket))
             .catch((reason: any) => {
                 console.log("sekiro write register cmd failed", reason);
                 this.reConnect();
@@ -119,7 +119,7 @@ class SekiroClient {
             view.set(new Uint8Array(buffer), this.readBuffer.byteLength);
             this.readBuffer = merge;
         }
-        const pkt = this.decodeSekiroPacket(conn);
+        const pkt = this.decodeRpcPacket(conn);
         if (!!pkt) {
             this.handleServerPkg(conn, pkt);
             //maybe more data can be decoded
@@ -127,7 +127,7 @@ class SekiroClient {
         }
     }
 
-    private encodeSekiroFastJSON(commonRes: any): ArrayBuffer {
+    private encodeRpcFastJSON(commonRes: any): ArrayBuffer {
         let msgPart: Uint8Array | undefined = undefined;
         if (commonRes.msg) {
             msgPart = this.str2Uint8(commonRes.msg)
@@ -155,7 +155,7 @@ class SekiroClient {
         return arrayBuffer;
     }
 
-    private handleServerPkg(conn: SocketConnection, pkt: SekiroPacket): void {
+    private handleServerPkg(conn: SocketConnection, pkt: RpcPacket): void {
         if (pkt.type == 0x00) {
             // this is heart beat pkg
             this.connWrite(conn, pkt);
@@ -172,7 +172,7 @@ class SekiroClient {
                 that.connWrite(conn, {
                     type: 0x11, serialNumber: pkt.serialNumber,
                     headers: {"PAYLOAD_CONTENT_TYPE": "CONTENT_TYPE_SEKIRO_FAST_JSON"},
-                    data: that.encodeSekiroFastJSON(json)
+                    data: that.encodeRpcFastJSON(json)
                 });
             });
         };
@@ -207,7 +207,7 @@ class SekiroClient {
         }
     }
 
-    private decodeSekiroPacket(conn: SocketConnection): SekiroPacket | undefined {
+    private decodeRpcPacket(conn: SocketConnection): RpcPacket | undefined {
         if (!this.readBuffer) {
             return undefined;
         }
@@ -266,7 +266,7 @@ class SekiroClient {
         };
     }
 
-    private encodeSekiroPacket(sekiroPacket: SekiroPacket): ArrayBuffer {
+    private encodeRpcPacket(sekiroPacket: RpcPacket): ArrayBuffer {
         let num = 6; // 1 + 4 + 1
         let headerList = [];
         for (let h in sekiroPacket.headers) {
@@ -419,7 +419,7 @@ class SekiroClient {
 
 
 // test frida
-const client = new SekiroClient({sekiroGroup: "test_frida", clientId: "test"});
+const client = new RpcClient({sekiroGroup: "test_frida", clientId: "test"});
 client.registerAction("add", function (request, resolve) {
     resolve(request.a + request.b);
 });

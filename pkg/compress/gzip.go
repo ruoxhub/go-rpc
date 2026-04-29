@@ -1,4 +1,4 @@
-// Package compress implements compression algorithms for Sekiro protocol
+// Package compress implements compression algorithms for Rpc protocol
 package compress
 
 import (

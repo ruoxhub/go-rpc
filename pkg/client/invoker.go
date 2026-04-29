@@ -15,8 +15,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
-// SekiroInvoker represents a Sekiro invoker (caller)
-type SekiroInvoker struct {
+// RpcInvoker represents a Rpc invoker (caller)
+type RpcInvoker struct {
 	apiToken         string
 	serverClients    []*invokerClient
 	roundRobinIndex  int
@@ -24,7 +24,7 @@ type SekiroInvoker struct {
 	mu               sync.RWMutex
 }
 
-// invokerClient represents a connection to a Sekiro server
+// invokerClient represents a connection to a Rpc server
 type invokerClient struct {
 	serverAddr string
 	conn       *clientConnection
@@ -46,14 +46,14 @@ type InvokeResponse struct {
 	Data    interface{} `json:"data"`
 }
 
-// NewSekiroInvoker creates a new SekiroInvoker
-func NewSekiroInvoker(serverList []string) *SekiroInvoker {
-	return NewSekiroInvokerWithToken("", serverList)
+// NewRpcInvoker creates a new RpcInvoker
+func NewRpcInvoker(serverList []string) *RpcInvoker {
+	return NewRpcInvokerWithToken("", serverList)
 }
 
-// NewSekiroInvokerWithToken creates a new SekiroInvoker with API token
-func NewSekiroInvokerWithToken(apiToken string, serverList []string) *SekiroInvoker {
-	invoker := &SekiroInvoker{
+// NewRpcInvokerWithToken creates a new RpcInvoker with API token
+func NewRpcInvokerWithToken(apiToken string, serverList []string) *RpcInvoker {
+	invoker := &RpcInvoker{
 		apiToken:      apiToken,
 		serverClients: make([]*invokerClient, 0, len(serverList)),
 	}
@@ -76,8 +76,8 @@ func NewSekiroInvokerWithToken(apiToken string, serverList []string) *SekiroInvo
 	return invoker
 }
 
-// createInvokerClient creates a connection to a Sekiro server
-func (s *SekiroInvoker) createInvokerClient(config string) *invokerClient {
+// createInvokerClient creates a connection to a Rpc server
+func (s *RpcInvoker) createInvokerClient(config string) *invokerClient {
 	server := config
 	host := server
 	port := 5612
@@ -102,14 +102,14 @@ func (s *SekiroInvoker) createInvokerClient(config string) *invokerClient {
 		conn: &clientConnection{
 			conn:        conn,
 			reader:      bufio.NewReader(conn),
-			respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+			respWaiters: make(map[int32]chan *protocol.RpcPacket),
 		},
 		alive: true,
 	}
 }
 
 // Invoke sends an invoke request
-func (s *SekiroInvoker) Invoke(req *InvokeRequest) (*InvokeResponse, error) {
+func (s *RpcInvoker) Invoke(req *InvokeRequest) (*InvokeResponse, error) {
 	// Create invoke packet
 	packet := protocol.PacketTypeIInvoke.NewPacket()
 	packet.SetSerialNumber(s.generateSerialNumber())
@@ -159,7 +159,7 @@ func (s *SekiroInvoker) Invoke(req *InvokeRequest) (*InvokeResponse, error) {
 }
 
 // getNextClient gets the next available client using round-robin
-func (s *SekiroInvoker) getNextClient() *invokerClient {
+func (s *RpcInvoker) getNextClient() *invokerClient {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -173,12 +173,12 @@ func (s *SekiroInvoker) getNextClient() *invokerClient {
 }
 
 // generateSerialNumber generates a unique serial number
-func (s *SekiroInvoker) generateSerialNumber() int32 {
+func (s *RpcInvoker) generateSerialNumber() int32 {
 	return int32(atomic.AddInt32(&s.serialCounter, 1))
 }
 
 // send sends a packet
-func (c *invokerClient) send(packet *protocol.SekiroPacket) error {
+func (c *invokerClient) send(packet *protocol.RpcPacket) error {
 	if c.conn == nil {
 		return io.ErrClosedPipe
 	}
@@ -194,12 +194,12 @@ func (c *invokerClient) send(packet *protocol.SekiroPacket) error {
 }
 
 // waitForResponse waits for response with timeout
-func (c *invokerClient) waitForResponse(seq int32, timeout time.Duration) (*protocol.SekiroPacket, error) {
+func (c *invokerClient) waitForResponse(seq int32, timeout time.Duration) (*protocol.RpcPacket, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 
-	respChan := make(chan *protocol.SekiroPacket, 1)
+	respChan := make(chan *protocol.RpcPacket, 1)
 
 	c.conn.mu.Lock()
 	c.conn.respWaiters[seq] = respChan
@@ -220,7 +220,7 @@ func (c *invokerClient) waitForResponse(seq int32, timeout time.Duration) (*prot
 }
 
 // Destroy destroys the invoker
-func (s *SekiroInvoker) Destroy() {
+func (s *RpcInvoker) Destroy() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

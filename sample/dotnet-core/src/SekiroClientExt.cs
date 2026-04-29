@@ -6,29 +6,29 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
-namespace SekiroClientDotnet
+namespace RpcClientDotnet
 {
     /// <summary>
-    /// SekiroClient 扩展相关函数
+    /// RpcClient 扩展相关函数
     /// </summary>
-    public partial class SekiroClient
+    public partial class RpcClient
     {
         
         private static async Task CheckMagicMsg()
         {
             string magicMsg = await ReadMagicMsg(netStream);
-            if (magicMsg != SekiroConstant.Magic)
+            if (magicMsg != RpcConstant.Magic)
             {
                 Serilog.Log.Warning($"rev magicMsg fail,restart it, magicMsg:{magicMsg}");
                 throw new Exception($"rev magicMsg fail,restart it, magicMsg:{magicMsg}");
             }
         }
 
-        private static async Task<SekiroPacket> ReadPacket()
+        private static async Task<RpcPacket> ReadPacket()
         {
             int totalLength = await ReadTotalLength(netStream);
             byte[] packetBuffer = await ReadPacketBuffer(netStream, totalLength);
-            var sekiroPacket = SekiroPacket.ToSekiroPacket(packetBuffer, totalLength);
+            var sekiroPacket = RpcPacket.ToRpcPacket(packetBuffer, totalLength);
             Serilog.Log.Information($"rev message, seq :{sekiroPacket.Seq},type:{sekiroPacket.MessageType}");
             return sekiroPacket;
         }
@@ -37,7 +37,7 @@ namespace SekiroClientDotnet
         /// <summary>
         /// 上报心跳数据包
         /// </summary>
-        private static async Task ReportHeartbeatMsg(NetworkStream netStream, SekiroPacket sekiroPacket)
+        private static async Task ReportHeartbeatMsg(NetworkStream netStream, RpcPacket sekiroPacket)
         {
             var heartbeatBuffer = sekiroPacket.ToBuffer();
             await netStream.WriteAsync(heartbeatBuffer, 0, heartbeatBuffer.Length);
@@ -49,7 +49,7 @@ namespace SekiroClientDotnet
         /// </summary>
         private async Task SendRegToServer(NetworkStream netStream)
         {
-            var buffer = SekiroPacket.GetRegPacketBuffer(this.groupName, this.clientId);
+            var buffer = RpcPacket.GetRegPacketBuffer(this.groupName, this.clientId);
             await netStream.WriteAsync(buffer, 0, buffer.Length);
             Serilog.Log.Information("send reg packet successfully.");
         }

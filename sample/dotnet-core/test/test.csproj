@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\src\SekiroClientDotnet.csproj" />
+    <ProjectReference Include="..\src\RpcClientDotnet.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

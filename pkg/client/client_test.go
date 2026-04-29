@@ -27,10 +27,10 @@ func (b bufReadWriteCloser) SetDeadline(t time.Time) error      { return nil }
 func (b bufReadWriteCloser) SetReadDeadline(t time.Time) error  { return nil }
 func (b bufReadWriteCloser) SetWriteDeadline(t time.Time) error { return nil }
 
-func TestNewSekiroClient(t *testing.T) {
-	client := NewSekiroClient("test-group", "client-1", "localhost", 5612)
+func TestNewRpcClient(t *testing.T) {
+	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
 	if client == nil {
-		t.Fatal("NewSekiroClient() returned nil")
+		t.Fatal("NewRpcClient() returned nil")
 	}
 	if client.Group != "test-group" {
 		t.Errorf("Group = %s, want 'test-group'", client.Group)
@@ -49,8 +49,8 @@ func TestNewSekiroClient(t *testing.T) {
 	}
 }
 
-func TestSekiroClientDestroy(t *testing.T) {
-	client := NewSekiroClient("test-group", "client-1", "localhost", 5612)
+func TestRpcClientDestroy(t *testing.T) {
+	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
 
 	// Destroy should not panic
 	client.Destroy(0)
@@ -63,11 +63,11 @@ func TestSekiroClientDestroy(t *testing.T) {
 
 func TestClientConnectionSend(t *testing.T) {
 	conn := &clientConnection{
-		respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 		closed:      true, // Simulate closed connection
 	}
 
-	packet := protocol.NewSekiroPacket()
+	packet := protocol.NewRpcPacket()
 	err := conn.send(packet)
 
 	if err == nil {
@@ -80,7 +80,7 @@ func TestClientConnectionClose(t *testing.T) {
 	buf := &bytes.Buffer{}
 	conn := &clientConnection{
 		conn:        &bufReadWriteCloser{reader: bytes.NewReader([]byte{}), writer: buf},
-		respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 		closed:      false,
 	}
 
@@ -100,7 +100,7 @@ func TestClientConnectionReceive(t *testing.T) {
 	// and the compress manager can be nil
 	conn := &clientConnection{
 		reader:      bufio.NewReader(bytes.NewReader([]byte{})),
-		respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 	}
 
 	// Receive with empty data will fail, but we test it doesn't panic
@@ -115,15 +115,15 @@ func TestNotifyDisconnect(t *testing.T) {
 	// The closed flag is set by the close() method
 	// This test verifies that notifyDisconnect doesn't panic with valid connection
 
-	ch1 := make(chan *protocol.SekiroPacket, 1)
+	ch1 := make(chan *protocol.RpcPacket, 1)
 
 	conn := &clientConnection{
-		respWaiters: map[int32]chan *protocol.SekiroPacket{
+		respWaiters: map[int32]chan *protocol.RpcPacket{
 			1: ch1,
 		},
 	}
 
-	client := &SekiroClient{
+	client := &RpcClient{
 		Connection: conn,
 	}
 
@@ -139,8 +139,8 @@ func TestNotifyDisconnect(t *testing.T) {
 
 func TestNotifyDisconnectChannels(t *testing.T) {
 	// Test that channels are properly closed
-	ch1 := make(chan *protocol.SekiroPacket, 1)
-	ch2 := make(chan *protocol.SekiroPacket, 1)
+	ch1 := make(chan *protocol.RpcPacket, 1)
+	ch2 := make(chan *protocol.RpcPacket, 1)
 
 	// Manually close channels to simulate what notifyDisconnect does
 	close(ch1)
@@ -158,7 +158,7 @@ func TestNotifyDisconnectChannels(t *testing.T) {
 }
 
 func TestNotifyDisconnectNilConnection(t *testing.T) {
-	client := &SekiroClient{
+	client := &RpcClient{
 		Connection: nil,
 	}
 
@@ -185,7 +185,7 @@ func TestBufWriter(t *testing.T) {
 }
 
 func TestRegisterHandler(t *testing.T) {
-	client := NewSekiroClient("test-group", "client-1", "localhost", 5612)
+	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
 
 	handler := func(request []byte) ([]byte, error) {
 		return []byte("response"), nil
@@ -197,8 +197,8 @@ func TestRegisterHandler(t *testing.T) {
 	// Note: The current implementation is a stub, so we just verify it doesn't crash
 }
 
-func TestSekiroClientStartDestroyed(t *testing.T) {
-	client := NewSekiroClient("test-group", "client-1", "localhost", 5612)
+func TestRpcClientStartDestroyed(t *testing.T) {
+	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
 	client.Destroy(0)
 
 	// Start after destroy should return error
@@ -211,7 +211,7 @@ func TestSekiroClientStartDestroyed(t *testing.T) {
 func TestClientConnectionSendConcurrent(t *testing.T) {
 	// Test that send is safe for concurrent use
 	conn := &clientConnection{
-		respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 		closed:      true, // Closed to avoid actual network operations
 	}
 
@@ -220,7 +220,7 @@ func TestClientConnectionSendConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			packet := protocol.NewSekiroPacket()
+			packet := protocol.NewRpcPacket()
 			conn.send(packet) // Will return error, but should be thread-safe
 		}()
 	}

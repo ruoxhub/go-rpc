@@ -1,4 +1,4 @@
-// Sekiro RPC Server - Go Implementation
+// Rpc RPC Server - Go Implementation
 package main
 
 import (
@@ -37,7 +37,7 @@ func main() {
 
 	srv := server.NewServer(config)
 
-	fmt.Printf("Starting Sekiro RPC Server...\n")
+	fmt.Printf("Starting Rpc RPC Server...\n")
 	fmt.Printf("Host: %s, Port: %d\n", config.Host, config.Port)
 
 	if err := srv.Start(); err != nil {

@@ -50,7 +50,7 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 
 	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
-	// 使用完整的 Sekiro WebSocket 处理器处理连接
+	// 使用完整的 Rpc WebSocket 处理器处理连接
 	ctx := context.Background()
 	h.sekiroHandler.HandleConnection(ctx, wsConn, group, clientID)
 }
@@ -98,7 +98,7 @@ func (h *WebSocketHandler) HandleWebSocketUpgrade(c *gin.Context, onConnect func
 
 	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
 
-	// 启动连接处理器（使用完整的 Sekiro WebSocket 处理器）
+	// 启动连接处理器（使用完整的 Rpc WebSocket 处理器）
 	go func() {
 		defer conn.Close()
 		ctx := context.Background()

@@ -1,4 +1,4 @@
-// Package eventbus implements event bus for Sekiro client events
+// Package eventbus implements event bus for Rpc client events
 package eventbus
 
 import (

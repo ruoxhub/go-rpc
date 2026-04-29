@@ -5,13 +5,13 @@ using System.IO;
 using System.Text;
 using System.Linq;
 
-namespace SekiroClientDotnet
+namespace RpcClientDotnet
 {
     /// <summary>
-    /// Sekiro数据包
+    /// Rpc数据包
     /// 可考察 https://sekiro.iinti.cn/sekiro-doc/03_developer/1.protocol.html
     /// </summary>
-    public class SekiroPacket
+    public class RpcPacket
     {
         /// <summary>
         /// 消息类型
@@ -33,12 +33,12 @@ namespace SekiroClientDotnet
         /// </summary>
         public Dictionary<string, string> Headers { get; set; } = new Dictionary<string, string>();
 
-        public SekiroPacket()
+        public RpcPacket()
         {
 
         }
 
-        public SekiroPacket(byte msgType, int seq)
+        public RpcPacket(byte msgType, int seq)
         {
             this.MessageType = msgType;
             this.Seq = seq;
@@ -50,7 +50,7 @@ namespace SekiroClientDotnet
         public byte[] ToBuffer()
         {
             var buffer = new List<byte>();
-            buffer.AddRange(System.Text.Encoding.UTF8.GetBytes(SekiroConstant.Magic));
+            buffer.AddRange(System.Text.Encoding.UTF8.GetBytes(RpcConstant.Magic));
             var encode_headers = new List<byte[]>();
             var body_length = 1 + 4 + 1;
             foreach (var item in this.Headers)
@@ -121,7 +121,7 @@ namespace SekiroClientDotnet
         /// </summary>
         public static byte[] GetRegPacketBuffer(string groupName, string clientId)
         {
-            var regPacket = new SekiroPacket();
+            var regPacket = new RpcPacket();
             regPacket.Seq = -1;
             regPacket.Headers.Add("SEKIRO_GROUP", groupName);
             regPacket.Headers.Add("SEKIRO_CLIENT_ID", clientId);
@@ -133,9 +133,9 @@ namespace SekiroClientDotnet
         /// <summary>
         /// Bytes 解数据包
         /// </summary>
-        public static SekiroPacket ToSekiroPacket(byte[] buffer, int bufferLen)
+        public static RpcPacket ToRpcPacket(byte[] buffer, int bufferLen)
         {
-            SekiroPacket sekiroPacket = new SekiroPacket();
+            RpcPacket sekiroPacket = new RpcPacket();
             using (var stream = new MemoryStream(buffer))
             {
                 sekiroPacket.MessageType = ReadMsgType(stream);
@@ -149,7 +149,7 @@ namespace SekiroClientDotnet
                 {
                     // ToDo read header
                 }
-                var bodyLen = bufferLen - SekiroConstant.MsgTypeLen - SekiroConstant.SeqIdLen - SekiroConstant.HeaderSizeLen - HeadersSize;
+                var bodyLen = bufferLen - RpcConstant.MsgTypeLen - RpcConstant.SeqIdLen - RpcConstant.HeaderSizeLen - HeadersSize;
                 var bodyBuffer = new byte[bodyLen];
                 stream.Read(bodyBuffer, 0, bodyBuffer.Length);
                 sekiroPacket.Data = bodyBuffer;
@@ -165,7 +165,7 @@ namespace SekiroClientDotnet
         /// </summary>
         private static int ReadHeadsSize(MemoryStream stream)
         {
-            var headersSize = new byte[SekiroConstant.HeaderSizeLen];
+            var headersSize = new byte[RpcConstant.HeaderSizeLen];
             stream.Read(headersSize, 0, headersSize.Length);
             var HeadersSize = (int)(headersSize[0]);
             return HeadersSize;
@@ -176,7 +176,7 @@ namespace SekiroClientDotnet
         /// </summary>
         private static int ReadSeq(MemoryStream stream)
         {
-            var seqIdBuffer = new byte[SekiroConstant.SeqIdLen];
+            var seqIdBuffer = new byte[RpcConstant.SeqIdLen];
             stream.Read(seqIdBuffer, 0, seqIdBuffer.Length);
             if (BitConverter.IsLittleEndian)
             {
@@ -192,8 +192,8 @@ namespace SekiroClientDotnet
         /// </summary>
         private static byte ReadMsgType(MemoryStream stream)
         {
-            byte[] typeBuffer = new byte[SekiroConstant.MsgTypeLen];
-            stream.Read(typeBuffer, 0, SekiroConstant.MsgTypeLen);
+            byte[] typeBuffer = new byte[RpcConstant.MsgTypeLen];
+            stream.Read(typeBuffer, 0, RpcConstant.MsgTypeLen);
             return typeBuffer[0];
         }
     }
@@ -220,7 +220,7 @@ namespace SekiroClientDotnet
     /// <summary>
     /// 常量池
     /// </summary>
-    public static class SekiroConstant
+    public static class RpcConstant
     {
         /// <summary>
         /// 

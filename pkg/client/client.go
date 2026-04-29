@@ -1,4 +1,4 @@
-// Package client implements the Sekiro client SDK
+// Package client implements the Rpc client SDK
 package client
 
 import (
@@ -13,8 +13,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
-// SekiroClient represents a Sekiro client connection
-type SekiroClient struct {
+// RpcClient represents a Rpc client connection
+type RpcClient struct {
 	Group           string
 	ClientID        string
 	ServerHost      string
@@ -32,12 +32,12 @@ type clientConnection struct {
 	closed      bool
 	mu          sync.Mutex
 	sendSeq     int32
-	respWaiters map[int32]chan *protocol.SekiroPacket
+	respWaiters map[int32]chan *protocol.RpcPacket
 }
 
-// NewSekiroClient creates a new SekiroClient
-func NewSekiroClient(group, clientID, serverHost string, serverPort int) *SekiroClient {
-	return &SekiroClient{
+// NewRpcClient creates a new RpcClient
+func NewRpcClient(group, clientID, serverHost string, serverPort int) *RpcClient {
+	return &RpcClient{
 		Group:           group,
 		ClientID:        clientID,
 		ServerHost:      serverHost,
@@ -47,7 +47,7 @@ func NewSekiroClient(group, clientID, serverHost string, serverPort int) *Sekiro
 }
 
 // Start connects to the server and starts handling messages
-func (c *SekiroClient) Start() error {
+func (c *RpcClient) Start() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -65,10 +65,10 @@ func (c *SekiroClient) Start() error {
 	c.Connection = &clientConnection{
 		conn:        conn,
 		reader:      bufio.NewReader(conn),
-		respWaiters: make(map[int32]chan *protocol.SekiroPacket),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 	}
 
-	logger.Infof("Connected to Sekiro server at %s", addr)
+	logger.Infof("Connected to Rpc server at %s", addr)
 
 	// Send registration packet
 	if err := c.sendRegister(); err != nil {
@@ -83,7 +83,7 @@ func (c *SekiroClient) Start() error {
 }
 
 // sendRegister sends registration packet to server
-func (c *SekiroClient) sendRegister() error {
+func (c *RpcClient) sendRegister() error {
 	packet := protocol.PacketTypeRegister.NewPacket()
 	packet.AddHeader("group", c.Group)
 	packet.AddHeader("clientId", c.ClientID)
@@ -91,7 +91,7 @@ func (c *SekiroClient) sendRegister() error {
 }
 
 // readLoop reads packets from the server
-func (c *SekiroClient) readLoop() {
+func (c *RpcClient) readLoop() {
 	for {
 		packet, err := c.Connection.receive(c.compressManager)
 		if err != nil {
@@ -110,10 +110,10 @@ func (c *SekiroClient) readLoop() {
 }
 
 // handlePacket handles received packets
-func (c *SekiroClient) handlePacket(packet *protocol.SekiroPacket) {
-	logger.Debugf("Received packet: type=%s", protocol.SekiroPacketType(packet.Type))
+func (c *RpcClient) handlePacket(packet *protocol.RpcPacket) {
+	logger.Debugf("Received packet: type=%s", protocol.RpcPacketType(packet.Type))
 
-	switch protocol.SekiroPacketType(packet.Type) {
+	switch protocol.RpcPacketType(packet.Type) {
 	case protocol.PacketTypeHeartbeat:
 		// Echo heartbeat
 		c.Connection.send(packet)
@@ -129,18 +129,18 @@ func (c *SekiroClient) handlePacket(packet *protocol.SekiroPacket) {
 }
 
 // handleInvoke handles invoke request
-func (c *SekiroClient) handleInvoke(packet *protocol.SekiroPacket) {
+func (c *RpcClient) handleInvoke(packet *protocol.RpcPacket) {
 	// User should implement their own handler
 	logger.Debug("Invoke request received")
 }
 
 // handleCommand handles command
-func (c *SekiroClient) handleCommand(packet *protocol.SekiroPacket) {
+func (c *RpcClient) handleCommand(packet *protocol.RpcPacket) {
 	logger.Debug("Command received")
 }
 
 // handleDisconnect handles disconnection
-func (c *SekiroClient) handleDisconnect() {
+func (c *RpcClient) handleDisconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -154,7 +154,7 @@ func (c *SekiroClient) handleDisconnect() {
 }
 
 // notifyDisconnect notifies all waiting responses
-func (c *SekiroClient) notifyDisconnect() {
+func (c *RpcClient) notifyDisconnect() {
 	if c.Connection == nil {
 		return
 	}
@@ -169,7 +169,7 @@ func (c *SekiroClient) notifyDisconnect() {
 }
 
 // Destroy destroys the client
-func (c *SekiroClient) Destroy(waitSeconds int64) {
+func (c *RpcClient) Destroy(waitSeconds int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -181,7 +181,7 @@ func (c *SekiroClient) Destroy(waitSeconds int64) {
 }
 
 // send sends a packet
-func (c *clientConnection) send(packet *protocol.SekiroPacket) error {
+func (c *clientConnection) send(packet *protocol.RpcPacket) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -200,7 +200,7 @@ func (c *clientConnection) send(packet *protocol.SekiroPacket) error {
 }
 
 // receive receives a packet
-func (c *clientConnection) receive(compressManager *compress.CompressorManager) (*protocol.SekiroPacket, error) {
+func (c *clientConnection) receive(compressManager *compress.CompressorManager) (*protocol.RpcPacket, error) {
 	packet, err := protocol.Decode(c.reader)
 	if err != nil {
 		return nil, err
@@ -242,7 +242,7 @@ func (w *bufWriter) Write(p []byte) (n int, err error) {
 type RegisterHandler func(request []byte) ([]byte, error)
 
 // Register registers a handler for the client
-func (c *SekiroClient) Register(handler RegisterHandler) {
+func (c *RpcClient) Register(handler RegisterHandler) {
 	// Implementation for handling invocations
 	_ = handler
 }

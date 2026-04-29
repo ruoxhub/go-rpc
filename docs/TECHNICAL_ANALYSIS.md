@@ -1,10 +1,10 @@
-# Sekiro RPC 项目全面技术分析、架构解构与二次开发规划文档
+# Rpc RPC 项目全面技术分析、架构解构与二次开发规划文档
 
 ## 1 项目整体与核心模块分析
 
 ### 1.1 项目概述
 
-Sekiro RPC 是一个多语言、分布式、网络拓扑无关的服务发布平台，采用 Go 语言实现。该项目是 Java 版本 Sekiro 的 Go 语言移植版本，支持 WebSocket 长连接通信、HTTP API 调用、负载均衡和分组管理等核心功能。项目的技术栈选择体现了现代化服务端开发的最佳实践：使用 Gin 框架处理 HTTP 请求和中间件，采用 gorilla/websocket 实现 WebSocket 通信，通过 GORM 操作 PostgreSQL 数据库，使用 uber-go/zap 进行结构化日志记录。
+Rpc RPC 是一个多语言、分布式、网络拓扑无关的服务发布平台，采用 Go 语言实现。该项目是 Java 版本 Rpc 的 Go 语言移植版本，支持 WebSocket 长连接通信、HTTP API 调用、负载均衡和分组管理等核心功能。项目的技术栈选择体现了现代化服务端开发的最佳实践：使用 Gin 框架处理 HTTP 请求和中间件，采用 gorilla/websocket 实现 WebSocket 通信，通过 GORM 操作 PostgreSQL 数据库，使用 uber-go/zap 进行结构化日志记录。
 
 项目的核心设计理念是将远程客户端设备作为服务端能力的延伸，通过统一的 RPC 调用机制实现对分布在全球各地的客户端的远程控制和数据采集。这种架构特别适合需要大规模设备管理和数据收集的场景，如浏览器自动化、爬虫调度、远程执行等。
 
@@ -18,7 +18,7 @@ Sekiro RPC 是一个多语言、分布式、网络拓扑无关的服务发布平
 
 #### 1.2.2 客户端管理模块（pkg/server/client/）
 
-客户端管理模块采用了分层设计，包含三个核心结构：ClientManager 负责管理所有的分组，SekiroGroup 负责管理分组内的客户端，SekiroClient 代表单个客户端连接。ClientManager 使用读写锁（sync.RWMutex）保护分组映射表，提供了分组创建、客户端注册、注销、查询等操作。SekiroGroup 内部维护了在线客户端和离线客户端两个列表，并实现了基于轮询的客户端分配算法。
+客户端管理模块采用了分层设计，包含三个核心结构：ClientManager 负责管理所有的分组，RpcGroup 负责管理分组内的客户端，RpcClient 代表单个客户端连接。ClientManager 使用读写锁（sync.RWMutex）保护分组映射表，提供了分组创建、客户端注册、注销、查询等操作。RpcGroup 内部维护了在线客户端和离线客户端两个列表，并实现了基于轮询的客户端分配算法。
 
 客户端管理模块采用了双重检查锁定（Double-Check Locking）模式来确保线程安全：在 getOrCreateGroup 方法中，首先使用读锁尝试获取分组，如果不存在则升级为写锁进行创建操作，这种方式在分组已存在的常见场景下避免了不必要的锁竞争。客户端的健康状态通过 MarkSuccess 和 MarkFailure 方法进行跟踪，连续失败三次的客户端会被标记为不健康，在路由选择时会被优先跳过。
 
@@ -36,7 +36,7 @@ API 处理模块负责处理所有的 HTTP API 请求，是系统的请求入口
 
 #### 1.2.5 协议模块（pkg/protocol/）
 
-协议模块定义了 Sekiro  RPC 通信协议的数据包格式和编解码逻辑。数据包采用二进制格式，包含魔数（Magic）、长度（Length）、类型（Type）、序列号（SerialNumber）、头部（Headers）和数据（Data）六个部分。协议支持多种包类型，包括心跳包（HEARTBEAT）、客户端注册（C_REGISTER）、调用响应（C_INVOKE_RESPONSE）、客户端下线（C_OFFLINE）、服务器调用（S_INVOKE）和调用端请求（I_INVOKE）。
+协议模块定义了 Rpc  RPC 通信协议的数据包格式和编解码逻辑。数据包采用二进制格式，包含魔数（Magic）、长度（Length）、类型（Type）、序列号（SerialNumber）、头部（Headers）和数据（Data）六个部分。协议支持多种包类型，包括心跳包（HEARTBEAT）、客户端注册（C_REGISTER）、调用响应（C_INVOKE_RESPONSE）、客户端下线（C_OFFLINE）、服务器调用（S_INVOKE）和调用端请求（I_INVOKE）。
 
 协议模块的设计体现了良好的关注点分离：PacketType 枚举定义了所有支持的包类型，每个类型都有对应的 NewPacket 方法创建新数据包。这种设计使得添加新的包类型非常方便，只需要定义新的枚举值和对应的处理逻辑即可。
 
@@ -127,7 +127,7 @@ graph TB
         HTTPS[HTTPS 终端]
     end
     
-    subgraph Server["Sekiro 服务器"]
+    subgraph Server["Rpc 服务器"]
         subgraph API["API 层"]
             Gin[Gin HTTP 服务器]
             WSUpgrader[WebSocket 升级器]
@@ -194,8 +194,8 @@ sequenceDiagram
     participant S as API Handler
     participant R as Router
     participant CM as ClientManager
-    participant G as SekiroGroup
-    participant CL as SekiroClient
+    participant G as RpcGroup
+    participant CL as RpcClient
     participant WS as WebSocket
     participant TM as TimeoutManager
 
@@ -344,8 +344,8 @@ sekiro-go/
 │
 ├── pkg/                              # 核心业务代码包
 │   ├── client/                        # 客户端 SDK
-│   │   ├── client.go                  # SekiroClient 实现
-│   │   └── invoker.go                  # SekiroInvoker 调用端实现
+│   │   ├── client.go                  # RpcClient 实现
+│   │   └── invoker.go                  # RpcInvoker 调用端实现
 │   │
 │   ├── compress/                      # 压缩算法模块
 │   │   ├── gzip.go                     # Gzip 压缩实现
@@ -388,7 +388,7 @@ sekiro-go/
 │   │   ├── detector/                   # 协议检测
 │   │   │   ├── detector.go             # 检测器主逻辑
 │   │   │   ├── http_matcher.go         # HTTP 协议匹配
-│   │   │   └── sekiro_matcher.go       # Sekiro 协议匹配
+│   │   │   └── sekiro_matcher.go       # Rpc 协议匹配
 │   │   │
 │   │   ├── flow/                       # 流量控制
 │   │   │   ├── backoff.go              # 退避算法
@@ -510,7 +510,7 @@ sekiro-go/
 
 #### 6.1.1 所需软件与版本要求
 
-开发 Sekiro RPC 项目需要以下软件环境。首先是 Go 语言环境，版本要求 1.25.0 或更高版本。可以通过以下命令检查当前 Go 版本：
+开发 Rpc RPC 项目需要以下软件环境。首先是 Go 语言环境，版本要求 1.25.0 或更高版本。可以通过以下命令检查当前 Go 版本：
 
 ```bash
 go version
@@ -630,7 +630,7 @@ docker-compose up -d
 
 这将启动 PostgreSQL 数据库服务。
 
-#### 6.2.3 启动 Sekiro 服务器
+#### 6.2.3 启动 Rpc 服务器
 
 使用以下命令启动服务器：
 
@@ -654,13 +654,13 @@ go run cmd/server/main.go -port 8080 -debug
 服务器启动成功的标志是看到类似以下的输出：
 
 ```
-Starting Sekiro RPC Server...
+Starting Rpc RPC Server...
 Host: 0.0.0.0, Port: 5612
 INFO: Database migration completed successfully
 INFO: Config service started successfully
-INFO: Sekiro server starting on 0.0.0.0:5612
+INFO: Rpc server starting on 0.0.0.0:5612
 INFO: CORS enabled: true
-INFO: Welcome to use Sekiro framework
+INFO: Welcome to use Rpc framework
 ```
 
 #### 6.2.4 启动客户端
@@ -694,7 +694,7 @@ curl -X POST http://localhost:5612/business/invoke \
   -d '{
     "group": "test-group",
     "action": "test",
-    "params": {"message": "Hello Sekiro"}
+    "params": {"message": "Hello Rpc"}
   }'
 
 # 或者使用 GET 请求
@@ -703,7 +703,7 @@ curl "http://localhost:5612/business/invoke?group=test-group&action=test&params=
 
 ### 6.3 最小改动示例（Hello World）
 
-下面演示如何在 Sekiro 项目中添加一个新的简单功能：添加一个返回服务器状态的 API 端点。
+下面演示如何在 Rpc 项目中添加一个新的简单功能：添加一个返回服务器状态的 API 端点。
 
 #### 6.3.1 涉及的文件位置
 
@@ -816,8 +816,8 @@ go test -run TestHandleInvoke ./pkg/server/api/...
 
 ## 7 总结
 
-本技术分析文档对 Sekiro RPC 项目进行了全面的架构解构，涵盖了项目概述、核心模块分析、设计模式识别、可视化图表、架构优化建议、目录结构解析和新手入门指南等六个主要方面。
+本技术分析文档对 Rpc RPC 项目进行了全面的架构解构，涵盖了项目概述、核心模块分析、设计模式识别、可视化图表、架构优化建议、目录结构解析和新手入门指南等六个主要方面。
 
 通过分析，我们发现项目在架构上采用了清晰的分层设计，模块之间职责较为明确。但在代码层面存在一些可以改进的地方，如 API 处理模块的代码重复、依赖注入的缺失、可观测性功能的不足等。建议的实施计划优先级为：首先消除代码重复提高可维护性，然后引入依赖注入提升可测试性，最后完善可观测性功能支持生产运维。
 
-项目的整体质量良好，代码结构清晰，注释充分，测试覆盖较全面。作为一个分布式 RPC 框架，Sekiro 展现了良好的设计思路和工程实践，适合作为二次开发的基础。
+项目的整体质量良好，代码结构清晰，注释充分，测试覆盖较全面。作为一个分布式 RPC 框架，Rpc 展现了良好的设计思路和工程实践，适合作为二次开发的基础。

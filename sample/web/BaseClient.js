@@ -23,7 +23,7 @@
  * @typedef {Object} ClientConfig
  * @property {string} platform - 平台名称
  * @property {string|string[]} hostnames - 支持的域名
- * @property {string} [group] - Sekiro group 名称
+ * @property {string} [group] - Rpc group 名称
  * @property {string} [logPrefix] - 日志前缀
  * @property {Object} [endpoints] - API 端点映射
  * @property {Object} [actions] - Action 配置
@@ -64,7 +64,7 @@
 
 /**
  * @callback ActionHandler
- * @param {Object} request - Sekiro 请求对象
+ * @param {Object} request - Rpc 请求对象
  * @param {Function} resolve - 成功回调
  * @param {Function} reject - 失败回调
  */
@@ -230,7 +230,7 @@ class BaseClient {
   }
 
   /**
-   * 启动 Sekiro 客户端
+   * 启动 Rpc 客户端
    */
   async start() {
     try {
@@ -245,22 +245,22 @@ class BaseClient {
       }
 
       const wsURL = this.buildWebSocketURL();
-      this.log(`连接 Sekiro: ${wsURL}`);
+      this.log(`连接 Rpc: ${wsURL}`);
 
-      this.client = new window.SekiroClient(wsURL);
+      this.client = new window.RpcClient(wsURL);
       this.registerAllActions();
       this.isInitialized = true;
 
       // 延迟检查连接状态，给 WebSocket 握手留出时间
       setTimeout(() => {
         if (this.client && this.client.isConnected()) {
-          this.log('Sekiro 客户端连接成功');
+          this.log('Rpc 客户端连接成功');
         } else {
-          this.log('Sekiro 客户端已启动，但 WebSocket 尚未连接（将自动重连）', 'warn');
+          this.log('Rpc 客户端已启动，但 WebSocket 尚未连接（将自动重连）', 'warn');
         }
       }, 3000);
     } catch (error) {
-      this.log(`Sekiro 客户端初始化失败：${error instanceof Error ? error.message : error}`, 'error');
+      this.log(`Rpc 客户端初始化失败：${error instanceof Error ? error.message : error}`, 'error');
     }
   }
 
@@ -285,7 +285,7 @@ class BaseClient {
     this.log(`连接新地址：${wsURL}`);
 
     try {
-      this.client = new window.SekiroClient(wsURL);
+      this.client = new window.RpcClient(wsURL);
       this.registerAllActions();
       this.log('重新连接请求已发送（将自动重连）');
     } catch (error) {

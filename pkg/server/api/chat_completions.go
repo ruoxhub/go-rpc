@@ -28,7 +28,7 @@ type ChatCompletionRequest struct {
 	Group          string                 `json:"group,omitempty"`
 	ClientID       string                 `json:"clientId,omitempty"`
 	ConstantInvoke string                 `json:"constantInvoke,omitempty"`
-	SekiroToken    string                 `json:"sekiro_token,omitempty"`
+	RpcToken    string                 `json:"sekiro_token,omitempty"`
 	Raw            map[string]interface{} `json:"-"`
 	Params         map[string]interface{} `json:"-"`
 }
@@ -46,11 +46,11 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	if req.SekiroToken == "" {
-		req.SekiroToken = resolveAccessToken(c)
+	if req.RpcToken == "" {
+		req.RpcToken = resolveAccessToken(c)
 	}
 
-	if !h.authorizeRegisteredGroupAccess(c, req.Group, req.SekiroToken) {
+	if !h.authorizeRegisteredGroupAccess(c, req.Group, req.RpcToken) {
 		return
 	}
 
@@ -129,7 +129,7 @@ func parseChatCompletionRequest(c *gin.Context) (*ChatCompletionRequest, error) 
 		Group:          firstNonEmpty(c.Query("group"), stringFromRaw(raw["group"])),
 		ClientID:       firstNonEmpty(c.Query("clientId"), stringFromRaw(raw["clientId"])),
 		ConstantInvoke: firstNonEmpty(c.Query("constantInvoke"), stringFromRaw(raw["constantInvoke"])),
-		SekiroToken:    firstNonEmpty(c.Query("sekiro_token"), stringFromRaw(raw["sekiro_token"])),
+		RpcToken:    firstNonEmpty(c.Query("sekiro_token"), stringFromRaw(raw["sekiro_token"])),
 		Raw:            raw,
 		Params:         params,
 	}
@@ -146,7 +146,7 @@ func parseChatCompletionRequest(c *gin.Context) (*ChatCompletionRequest, error) 
 	return req, nil
 }
 
-func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.SekiroClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
+func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.RpcClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
 	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
@@ -196,7 +196,7 @@ func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatComp
 	}
 }
 
-func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.SekiroClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
+func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.RpcClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
 	stream := h.timeoutManager.RegisterStream(sequence, req.Group, targetClient.ClientID, timeout)
 	defer h.timeoutManager.RemoveStream(sequence)
 

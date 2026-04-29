@@ -6,12 +6,12 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
-namespace SekiroClientDotnet
+namespace RpcClientDotnet
 {
     /// <summary>
     /// 
     /// </summary>
-    public partial class SekiroClient
+    public partial class RpcClient
     {
         /// <summary>
         /// 服务器地址
@@ -42,14 +42,14 @@ namespace SekiroClientDotnet
         /// <summary>
         /// Client初始化
         /// </summary>
-        public SekiroClient(string host, int port, string groupName, string clientId = "")
+        public RpcClient(string host, int port, string groupName, string clientId = "")
         {
             this.serverHost = host;
             this.serverPort = port;
             this.groupName = groupName;
             this.clientId = !string.IsNullOrEmpty(clientId) ? clientId : Guid.NewGuid().ToString();
             this.FuncList = new Dictionary<string, Func<JToken, Task<byte[]>>>();
-            Serilog.Log.Information($"SekiroClient init finish,clientId:{this.clientId}");
+            Serilog.Log.Information($"RpcClient init finish,clientId:{this.clientId}");
 
         }
 
@@ -83,14 +83,14 @@ namespace SekiroClientDotnet
                         {
                             // 检查MagicMsg
                             await CheckMagicMsg();
-                            SekiroPacket sekiroPacket = await ReadPacket();
+                            RpcPacket sekiroPacket = await ReadPacket();
                             if (sekiroPacket.MessageType == MessageTypes.Heartbeat)
                             {
                                 await ReportHeartbeatMsg(netStream, sekiroPacket);
                                 continue;
                             }
                             var actionResult = await ExecFunc(sekiroPacket);
-                            SekiroPacket replyMsg = ToReplyPacket(sekiroPacket, actionResult);
+                            RpcPacket replyMsg = ToReplyPacket(sekiroPacket, actionResult);
                             var respBuffer = replyMsg.ToBuffer();
                             await netStream.WriteAsync(respBuffer, 0, respBuffer.Length);
                             Serilog.Log.Information($"send seq :{sekiroPacket.Seq} response successfully.");
@@ -117,9 +117,9 @@ namespace SekiroClientDotnet
 
         }
 
-        private SekiroPacket ToReplyPacket(SekiroPacket sekiroPacket, byte[] funcResult)
+        private RpcPacket ToReplyPacket(RpcPacket sekiroPacket, byte[] funcResult)
         {
-            var replyMsg = new SekiroPacket(MessageTypes.SendToServer, sekiroPacket.Seq);
+            var replyMsg = new RpcPacket(MessageTypes.SendToServer, sekiroPacket.Seq);
             replyMsg.Headers.Add("PAYLOAD_CONTENT_TYPE", "PAYLOAD_CONTENT_TYPE");
             replyMsg.Headers.Add("SEKIRO_GROUP", this.groupName);
             replyMsg.Headers.Add("SEKIRO_CLIENT_ID", this.clientId);

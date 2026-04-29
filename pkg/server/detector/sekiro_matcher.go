@@ -9,24 +9,24 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
-// SekiroMatcher matches Sekiro binary protocol
-type SekiroMatcher struct {
+// RpcMatcher matches Rpc binary protocol
+type RpcMatcher struct {
 	compressManager *compress.CompressorManager
 }
 
-// NewSekiroMatcher creates a new SekiroMatcher
-func NewSekiroMatcher() *SekiroMatcher {
-	return &SekiroMatcher{
+// NewRpcMatcher creates a new RpcMatcher
+func NewRpcMatcher() *RpcMatcher {
+	return &RpcMatcher{
 		compressManager: compress.NewCompressorManager(),
 	}
 }
 
-// Magic header length for Sekiro protocol
-const SekiroMagicLength = 8
+// Magic header length for Rpc protocol
+const RpcMagicLength = 8
 
-// Match checks if the buffer matches Sekiro protocol
-func (m *SekiroMatcher) Match(buf []byte) int {
-	if len(buf) < SekiroMagicLength {
+// Match checks if the buffer matches Rpc protocol
+func (m *RpcMatcher) Match(buf []byte) int {
+	if len(buf) < RpcMagicLength {
 		return Pending
 	}
 
@@ -39,8 +39,8 @@ func (m *SekiroMatcher) Match(buf []byte) int {
 	return Mismatch
 }
 
-// HandleConnection handles the Sekiro protocol connection
-func (m *SekiroMatcher) HandleConnection(ctx context.Context, conn net.Conn, firstRead []byte) error {
-	handler := newSekiroHandler(conn, m.compressManager, firstRead)
+// HandleConnection handles the Rpc protocol connection
+func (m *RpcMatcher) HandleConnection(ctx context.Context, conn net.Conn, firstRead []byte) error {
+	handler := newRpcHandler(conn, m.compressManager, firstRead)
 	return handler.Handle(ctx)
 }

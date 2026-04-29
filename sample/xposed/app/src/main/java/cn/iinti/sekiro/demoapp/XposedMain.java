@@ -2,10 +2,10 @@ package cn.iinti.sekiro.demoapp;
 
 import java.util.UUID;
 
-import cn.iinti.sekiro3.business.api.SekiroClient;
+import cn.iinti.sekiro3.business.api.RpcClient;
 import cn.iinti.sekiro3.business.api.interfaze.ActionHandler;
-import cn.iinti.sekiro3.business.api.interfaze.SekiroRequest;
-import cn.iinti.sekiro3.business.api.interfaze.SekiroResponse;
+import cn.iinti.sekiro3.business.api.interfaze.RpcRequest;
+import cn.iinti.sekiro3.business.api.interfaze.RpcResponse;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -22,17 +22,17 @@ public class XposedMain implements IXposedHookLoadPackage {
             if (loadPackageParam.packageName.equals("com.xxx.xxx")) {
                 // xposed环境下使用sekiro
                 //http://sekiro.iinti.cn/business/invoke?group=test&action=testAction&param=testparm
-                new SekiroClient("test", UUID.randomUUID().toString())
-                        .setupSekiroRequestInitializer((sekiroRequest, handlerRegistry) ->
+                new RpcClient("test", UUID.randomUUID().toString())
+                        .setupRpcRequestInitializer((sekiroRequest, handlerRegistry) ->
                                 // 注册一个接口，名为testAction
-                                handlerRegistry.registerSekiroHandler(new ActionHandler() {
+                                handlerRegistry.registerRpcHandler(new ActionHandler() {
                                     @Override
                                     public String action() {
                                         return "testAction";
                                     }
 
                                     @Override
-                                    public void handleRequest(SekiroRequest sekiroRequest, SekiroResponse sekiroResponse) {
+                                    public void handleRequest(RpcRequest sekiroRequest, RpcResponse sekiroResponse) {
                                         // 接口处理逻辑，我们不做任何处理，直接返回字符串：ok
                                         sekiroResponse.success("ok");
                                     }

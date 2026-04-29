@@ -1,12 +1,12 @@
 <html>
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset = utf-8"/>
-    <title>Sekiro Web测试</title>
+    <title>Rpc Web测试</title>
     <script type="text/javascript" src="sekiroWeb.js"></script>
     <script type="text/javascript">
-        var client = new SekiroClient("ws://127.0.0.1:5612/business/register?group=demo-ws&clientId=" + Math.random());
+        var client = new RpcClient("ws://127.0.0.1:5612/business/register?group=demo-ws&clientId=" + Math.random());
         client.registerAction("clientTime", function (request, resolve, reject) {
-            resolve("SekiroMessage：" + new Date());
+            resolve("RpcMessage：" + new Date());
         });
 
         client.registerAction("executeJs", function (request, resolve, reject) {
@@ -47,18 +47,18 @@
     测试当前用例的时候，建议开启浏览器控制台
 </p>
 <p>
-    然后通过SekiroClient和Sekiro服务器通信，即可直接RPC调用浏览器内部方法
+    然后通过RpcClient和Rpc服务器通信，即可直接RPC调用浏览器内部方法
 </p>
 
 <pre>
-var client = new SekiroClient("wss://sekiro.iinti.cn:5612/business/register?group=demo-ws&clientId="+Math.random());
+var client = new RpcClient("wss://sekiro.iinti.cn:5612/business/register?group=demo-ws&clientId="+Math.random());
 client.registerAction("clientTime",function(request, resolve,reject ){
             resolve(""+new Date());
 })
 </pre>
 
 <p>
-    请注意，Sekiro JS RPC是Sekiro的扩展，依然需要遵循Sekiro的各种规则定义。
+    请注意，Rpc JS RPC是Rpc的扩展，依然需要遵循Rpc的各种规则定义。
 </p>
 
 </body>

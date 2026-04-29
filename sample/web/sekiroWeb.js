@@ -1,27 +1,27 @@
 /**
- * Sekiro WebSocket RPC 客户端
+ * Rpc WebSocket RPC 客户端
  *
- * 通过 WebSocket 与 Sekiro 服务器通信，实现远程数据抓取和自动化操作。
+ * 通过 WebSocket 与 Rpc 服务器通信，实现远程数据抓取和自动化操作。
  * 使用 IIFE 包裹以防止重复注入时 "Identifier has already been declared" 错误。
  */
 
 (function () {
   'use strict';
 
-  // 防止重复注入：如果 SekiroClient 已存在于 window 上，则跳过整个定义
-  if (typeof window !== 'undefined' && window.SekiroClient) {
+  // 防止重复注入：如果 RpcClient 已存在于 window 上，则跳过整个定义
+  if (typeof window !== 'undefined' && window.RpcClient) {
     return;
   }
 
 /**
- * @typedef {Object} SekiroRequest
+ * @typedef {Object} RpcRequest
  * @property {string} action - Action 名称
  * @property {Object} [params] - 请求参数
  * @property {string} [__sekiro_seq__] - 请求序列号
  */
 
 /**
- * @typedef {Object} SekiroResponse
+ * @typedef {Object} RpcResponse
  * @property {*} [data] - 响应数据
  * @property {number} [code] - 响应码
  * @property {number} [status] - 状态码
@@ -31,13 +31,13 @@
 
 /**
  * @callback ActionHandler
- * @param {SekiroRequest} request - 请求对象
+ * @param {RpcRequest} request - 请求对象
  * @param {Function} resolve - 成功回调
  * @param {Function} reject - 失败回调
  * @returns {void}
  */
 
-class SekiroClient {
+class RpcClient {
   /**
    * @param {string} wsURL - WebSocket 服务器地址
    */
@@ -74,12 +74,12 @@ class SekiroClient {
 
   /**
    * 默认 _execjs handler - 执行 JavaScript 代码
-   * @param {SekiroRequest} request - 请求对象
+   * @param {RpcRequest} request - 请求对象
    * @param {Function} resolve - 成功回调
    * @param {Function} reject - 失败回调
    */
   _execjsHandler(request, resolve, reject) {
-    // Sekiro 旧版本兼容：支持 param 和 code 字段
+    // Rpc 旧版本兼容：支持 param 和 code 字段
     const param = request.param || request.params || request.code || '';
     if (!param) {
       reject('缺少执行参数 param');
@@ -111,7 +111,7 @@ class SekiroClient {
    * @param {string} message - 日志消息
    */
   log(message) {
-    console.log(`[SekiroClient] ${message}`);
+    console.log(`[RpcClient] ${message}`);
   }
 
   /**
@@ -136,7 +136,7 @@ class SekiroClient {
 
       this.socket.onmessage = (event) => {
         try {
-          this.handleSekiroRequest(event.data);
+          this.handleRpcRequest(event.data);
         } catch (ex) {
           this.log(`处理消息异常：${ex}`);
         }
@@ -239,10 +239,10 @@ class SekiroClient {
   }
 
   /**
-   * 处理 Sekiro 请求
+   * 处理 Rpc 请求
    * @param {string} requestJson - JSON 格式的请求
    */
-  handleSekiroRequest(requestJson) {
+  handleRpcRequest(requestJson) {
     let request;
     try {
       request = JSON.parse(requestJson);
@@ -355,7 +355,7 @@ class SekiroClient {
    * 注册 Action 处理器
    * @param {string} action - Action 名称
    * @param {ActionHandler} handler - 处理函数
-   * @returns {SekiroClient} - 返回自身以支持链式调用
+   * @returns {RpcClient} - 返回自身以支持链式调用
    */
   registerAction(action, handler) {
     if (typeof action !== 'string') {
@@ -407,7 +407,7 @@ class SekiroClient {
 
 // 导出到 window 对象（用于 Content Script）
 if (typeof window !== 'undefined') {
-  window.SekiroClient = SekiroClient;
+  window.RpcClient = RpcClient;
 }
 
 })();

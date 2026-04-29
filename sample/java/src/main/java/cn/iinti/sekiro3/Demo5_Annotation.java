@@ -1,6 +1,6 @@
 package cn.iinti.sekiro3;
 
-import cn.iinti.sekiro3.business.api.ClusterSekiroClient;
+import cn.iinti.sekiro3.business.api.ClusterRpcClient;
 import cn.iinti.sekiro3.business.api.interfaze.*;
 
 /**
@@ -9,9 +9,9 @@ import cn.iinti.sekiro3.business.api.interfaze.*;
 public class Demo5_Annotation {
     public static void main(String[] args) throws InterruptedException {
         // http://sekiro.iinti.cn/business/invoke?group=test&action=test&sekiro_token=123
-        ClusterSekiroClient sekiroClient = new ClusterSekiroClient("test", new String[]{"sekiro.iinti.cn:5612"})
-                .setupSekiroRequestInitializer((sekiroRequest, handlerRegistry) ->
-                        handlerRegistry.registerSekiroHandler(new AnnotationActionHandler())
+        ClusterRpcClient sekiroClient = new ClusterRpcClient("test", new String[]{"sekiro.iinti.cn:5612"})
+                .setupRpcRequestInitializer((sekiroRequest, handlerRegistry) ->
+                        handlerRegistry.registerRpcHandler(new AnnotationActionHandler())
                 ).start();
 
         Thread.sleep(20000);
@@ -46,7 +46,7 @@ public class Demo5_Annotation {
         private Double requireParam;
 
         @Override
-        public void handleRequest(SekiroRequest sekiroRequest, SekiroResponse sekiroResponse) {
+        public void handleRequest(RpcRequest sekiroRequest, RpcResponse sekiroResponse) {
             sekiroResponse.success("param：" + param
                     + " intParam:" + intParam);
         }

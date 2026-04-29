@@ -2,16 +2,16 @@
 
 ```
 #import <Foundation/Foundation.h>
-#include "Sekiro.h"
+#include "Rpc.h"
 
-void test(NSDictionary *request, SekiroResponse *response) {
+void test(NSDictionary *request, RpcResponse *response) {
     [response success:[@"\"ok replay objective-c\""  dataUsingEncoding:NSUTF8StringEncoding]];
 }
 
 
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
-        SekiroClient *client = [[SekiroClient alloc] init:@"test-objective-c"];
+        RpcClient *client = [[RpcClient alloc] init:@"test-objective-c"];
         [client registerAction:@"testAction" handler: test];
         [client start];
         

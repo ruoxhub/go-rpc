@@ -1,4 +1,4 @@
-# AGENTS.md — Sekiro-Go
+# AGENTS.md — Rpc-Go
 
 ## Quick Start
 
@@ -20,7 +20,7 @@ go test ./pkg/compress/...
 go test ./pkg/server/client/...
 
 # Run a single test
-go test -run TestSekiroPacket ./pkg/protocol/...
+go test -run TestRpcPacket ./pkg/protocol/...
 go test -run TestGzipCompress ./pkg/compress/...
 
 # Start server (requires PostgreSQL)
@@ -53,7 +53,7 @@ cd web && npm run build                # outputs to web/dist/
 ```
 cmd/           → Entrypoints only, no business logic
 internal/      → Private packages (config, utils/logger) — not importable by external code
-pkg/client/    → SekiroClient + SekiroInvoker SDK (used by cmd/client, cmd/invoker)
+pkg/client/    → RpcClient + RpcInvoker SDK (used by cmd/client, cmd/invoker)
 pkg/protocol/  → Binary packet codec — shared between server and client
 pkg/compress/  → Gzip/Snappy/None compression — used by protocol layer
 pkg/database/  → Global *gorm.DB singleton + AutoMigrate
@@ -61,9 +61,9 @@ pkg/model/     → GORM models (UserInfo, GroupConfig, AlertRule, TraceRecord, e
 pkg/eventbus/  → Simple pub/sub event bus
 pkg/server/    → Server core, split into sub-packages:
   ├── api/          → Gin HTTP handlers + WebSocket upgrade
-  ├── client/       → ClientManager + SekiroGroup (actor-model via goroutine channels)
+  ├── client/       → ClientManager + RpcGroup (actor-model via goroutine channels)
   ├── config/       → Runtime config service (reads from DB sys_config table)
-  ├── detector/     → Protocol detection (Sekiro binary vs HTTP) on raw connections
+  ├── detector/     → Protocol detection (Rpc binary vs HTTP) on raw connections
   ├── flow/          → Rate limiter + backoff for empty queues
   ├── forwarder/    → TimeoutManager: tracks in-flight RPC calls with channels
   ├── handlers/     → Web management API handlers (user, group, metric, trace, alert, sysconfig)
@@ -74,7 +74,7 @@ pkg/server/    → Server core, split into sub-packages:
   └── websocket/    → WebSocket message handler (client registration, heartbeat, invoke dispatch)
 ```
 
-**Key constraint**: `pkg/server/client/group.go` uses an actor model — all group mutations go through `groupCommand` channel, NOT direct method calls. The `SekiroGroup` goroutine serializes all operations.
+**Key constraint**: `pkg/server/client/group.go` uses an actor model — all group mutations go through `groupCommand` channel, NOT direct method calls. The `RpcGroup` goroutine serializes all operations.
 
 ## Conventions
 
@@ -104,8 +104,8 @@ pkg/server/    → Server core, split into sub-packages:
 
 - **Port mismatch**: Vite dev proxy targets `:5613` but default server port is `:5612`. Either change `web/vite.config.js` or start server with `-port 5613`.
 - **`sample/demo-go/` has its own `go.mod`**: Module path `iinti.cn/sekiro` (not the main module). It's a standalone demo, not part of the main build.
-- **Protocol detector**: The server can accept both raw Sekiro binary protocol and HTTP/WebSocket on the same port. `pkg/server/detector/` peeks at the first bytes to decide.
-- **Health check defaults to 3 consecutive failures**: `SekiroClient` marks unhealthy after 3 fails. Route strategies skip unhealthy clients.
+- **Protocol detector**: The server can accept both raw Rpc binary protocol and HTTP/WebSocket on the same port. `pkg/server/detector/` peeks at the first bytes to decide.
+- **Health check defaults to 3 consecutive failures**: `RpcClient` marks unhealthy after 3 fails. Route strategies skip unhealthy clients.
 - **`web/dist/` must exist for `go build`**: The `//go:embed dist` directive will fail if `web/dist/` doesn't exist. Run `cd web && npm run build` first.
 - **No `.golangci.yml`**: No linter config in repo. If adding one, note the project uses `fmt.Errorf` with `%w` (not `errors.Wrap`).
 - **No CI workflows**: No `.github/workflows/`. Tests are run locally.

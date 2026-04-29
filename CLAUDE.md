@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Sekiro RPC - Go 语言实现，是一个多语言、分布式、网络拓扑无关的服务发布平台。这是 Java 版本 Sekiro 的 Go 语言实现。
+Rpc RPC - Go 语言实现，是一个多语言、分布式、网络拓扑无关的服务发布平台。这是 Java 版本 Rpc 的 Go 语言实现。
 
 **核心特性：**
 - 多语言支持（Go、Java 客户端）
@@ -50,7 +50,7 @@ go test ./pkg/protocol/...
 go test ./pkg/server/api/...
 
 # 运行单个测试
-go test -run TestSekiroPacket ./pkg/protocol/...
+go test -run TestRpcPacket ./pkg/protocol/...
 ```
 
 ### Web 前端命令
@@ -84,7 +84,7 @@ sekiro-go/
 │   └── utils/
 │       └── logger/       # zap 日志工具
 ├── pkg/
-│   ├── client/           # 客户端 SDK (SekiroClient, SekiroInvoker)
+│   ├── client/           # 客户端 SDK (RpcClient, RpcInvoker)
 │   ├── compress/         # 压缩算法 (Gzip, Snappy, None)
 │   ├── database/         # 数据库连接管理 (GORM + PostgreSQL)
 │   ├── eventbus/         # 事件总线
@@ -117,7 +117,7 @@ sekiro-go/
 | **api/http_server.go** | Gin HTTP 服务器封装 |
 | **api/websocket.go** | WebSocket 升级配置 |
 | **client/manager.go** | 客户端分组管理，支持轮询和指定客户端路由 |
-| **client/client.go** | SekiroClient 定义，包含健康检查机制 |
+| **client/client.go** | RpcClient 定义，包含健康检查机制 |
 | **client/group.go** | 分组管理逻辑 |
 | **router/strategy.go** | 三种路由策略（轮询、指定客户端、一致性 Hash） |
 | **forwarder/timeout.go** | 请求超时管理和追踪 |
@@ -134,8 +134,8 @@ sekiro-go/
 
 | 文件 | 说明 |
 |------|------|
-| **client.go** | SekiroClient - WebSocket 客户端，支持注册和请求处理 |
-| **invoker.go** | SekiroInvoker - 调用端，支持向服务器发送 RPC 调用 |
+| **client.go** | RpcClient - WebSocket 客户端，支持注册和请求处理 |
+| **invoker.go** | RpcInvoker - 调用端，支持向服务器发送 RPC 调用 |
 
 ### 协议层 (pkg/protocol)
 
@@ -473,7 +473,7 @@ database.InitFromConfig(
 
 ### 健康检查机制
 
-客户端 (SekiroClient) 实现了健康检查：
+客户端 (RpcClient) 实现了健康检查：
 - `MarkSuccess()` - 标记成功，重置失败计数
 - `MarkFailure()` - 标记失败，累加计数
 - 连续 3 次失败标记为不健康
@@ -545,7 +545,7 @@ npm run build
 
 ## 相关资源
 
-- [Sekiro Java 原版](https://github.com/yint-tech/sekiro)
+- [Rpc Java 原版](https://github.com/yint-tech/sekiro)
 - [Gin 框架文档](https://gin-gonic.com/)
 - [GORM 文档](https://gorm.io/)
 - [PostgreSQL 文档](https://www.postgresql.org/docs/)

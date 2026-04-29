@@ -5,15 +5,15 @@ import (
 	"testing"
 )
 
-func TestSekiroPacketEncodeDecode(t *testing.T) {
+func TestRpcPacketEncodeDecode(t *testing.T) {
 	tests := []struct {
 		name     string
-		packet   *SekiroPacket
+		packet   *RpcPacket
 		wantErr  bool
 	}{
 		{
 			name: "simple packet",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeHeartbeat),
 				SerialNumber: 123,
 				Headers:      map[string]string{"key1": "value1"},
@@ -22,7 +22,7 @@ func TestSekiroPacketEncodeDecode(t *testing.T) {
 		},
 		{
 			name: "empty packet",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeHeartbeat),
 				SerialNumber: 0,
 				Headers:      make(map[string]string),
@@ -31,7 +31,7 @@ func TestSekiroPacketEncodeDecode(t *testing.T) {
 		},
 		{
 			name: "multiple headers",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeRegister),
 				SerialNumber: 456,
 				Headers: map[string]string{
@@ -44,7 +44,7 @@ func TestSekiroPacketEncodeDecode(t *testing.T) {
 		},
 		{
 			name: "large data",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeSInvoke),
 				SerialNumber: 789,
 				Headers:      map[string]string{"api": "test"},
@@ -53,7 +53,7 @@ func TestSekiroPacketEncodeDecode(t *testing.T) {
 		},
 		{
 			name: "binary data",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeIInvoke),
 				SerialNumber: 999,
 				Headers:      make(map[string]string),
@@ -126,9 +126,9 @@ func TestDecodeTruncatedData(t *testing.T) {
 	}
 }
 
-func TestSekiroPacketTypeString(t *testing.T) {
+func TestRpcPacketTypeString(t *testing.T) {
 	tests := []struct {
-		packetType SekiroPacketType
+		packetType RpcPacketType
 		want       string
 	}{
 		{PacketTypeHeartbeat, "HEARTBEAT"},
@@ -144,13 +144,13 @@ func TestSekiroPacketTypeString(t *testing.T) {
 		{PacketTypeSInvokeConnected, "S_INVOKE_CONNECTED"},
 		{PacketTypeIConnect, "I_CONNECT"},
 		{PacketTypeIInvoke, "I_INVOKE"},
-		{SekiroPacketType(99), "UNKNOWN"},
+		{RpcPacketType(99), "UNKNOWN"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			if got := tt.packetType.String(); got != tt.want {
-				t.Errorf("SekiroPacketType(%d).String() = %q, want %q", tt.packetType, got, tt.want)
+				t.Errorf("RpcPacketType(%d).String() = %q, want %q", tt.packetType, got, tt.want)
 			}
 		})
 	}
@@ -164,7 +164,7 @@ func TestNewPacket(t *testing.T) {
 }
 
 func TestPacketBuilder(t *testing.T) {
-	packet := NewSekiroPacket().
+	packet := NewRpcPacket().
 		SetType(byte(PacketTypeRegister)).
 		SetSerialNumber(100).
 		AddHeader("group", "test").
@@ -189,7 +189,7 @@ func TestPacketBuilder(t *testing.T) {
 }
 
 func TestGetHeader(t *testing.T) {
-	packet := NewSekiroPacket()
+	packet := NewRpcPacket()
 	packet.AddHeader("key", "value")
 
 	if got := packet.GetHeader("key"); got != "value" {
@@ -201,7 +201,7 @@ func TestGetHeader(t *testing.T) {
 	}
 
 	// Test nil headers
-	emptyPacket := &SekiroPacket{}
+	emptyPacket := &RpcPacket{}
 	if got := emptyPacket.GetHeader("key"); got != "" {
 		t.Errorf("GetHeader() on nil headers = %s, want empty string", got)
 	}
@@ -210,7 +210,7 @@ func TestGetHeader(t *testing.T) {
 func TestEncodeWriteError(t *testing.T) {
 	// Create a writer that always fails
 	failWriter := &failWriter{}
-	packet := NewSekiroPacket()
+	packet := NewRpcPacket()
 	err := packet.Encode(failWriter)
 	if err == nil {
 		t.Error("Encode() expected error from failing writer, got nil")

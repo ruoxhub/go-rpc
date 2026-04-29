@@ -1,4 +1,4 @@
-// Package middleware provides HTTP middleware for Sekiro server
+// Package middleware provides HTTP middleware for Rpc server
 package middleware
 
 import (

@@ -50,12 +50,12 @@ func TestMagicNumber(t *testing.T) {
 func TestCalculateBodyLength(t *testing.T) {
 	tests := []struct {
 		name     string
-		packet   *SekiroPacket
+		packet   *RpcPacket
 		expected int
 	}{
 		{
 			name: "empty packet",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeHeartbeat),
 				SerialNumber: 0,
 				Headers:      make(map[string]string),
@@ -65,7 +65,7 @@ func TestCalculateBodyLength(t *testing.T) {
 		},
 		{
 			name: "with headers",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeRegister),
 				SerialNumber: 100,
 				Headers:      map[string]string{"key": "value"},
@@ -75,7 +75,7 @@ func TestCalculateBodyLength(t *testing.T) {
 		},
 		{
 			name: "with data",
-			packet: &SekiroPacket{
+			packet: &RpcPacket{
 				Type:         byte(PacketTypeSInvoke),
 				SerialNumber: 200,
 				Headers:      make(map[string]string),
@@ -155,7 +155,7 @@ func TestHeaderTruncation(t *testing.T) {
 	maxKey := string(bytes.Repeat([]byte("k"), MaxHeaderKeyLen))
 	maxValue := string(bytes.Repeat([]byte("v"), MaxHeaderValueLen))
 
-	packet := NewSekiroPacket()
+	packet := NewRpcPacket()
 	packet.AddHeader(maxKey, maxValue)
 
 	var buf bytes.Buffer

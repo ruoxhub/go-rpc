@@ -6,15 +6,15 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
-namespace SekiroClientDotnet
+namespace RpcClientDotnet
 {
     /// <summary>
     /// Func相关处理
     /// </summary>
-    public partial class SekiroClient
+    public partial class RpcClient
     {
 
-        private async Task<byte[]> ExecFunc(SekiroPacket sekiroPacket)
+        private async Task<byte[]> ExecFunc(RpcPacket sekiroPacket)
         {
             byte[] funcResp;
             try
@@ -40,7 +40,7 @@ namespace SekiroClientDotnet
             return funcResp;
         }
 
-        private static byte[] ToFuncErrorResp(SekiroPacket sekiroPacket, Object request, string err)
+        private static byte[] ToFuncErrorResp(RpcPacket sekiroPacket, Object request, string err)
         {
             byte[] funcResp;
             var actionNotFoundResp = new

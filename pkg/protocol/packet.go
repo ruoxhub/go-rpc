@@ -1,4 +1,4 @@
-// Package protocol implements the Sekiro communication protocol
+// Package protocol implements the Rpc communication protocol
 package protocol
 
 import (
@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-// Magic number for Sekiro protocol
+// Magic number for Rpc protocol
 // Java: 8315170387645116465L = 0x73656b69726f0000 ("sekiro\0\0" in big-endian)
 const Magic = int64(8315170387645116465)
 
@@ -23,24 +23,24 @@ const (
 	MaxHeaderValueLen = 255
 )
 
-// SekiroPacket represents a Sekiro protocol packet
-type SekiroPacket struct {
+// RpcPacket represents a Rpc protocol packet
+type RpcPacket struct {
 	Type         byte
 	SerialNumber int32
 	Headers      map[string]string
 	Data         []byte
 }
 
-// NewSekiroPacket creates a new SekiroPacket
-func NewSekiroPacket() *SekiroPacket {
-	return &SekiroPacket{
+// NewRpcPacket creates a new RpcPacket
+func NewRpcPacket() *RpcPacket {
+	return &RpcPacket{
 		Headers: make(map[string]string),
 	}
 }
 
 // Encode encodes the packet to binary format
 // Format: [Magic:int64][Length:int32][Type:byte][SerialNumber:int32][Headers][Data]
-func (p *SekiroPacket) Encode(w io.Writer) error {
+func (p *RpcPacket) Encode(w io.Writer) error {
 	// Calculate body length
 	bodyLen := p.calculateBodyLength()
 
@@ -102,7 +102,7 @@ func (p *SekiroPacket) Encode(w io.Writer) error {
 }
 
 // calculateBodyLength calculates the length of packet body (excluding magic and length field)
-func (p *SekiroPacket) calculateBodyLength() int {
+func (p *RpcPacket) calculateBodyLength() int {
 	length := TypeSize + SerialNumberSize // type + serial number
 
 	// headers: count(1) + for each: keyLen(1) + key + valueLen(1) + value
@@ -120,8 +120,8 @@ func (p *SekiroPacket) calculateBodyLength() int {
 }
 
 // Decode reads a packet from binary data
-func Decode(r io.Reader) (*SekiroPacket, error) {
-	packet := NewSekiroPacket()
+func Decode(r io.Reader) (*RpcPacket, error) {
+	packet := NewRpcPacket()
 
 	// Read and verify magic number
 	var magic int64
@@ -198,13 +198,13 @@ func Decode(r io.Reader) (*SekiroPacket, error) {
 }
 
 // AddHeader adds a header to the packet
-func (p *SekiroPacket) AddHeader(key, value string) *SekiroPacket {
+func (p *RpcPacket) AddHeader(key, value string) *RpcPacket {
 	p.Headers[key] = value
 	return p
 }
 
 // GetHeader gets a header value
-func (p *SekiroPacket) GetHeader(key string) string {
+func (p *RpcPacket) GetHeader(key string) string {
 	if p.Headers == nil {
 		return ""
 	}
@@ -212,19 +212,19 @@ func (p *SekiroPacket) GetHeader(key string) string {
 }
 
 // SetData sets the packet data
-func (p *SekiroPacket) SetData(data []byte) *SekiroPacket {
+func (p *RpcPacket) SetData(data []byte) *RpcPacket {
 	p.Data = data
 	return p
 }
 
 // SetType sets the packet type
-func (p *SekiroPacket) SetType(t byte) *SekiroPacket {
+func (p *RpcPacket) SetType(t byte) *RpcPacket {
 	p.Type = t
 	return p
 }
 
 // SetSerialNumber sets the packet serial number
-func (p *SekiroPacket) SetSerialNumber(sn int32) *SekiroPacket {
+func (p *RpcPacket) SetSerialNumber(sn int32) *RpcPacket {
 	p.SerialNumber = sn
 	return p
 }

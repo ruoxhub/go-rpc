@@ -1,4 +1,4 @@
--- Sekiro PostgreSQL 数据库迁移脚本
+-- Rpc PostgreSQL 数据库迁移脚本
 -- 注意：数据库已在容器启动时创建，此处跳过 CREATE DATABASE
 
 -- 启用扩展

@@ -1,5 +1,5 @@
 #import <Foundation/Foundation.h>
-#include "Sekiro.h"
+#include "Rpc.h"
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -7,13 +7,13 @@
 #include <netdb.h>
 #import <SystemConfiguration/SystemConfiguration.h>
 
-@interface SekiroCommonRes: NSObject
-- (SekiroCommonRes *)ok:(NSData *)d;
-- (SekiroCommonRes *)failed:(NSString *)m;
+@interface RpcCommonRes: NSObject
+- (RpcCommonRes *)ok:(NSData *)d;
+- (RpcCommonRes *)failed:(NSString *)m;
 - (NSMutableData *)encode;
 @end
 
-@interface SekiroPacket: NSObject
+@interface RpcPacket: NSObject
 @property int messegeType;
 @property int seq;
 @property(copy) NSData *data;
@@ -64,13 +64,13 @@ static void pack_b8(NSMutableData *d, int64_t val)
     [d appendBytes:&val1 length:8];
 }
 
-@implementation SekiroPacket {
+@implementation RpcPacket {
     NSMutableDictionary *headers;
 }
 
 @synthesize messegeType, seq, data;
 
-- (SekiroPacket *)init {
+- (RpcPacket *)init {
     data = nil;
     headers = [[NSMutableDictionary alloc] init];
     messegeType = -1;
@@ -151,13 +151,13 @@ static void pack_b8(NSMutableData *d, int64_t val)
 
 @end
 
-@implementation SekiroCommonRes {
+@implementation RpcCommonRes {
     NSData *data;
     NSString *message;
     int status;
 }
 
-- (SekiroCommonRes *)init {
+- (RpcCommonRes *)init {
     data = nil;
     message = @"";
     status = -1;
@@ -165,7 +165,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
     return self;
 }
 
-- (SekiroCommonRes *)ok:(NSData *)d {
+- (RpcCommonRes *)ok:(NSData *)d {
     status = 0;
     message = @"";
     data = d;
@@ -173,7 +173,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
     return self;
 }
 
-- (SekiroCommonRes *)failed:(NSString *)m {
+- (RpcCommonRes *)failed:(NSString *)m {
     status = -1;
     message = m;
     data = nil;
@@ -211,14 +211,14 @@ static void pack_b8(NSMutableData *d, int64_t val)
 }
 @end
 
-@implementation SekiroResponse {
+@implementation RpcResponse {
     int stream;
     BOOL respond;
     int seq;
-    SekiroClient * sekiroClient;
+    RpcClient * sekiroClient;
 }
 
-- (SekiroResponse *)init:(int)streamVal seq:(int)seqVal sekiroClient:(SekiroClient *)sekiroClientVal {
+- (RpcResponse *)init:(int)streamVal seq:(int)seqVal sekiroClient:(RpcClient *)sekiroClientVal {
     stream = streamVal;
     seq = seqVal;
     respond = FALSE;
@@ -227,22 +227,22 @@ static void pack_b8(NSMutableData *d, int64_t val)
 }
 
 - (void)success:(NSData *)d {
-    SekiroCommonRes *res = [[SekiroCommonRes alloc] init];
+    RpcCommonRes *res = [[RpcCommonRes alloc] init];
     [self response:[res ok:d]];
     
 }
 
 - (void)failed:(NSString *)m {
-    SekiroCommonRes * res = [[SekiroCommonRes alloc] init];
+    RpcCommonRes * res = [[RpcCommonRes alloc] init];
     [self response:[res failed:m]];
 }
 
-- (void)response:(SekiroCommonRes *)r {
+- (void)response:(RpcCommonRes *)r {
     if (respond)
         return;
     respond = TRUE;
     
-    SekiroPacket *p = [[SekiroPacket alloc] init];
+    RpcPacket *p = [[RpcPacket alloc] init];
     [p setSeq: seq];
     [p setMessegeType: 0x11];
     [p add_header:@"PAYLOAD_CONTENT_TYPE"
@@ -257,21 +257,21 @@ static void pack_b8(NSMutableData *d, int64_t val)
 
 @end
 
-@interface   SekiroTask : NSOperation{
+@interface   RpcTask : NSOperation{
     NSDictionary * request_dict;
-    SekiroResponse *response;
-    SekiroHandler handler;
+    RpcResponse *response;
+    RpcHandler handler;
 }
-- (SekiroTask*)init:(NSDictionary *)request
-           response:(SekiroResponse *)r
-             handler:(SekiroHandler)h;
+- (RpcTask*)init:(NSDictionary *)request
+           response:(RpcResponse *)r
+             handler:(RpcHandler)h;
 @end
 
-@implementation SekiroTask
+@implementation RpcTask
 
-- (SekiroTask*)init:(NSDictionary *)requestVal
-           response:(SekiroResponse *)r
-            handler:(SekiroHandler)h{
+- (RpcTask*)init:(NSDictionary *)requestVal
+           response:(RpcResponse *)r
+            handler:(RpcHandler)h{
     request_dict=requestVal;
     response = r;
     handler = h;
@@ -289,7 +289,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
 
 
 
-@implementation SekiroClient {
+@implementation RpcClient {
     NSString *group;
     NSString *host;
     int port;
@@ -299,7 +299,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
     NSOperationQueue * taskQueue;
 }
 
-- (SekiroClient *)init:(NSString *)groupVal host:(NSString *)h port:(int)p clientId:(NSString *)c {
+- (RpcClient *)init:(NSString *)groupVal host:(NSString *)h port:(int)p clientId:(NSString *)c {
     group = groupVal;
     host = h;
     port = p;
@@ -311,14 +311,14 @@ static void pack_b8(NSMutableData *d, int64_t val)
     return self;
 }
 
-- (SekiroClient *)init:(NSString *)groupVal {
+- (RpcClient *)init:(NSString *)groupVal {
     NSString *uuid = [[[NSUUID alloc] init] UUIDString];
     NSLog(@"UUID %@", uuid);
     return [self init:groupVal host:@"sekiro.iinti.cn" port:5612 clientId:uuid];
 }
 
-- (SekiroPacket *)makeRegister {
-    SekiroPacket *command = [[SekiroPacket alloc] init];
+- (RpcPacket *)makeRegister {
+    RpcPacket *command = [[RpcPacket alloc] init];
     [command setMessegeType: 0x10];
     [command setSeq: -1];
     [command add_header: @"SEKIRO_GROUP" value: group];
@@ -327,18 +327,18 @@ static void pack_b8(NSMutableData *d, int64_t val)
     return command;
 }
 
-- (SekiroHandler)getHandler:(NSString *)action {
+- (RpcHandler)getHandler:(NSString *)action {
     if ([handlers objectForKey:action]) {
-        return (SekiroHandler)[handlers[action] pointerValue];
+        return (RpcHandler)[handlers[action] pointerValue];
     }
     return NULL;
 }
 
-- (void)registerAction:(NSString *)act handler:(SekiroHandler)handle {
+- (void)registerAction:(NSString *)act handler:(RpcHandler)handle {
     handlers[act] = [NSValue valueWithPointer:handle];
 }
 
-- (int)connectToSekiroServer {
+- (int)connectToRpcServer {
     struct addrinfo hints;
     struct addrinfo * result, * rp;
     int s;
@@ -416,10 +416,10 @@ static void pack_b8(NSMutableData *d, int64_t val)
     while (true) {
         BOOL status = [self currentNetworkStatus];
         if (status){
-            int streamFd = [self connectToSekiroServer];
+            int streamFd = [self connectToRpcServer];
             if(streamFd >0){
                 @try {
-                    [self loopSekiroConnection:streamFd];
+                    [self loopRpcConnection:streamFd];
                 } @catch (NSException *exception) {
                     NSLog(@"%@", exception);
                 } @finally {
@@ -435,7 +435,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
 }
 
 
-- (void)loopSekiroConnection:(int)streamFd {
+- (void)loopRpcConnection:(int)streamFd {
     NSLog(@"connected to %@:%d", host, port);
     [[self makeRegister] write_to:streamFd];
     while (true) {
@@ -466,7 +466,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
                 return;
             }
 
-            SekiroPacket *packet = [[SekiroPacket alloc] init];
+            RpcPacket *packet = [[RpcPacket alloc] init];
             [packet read_from:sekiroPacketPaylod];
             [self onPacketRead:packet stream:streamFd];
             dispatch_semaphore_signal(semaphore);
@@ -494,7 +494,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
     [thread start];
 }
 
-- (void)onPacketRead:(SekiroPacket *)p stream:(int)streamFd {
+- (void)onPacketRead:(RpcPacket *)p stream:(int)streamFd {
     int messageType = [p messegeType];
     if (messageType == 0x00) {
         [p write_to:streamFd];
@@ -506,7 +506,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
         return;
     }
 
-    SekiroResponse *response = [[SekiroResponse alloc] init:streamFd seq:[p seq] sekiroClient:self];
+    RpcResponse *response = [[RpcResponse alloc] init:streamFd seq:[p seq] sekiroClient:self];
 
     if (![p data]) {
         [response failed:@"sekiro system error, no request payload present!!"];
@@ -525,7 +525,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
         return;
     }
 
-    SekiroHandler handler = [self getHandler:action];
+    RpcHandler handler = [self getHandler:action];
 
     if (!handler) {
         [response failed:@"sekiro no handler for this action"];
@@ -533,7 +533,7 @@ static void pack_b8(NSMutableData *d, int64_t val)
     }
     
     // executor on thread pool
-    SekiroTask * sekiroTask = [[SekiroTask alloc] init:request_dict  response:response   handler:handler];
+    RpcTask * sekiroTask = [[RpcTask alloc] init:request_dict  response:response   handler:handler];
     [taskQueue addOperation:sekiroTask];
 }
 

@@ -1,4 +1,4 @@
-// Package server implements the Sekiro server
+// Package server implements the Rpc server
 package server
 
 import (
@@ -48,7 +48,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Server represents the Sekiro server
+// Server represents the Rpc server
 type Server struct {
 	config           *Config
 	yamlConfig       *config.Config
@@ -197,13 +197,13 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
-	logger.Infof("Sekiro server starting on %s", addr)
+	logger.Infof("Rpc server starting on %s", addr)
 	logger.Infof("CORS enabled: %v", corsEnabled)
 	logger.Debug("Legacy detector path is not wired into the active server bootstrap")
 	if routeReplaceEnabled {
 		logger.Infof("Route prefix replacement enabled: %s", routePrefix)
 	}
-	logger.Info("Welcome to use Sekiro framework")
+	logger.Info("Welcome to use Rpc framework")
 
 	go func() {
 		if err := s.httpServer.Server().Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -230,7 +230,7 @@ func (s *Server) registerRoutes() {
 
 	s.httpServer.Engine().NoRoute(func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/sekiro-api/") ||
+			strings.HasPrefix(c.Request.URL.Path, "/rpc-api/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/business/") ||
 			strings.HasPrefix(c.Request.URL.Path, "/v1/") {
 			c.JSON(404, gin.H{"error": "Not found"})
@@ -261,27 +261,27 @@ func (s *Server) registerRoutes() {
 		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
 	}
 
-	sekiroAPI := s.httpServer.Group("/sekiro-api")
-	// 为 /sekiro-api 路由添加配置服务上下文
-	sekiroAPI.Use(func(c *gin.Context) {
+	rpcAPI := s.httpServer.Group("/rpc-api")
+	// 为 /rpc-api 路由添加配置服务上下文
+	rpcAPI.Use(func(c *gin.Context) {
 		c.Set("configService", s.configService)
 		c.Next()
 	})
 	{
-		userInfo := sekiroAPI.Group("/user-info")
+		userInfo := rpcAPI.Group("/user-info")
 		{
 			userInfo.POST("/login", handlers.HandleLogin)
 			userInfo.POST("/register", handlers.HandleRegister)
 			userInfo.GET("/userInfo", handlers.HandleGetUserInfo)
 		}
 
-		system := sekiroAPI.Group("/system")
+		system := rpcAPI.Group("/system")
 		{
 			system.GET("/systemNotice", handlers.HandleSystemNotice)
 			system.GET("/systemInfo", handlers.HandleSystemInfo)
 		}
 
-		frontend := sekiroAPI.Group("/frontend")
+		frontend := rpcAPI.Group("/frontend")
 		{
 			frontend.GET("/listGroup", handlers.HandleFrontendListGroup)
 			frontend.GET("/anonymousGroupList", handlers.HandleFrontendAnonymousGroupList)
@@ -349,7 +349,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 	user, err := middleware.FindUserByToken(middleware.ExtractAuthTokenFromRequest(c))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "registered group requires a valid sekiro token",
+			"error": "registered group requires a valid rpc token",
 		})
 		return false
 	}

@@ -1,6 +1,6 @@
 package cn.iinti.sekiro3;
 
-import cn.iinti.sekiro3.business.api.SekiroClient;
+import cn.iinti.sekiro3.business.api.RpcClient;
 import cn.iinti.sekiro3.business.api.interfaze.*;
 
 public class Demo1_SingleServer {
@@ -42,17 +42,17 @@ public class Demo1_SingleServer {
 
     public static void main(String[] args) throws InterruptedException {
         //http://sekiro.iinti.cn/business/invoke?group=test&action=testAction&param=testparm
-        new SekiroClient("test", "testClient")
-                .setupSekiroRequestInitializer((sekiroRequest, handlerRegistry) ->
+        new RpcClient("test", "testClient")
+                .setupRpcRequestInitializer((sekiroRequest, handlerRegistry) ->
                         // 注册一个接口，名为testAction
-                        handlerRegistry.registerSekiroHandler(new ActionHandler() {
+                        handlerRegistry.registerRpcHandler(new ActionHandler() {
                             @Override
                             public String action() {
                                 return "testAction";
                             }
 
                             @Override
-                            public void handleRequest(SekiroRequest sekiroRequest, SekiroResponse sekiroResponse) {
+                            public void handleRequest(RpcRequest sekiroRequest, RpcResponse sekiroResponse) {
                                 // 接口处理逻辑，我们返回一个对象
                                 TestResponse testResult = new Demo1_SingleServer().new TestResponse();
                                 testResult.setAge(10);

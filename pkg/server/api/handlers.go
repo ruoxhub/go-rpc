@@ -37,10 +37,10 @@ type APIHandler struct {
 // clientManagerIface is the interface for client manager (internal)
 type clientManagerIface interface {
 	GetAllGroups() []string
-	GetClientsByGroup(group string) []*client.SekiroClient
-	AllocateClient(group string) *client.SekiroClient
-	GetClient(group, clientID string) *client.SekiroClient
-	GetGroup(groupName string) *client.SekiroGroup
+	GetClientsByGroup(group string) []*client.RpcClient
+	AllocateClient(group string) *client.RpcClient
+	GetClient(group, clientID string) *client.RpcClient
+	GetGroup(groupName string) *client.RpcGroup
 }
 
 // RequestBuilder defines the interface for building request data
@@ -61,7 +61,7 @@ type InvokeRequest struct {
 	Group          string      `json:"group"`
 	ClientID       string      `json:"clientId,omitempty"`
 	ConstantInvoke string      `json:"constantInvoke,omitempty"`
-	SekiroToken    string      `json:"sekiro_token,omitempty"`
+	RpcToken    string      `json:"sekiro_token,omitempty"`
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
@@ -72,7 +72,7 @@ type ExecJSRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	SekiroToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
+	RpcToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 	Code           string `json:"code" form:"code"`
 }
 
@@ -81,7 +81,7 @@ type GetCookieRequest struct {
 	Group          string `json:"group" form:"group"`
 	ClientID       string `json:"clientId,omitempty" form:"clientId"`
 	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	SekiroToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
+	RpcToken    string `json:"sekiro_token,omitempty" form:"sekiro_token"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -157,7 +157,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
-			req.SekiroToken = accessToken
+			req.RpcToken = accessToken
 			req.Action = c.Query("action")
 		}
 	} else {
@@ -165,11 +165,11 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
-		req.SekiroToken = accessToken
+		req.RpcToken = accessToken
 		req.Action = c.Query("action")
 	}
-	if req.SekiroToken == "" {
-		req.SekiroToken = accessToken
+	if req.RpcToken == "" {
+		req.RpcToken = accessToken
 	}
 
 	// 参数验证
@@ -186,7 +186,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.SekiroToken,
+		AccessToken:    req.RpcToken,
 		Action:         req.Action,
 		Params:         req.Params,
 		Timeout:        time.Duration(req.Timeout) * time.Second,
@@ -225,18 +225,18 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
-			req.SekiroToken = accessToken
+			req.RpcToken = accessToken
 			req.Code = c.Query("code")
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
-		req.SekiroToken = accessToken
+		req.RpcToken = accessToken
 		req.Code = c.Query("code")
 	}
-	if req.SekiroToken == "" {
-		req.SekiroToken = accessToken
+	if req.RpcToken == "" {
+		req.RpcToken = accessToken
 	}
 
 	// 参数验证
@@ -253,7 +253,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.SekiroToken,
+		AccessToken:    req.RpcToken,
 		Code:           req.Code,
 	}
 
@@ -280,16 +280,16 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
-			req.SekiroToken = accessToken
+			req.RpcToken = accessToken
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
-		req.SekiroToken = accessToken
+		req.RpcToken = accessToken
 	}
-	if req.SekiroToken == "" {
-		req.SekiroToken = accessToken
+	if req.RpcToken == "" {
+		req.RpcToken = accessToken
 	}
 
 	startTime := time.Now()
@@ -297,7 +297,7 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.SekiroToken,
+		AccessToken:    req.RpcToken,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
@@ -323,16 +323,16 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 			req.Group = c.Query("group")
 			req.ClientID = c.Query("clientId")
 			req.ConstantInvoke = c.Query("constantInvoke")
-			req.SekiroToken = accessToken
+			req.RpcToken = accessToken
 		}
 	} else {
 		req.Group = c.Query("group")
 		req.ClientID = c.Query("clientId")
 		req.ConstantInvoke = c.Query("constantInvoke")
-		req.SekiroToken = accessToken
+		req.RpcToken = accessToken
 	}
-	if req.SekiroToken == "" {
-		req.SekiroToken = accessToken
+	if req.RpcToken == "" {
+		req.RpcToken = accessToken
 	}
 
 	startTime := time.Now()
@@ -340,13 +340,13 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 		Group:          req.Group,
 		ClientID:       req.ClientID,
 		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.SekiroToken,
+		AccessToken:    req.RpcToken,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
 }
 
-func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.SekiroClient, error) {
+func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
 	if clientID != "" {
 		group := h.clientManager.GetGroup(groupName)
 		selected := h.router.Route(group, router.RouteParams{
@@ -545,7 +545,7 @@ func (b *GetHTMLBuilder) GetClientID() string       { return b.ClientID }
 func (b *GetHTMLBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *GetHTMLBuilder) GetAccessToken() string    { return b.AccessToken }
 
-// handleForwardRequest is the generic handler for forwarding requests to Sekiro clients
+// handleForwardRequest is the generic handler for forwarding requests to Rpc clients
 func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder, startTime time.Time) {
 	// 从 builder 获取参数（已由具体 handler 绑定）
 	group := builder.GetGroup()
@@ -608,7 +608,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		return
 	}
 
-	// 构建 Sekiro 请求数据
+	// 构建 Rpc 请求数据
 	reqData := map[string]interface{}{
 		"action": reqAction,
 		"params": reqParams,

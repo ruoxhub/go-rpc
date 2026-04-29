@@ -8,7 +8,7 @@ import (
 	"net"
 )
 
-type SekiroPacket struct {
+type RpcPacket struct {
 	MessageType byte              // 消息类型
 	seq         int32             // 流水号
 	Headers     map[string]string // headers
@@ -33,7 +33,7 @@ const (
 	MAGIC = int64(0x73656b69726f3031)
 )
 
-func (sekiroPacket *SekiroPacket) encode() []byte {
+func (sekiroPacket *RpcPacket) encode() []byte {
 	bodyLength := int32(6)
 	headerByteArray := make([][]byte, 0, len(sekiroPacket.Headers))
 	for key, value := range sekiroPacket.Headers {
@@ -73,9 +73,9 @@ func (sekiroPacket *SekiroPacket) encode() []byte {
 	return buf.Bytes()
 }
 
-func decode(data []byte) (*SekiroPacket, error) {
+func decode(data []byte) (*RpcPacket, error) {
 	buffer := bytes.NewBuffer(data)
-	packet := &SekiroPacket{
+	packet := &RpcPacket{
 		MessageType: 0xFF,
 		seq:         -1,
 		Headers:     make(map[string]string),
@@ -117,7 +117,7 @@ type commonRes struct {
 	Data    interface{} `json:"data"`
 }
 
-func (res *commonRes) encodeSekiroFastJson() []byte {
+func (res *commonRes) encodeRpcFastJson() []byte {
 	buf := bytes.Buffer{}
 	_ = binary.Write(&buf, binary.BigEndian, res.Status)
 	if res.Message == nil {
@@ -138,36 +138,36 @@ func (res *commonRes) encodeSekiroFastJson() []byte {
 	return buf.Bytes()
 }
 
-type SekiroResponseImpl struct {
+type RpcResponseImpl struct {
 	seq     int32
 	conn    net.Conn
 	respond bool
 }
 
-func (response *SekiroResponseImpl) Success(data interface{}) {
+func (response *RpcResponseImpl) Success(data interface{}) {
 	response.response(commonRes{
 		Data:   data,
 		Status: 0,
 	})
 }
 
-func (response *SekiroResponseImpl) Fail(errorMsg string) {
+func (response *RpcResponseImpl) Fail(errorMsg string) {
 	response.response(commonRes{
 		Message: &errorMsg,
 		Status:  -1,
 	})
 }
 
-func (response *SekiroResponseImpl) response(res commonRes) {
+func (response *RpcResponseImpl) response(res commonRes) {
 	if response.respond {
 		return
 	}
 	response.respond = true
-	packet := SekiroPacket{
+	packet := RpcPacket{
 		seq:         response.seq,
 		MessageType: CTypeInvokeResponse,
 		Headers:     make(map[string]string),
-		Data:        res.encodeSekiroFastJson(),
+		Data:        res.encodeRpcFastJson(),
 	}
 	packet.Headers["PAYLOAD_CONTENT_TYPE"] = "CONTENT_TYPE_SEKIRO_FAST_JSON"
 	_, _ = response.conn.Write(packet.encode())

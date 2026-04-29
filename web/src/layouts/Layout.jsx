@@ -132,7 +132,7 @@ function LayoutComponent() {
           </div>
         </Content>
         <Footer style={{ textAlign: 'center' }}>
-          sekiro-系统框架 © 2023 因体信息公司 因体产品 | Majora | Sekiro | Malenia
+          sekiro-系统框架 © 2023 因体信息公司 因体产品 | Majora | Rpc | Malenia
         </Footer>
       </Layout>
     </Layout>

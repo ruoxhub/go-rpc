@@ -77,7 +77,7 @@ function Login() {
               strokeLinejoin="round"
             />
           </svg>
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Sekiro 管理系统</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Rpc 管理系统</h1>
         </div>
 
         <Form

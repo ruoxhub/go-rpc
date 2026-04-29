@@ -9,8 +9,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
-func TestSekiroMessage_Marshal(t *testing.T) {
-	msg := SekiroMessage{
+func TestRpcMessage_Marshal(t *testing.T) {
+	msg := RpcMessage{
 		Type:      MessageTypeHeartbeat,
 		Sequence:  "seq-123",
 		Group:     "test-group",
@@ -24,7 +24,7 @@ func TestSekiroMessage_Marshal(t *testing.T) {
 	}
 
 	// Unmarshal and verify
-	var unmarshaled SekiroMessage
+	var unmarshaled RpcMessage
 	if err := json.Unmarshal(data, &unmarshaled); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestHandler_Shutdown(t *testing.T) {
 	timeoutMgr.Add("test", "group", "client", nil)
 }
 
-func TestSekiroMessage_WithAllFields(t *testing.T) {
+func TestRpcMessage_WithAllFields(t *testing.T) {
 	data := []byte(`{
 		"type": "invoke",
 		"sequence": "seq-456",
@@ -105,7 +105,7 @@ func TestSekiroMessage_WithAllFields(t *testing.T) {
 		"timestamp": 1234567890
 	}`)
 
-	var msg SekiroMessage
+	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
@@ -136,10 +136,10 @@ func TestSekiroMessage_WithAllFields(t *testing.T) {
 	}
 }
 
-func TestSekiroMessage_MinimalFields(t *testing.T) {
+func TestRpcMessage_MinimalFields(t *testing.T) {
 	data := []byte(`{"type": "heartbeat"}`)
 
-	var msg SekiroMessage
+	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestSekiroMessage_MinimalFields(t *testing.T) {
 	}
 }
 
-func TestSekiroMessage_ErrorResponse(t *testing.T) {
+func TestRpcMessage_ErrorResponse(t *testing.T) {
 	data := []byte(`{
 		"type": "invoke_response",
 		"sequence": "seq-789",
@@ -160,7 +160,7 @@ func TestSekiroMessage_ErrorResponse(t *testing.T) {
 		"status": 404
 	}`)
 
-	var msg SekiroMessage
+	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
 	}

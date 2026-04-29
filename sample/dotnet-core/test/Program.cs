@@ -2,7 +2,7 @@
 using System;
 using System.Text;
 using Newtonsoft.Json.Linq;
-using SekiroClientDotnet;
+using RpcClientDotnet;
 using Serilog;
 
 internal class Program
@@ -12,7 +12,7 @@ internal class Program
         // var logFile = $"sekiro_client_{DateTime.Now.ToString("yyyyMMddHHmmss")}.log";
         // Serilog.Log.Logger = new LoggerConfiguration().WriteTo.File(logFile).CreateLogger();
         Serilog.Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateLogger();
-        var sekiroClient = new SekiroClient(
+        var sekiroClient = new RpcClient(
             host: "sekiro.ipbong.com",
             port: 5612,
             groupName: "test-dotnet");

@@ -149,7 +149,7 @@ func HandleSystemInfo(c *gin.Context) {
 			"port":          yamlConfig.Port,
 			"host":          yamlConfig.Host,
 			"database":      "postgresql",
-			"clientVersion": "Go Sekiro v1.0.0",
+			"clientVersion": "Go Rpc v1.0.0",
 		},
 	})
 }

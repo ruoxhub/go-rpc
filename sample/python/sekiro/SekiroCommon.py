@@ -8,7 +8,7 @@ from tornado.tcpclient import TCPClient
 _MAGIC = 0x73656b69726f3031  # sekiro01
 
 
-class _SekiroPacket:
+class _RpcPacket:
     def __init__(self):
         self.message_type = -1
         self.seq = -1
@@ -91,7 +91,7 @@ class _CommonRes:
         return self
 
 
-class AbsSekiroConn:
+class AbsRpcConn:
     def __init__(self, host: str, port: int):
         self._host = host
         self._port = port
@@ -114,10 +114,10 @@ class AbsSekiroConn:
     def is_active(self):
         return self._active
 
-    def make_register_pkg(self) -> _SekiroPacket:
+    def make_register_pkg(self) -> _RpcPacket:
         pass
 
-    def handle_packet(self, pkt: _SekiroPacket, stream: iostream):
+    def handle_packet(self, pkt: _RpcPacket, stream: iostream):
         pass
 
     @gen.coroutine
@@ -145,7 +145,7 @@ class AbsSekiroConn:
 
                     body_data = yield stream.read_bytes(body_length)
 
-                    sekiro_packet = _SekiroPacket()
+                    sekiro_packet = _RpcPacket()
                     sekiro_packet.read_from(body_data)
                     if sekiro_packet.message_type == 0x00:
                         # this is heartbeat pkg

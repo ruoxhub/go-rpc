@@ -14,8 +14,8 @@ const (
 	StatusOffline
 )
 
-// SekiroClient represents a connected Sekiro client
-type SekiroClient struct {
+// RpcClient represents a connected Rpc client
+type RpcClient struct {
 	Group      string
 	ClientID   string
 	Connection interface{} // WebSocket connection handler or similar
@@ -28,9 +28,9 @@ type SekiroClient struct {
 	writeMu   sync.Mutex // protects WebSocket writes from concurrent access
 }
 
-// NewSekiroClient creates a new SekiroClient
-func NewSekiroClient(group, clientID string, conn interface{}) *SekiroClient {
-	return &SekiroClient{
+// NewRpcClient creates a new RpcClient
+func NewRpcClient(group, clientID string, conn interface{}) *RpcClient {
+	return &RpcClient{
 		Group:      group,
 		ClientID:   clientID,
 		Connection: conn,
@@ -42,28 +42,28 @@ func NewSekiroClient(group, clientID string, conn interface{}) *SekiroClient {
 }
 
 // UpdateActive updates the last active timestamp
-func (c *SekiroClient) UpdateActive() {
+func (c *RpcClient) UpdateActive() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.LastActive = time.Now()
 }
 
 // SetStatus sets the client status
-func (c *SekiroClient) SetStatus(status ClientStatus) {
+func (c *RpcClient) SetStatus(status ClientStatus) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Status = status
 }
 
 // GetStatus returns the client status
-func (c *SekiroClient) GetStatus() ClientStatus {
+func (c *RpcClient) GetStatus() ClientStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Status
 }
 
 // Close closes the client connection
-func (c *SekiroClient) Close() {
+func (c *RpcClient) Close() {
 	if c.Connection != nil {
 		// Type assertion to close the connection
 		if closer, ok := c.Connection.(interface{ Close() error }); ok {
@@ -73,7 +73,7 @@ func (c *SekiroClient) Close() {
 }
 
 // MarkSuccess marks a successful operation and resets failure count
-func (c *SekiroClient) MarkSuccess() {
+func (c *RpcClient) MarkSuccess() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.FailCount = 0
@@ -81,7 +81,7 @@ func (c *SekiroClient) MarkSuccess() {
 }
 
 // MarkFailure marks a failed operation and increments failure count
-func (c *SekiroClient) MarkFailure() {
+func (c *RpcClient) MarkFailure() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.FailCount++
@@ -92,21 +92,21 @@ func (c *SekiroClient) MarkFailure() {
 }
 
 // IsHealthy returns whether the client is healthy
-func (c *SekiroClient) GetHealthStatus() bool {
+func (c *RpcClient) GetHealthStatus() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.IsHealthy
 }
 
 // GetFailCount returns the current failure count
-func (c *SekiroClient) GetFailCount() int {
+func (c *RpcClient) GetFailCount() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.FailCount
 }
 
 // ResetHealth resets the health status
-func (c *SekiroClient) ResetHealth() {
+func (c *RpcClient) ResetHealth() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.FailCount = 0
@@ -114,16 +114,16 @@ func (c *SekiroClient) ResetHealth() {
 }
 
 // AcquireWriteLock acquires the write lock for WebSocket operations
-func (c *SekiroClient) AcquireWriteLock() {
+func (c *RpcClient) AcquireWriteLock() {
 	c.writeMu.Lock()
 }
 
 // ReleaseWriteLock releases the write lock
-func (c *SekiroClient) ReleaseWriteLock() {
+func (c *RpcClient) ReleaseWriteLock() {
 	c.writeMu.Unlock()
 }
 
 // GetWriteLock returns the write mutex for use with defer
-func (c *SekiroClient) GetWriteLock() *sync.Mutex {
+func (c *RpcClient) GetWriteLock() *sync.Mutex {
 	return &c.writeMu
 }

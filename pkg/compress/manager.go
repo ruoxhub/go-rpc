@@ -35,7 +35,7 @@ func (m *CompressorManager) RegisterCompressor(c Compressor) *CompressorManager 
 }
 
 // fetchCompressor gets the compressor for a packet based on headers
-func (m *CompressorManager) fetchCompressor(packet *protocol.SekiroPacket) Compressor {
+func (m *CompressorManager) fetchCompressor(packet *protocol.RpcPacket) Compressor {
 	// Only compress response packets
 	if packet.Type != byte(protocol.PacketTypeInvokeResponse) &&
 		packet.Type != byte(protocol.PacketTypeSInvokeResponse) {
@@ -56,7 +56,7 @@ func (m *CompressorManager) fetchCompressor(packet *protocol.SekiroPacket) Compr
 }
 
 // HandleDecompress decompresses packet data if needed
-func (m *CompressorManager) HandleDecompress(packet *protocol.SekiroPacket) error {
+func (m *CompressorManager) HandleDecompress(packet *protocol.RpcPacket) error {
 	compressor := m.fetchCompressor(packet)
 	if compressor == nil {
 		return nil
@@ -72,7 +72,7 @@ func (m *CompressorManager) HandleDecompress(packet *protocol.SekiroPacket) erro
 }
 
 // DoCompress compresses packet data if needed
-func (m *CompressorManager) DoCompress(packet *protocol.SekiroPacket) error {
+func (m *CompressorManager) DoCompress(packet *protocol.RpcPacket) error {
 	compressor := m.fetchCompressor(packet)
 	if compressor == nil {
 		return nil

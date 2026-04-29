@@ -18,22 +18,22 @@ import (
 // MockClientManager provides mock implementation for testing.
 type MockClientManager struct {
 	groups   []string
-	clients  map[string][]*client.SekiroClient
-	groupMap map[string]*client.SekiroGroup
+	clients  map[string][]*client.RpcClient
+	groupMap map[string]*client.RpcGroup
 }
 
 func newMockClientManager() *MockClientManager {
 	return &MockClientManager{
-		clients:  make(map[string][]*client.SekiroClient),
-		groupMap: make(map[string]*client.SekiroGroup),
+		clients:  make(map[string][]*client.RpcClient),
+		groupMap: make(map[string]*client.RpcGroup),
 	}
 }
 
-func (m *MockClientManager) AddClient(groupName string, c *client.SekiroClient) {
+func (m *MockClientManager) AddClient(groupName string, c *client.RpcClient) {
 	m.clients[groupName] = append(m.clients[groupName], c)
 	group, ok := m.groupMap[groupName]
 	if !ok {
-		group = client.NewSekiroGroup(groupName)
+		group = client.NewRpcGroup(groupName)
 		m.groupMap[groupName] = group
 		m.groups = append(m.groups, groupName)
 	}
@@ -50,11 +50,11 @@ func (m *MockClientManager) GetAllGroups() []string {
 	return m.groups
 }
 
-func (m *MockClientManager) GetClientsByGroup(group string) []*client.SekiroClient {
+func (m *MockClientManager) GetClientsByGroup(group string) []*client.RpcClient {
 	return m.clients[group]
 }
 
-func (m *MockClientManager) GetClient(group, clientID string) *client.SekiroClient {
+func (m *MockClientManager) GetClient(group, clientID string) *client.RpcClient {
 	groupInst := m.groupMap[group]
 	if groupInst == nil {
 		return nil
@@ -62,13 +62,13 @@ func (m *MockClientManager) GetClient(group, clientID string) *client.SekiroClie
 	return groupInst.GetClient(clientID)
 }
 
-func (m *MockClientManager) GetGroup(groupName string) *client.SekiroGroup {
+func (m *MockClientManager) GetGroup(groupName string) *client.RpcGroup {
 	return m.groupMap[groupName]
 }
 
-func (m *MockClientManager) Register(c *client.SekiroClient)                  {}
+func (m *MockClientManager) Register(c *client.RpcClient)                  {}
 func (m *MockClientManager) Unregister(group, clientID string)                {}
-func (m *MockClientManager) AllocateClient(group string) *client.SekiroClient { return nil }
+func (m *MockClientManager) AllocateClient(group string) *client.RpcClient { return nil }
 func (m *MockClientManager) CleanupAll()                                      {}
 
 func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
@@ -138,7 +138,7 @@ func TestHandleClientQueue(t *testing.T) {
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
 
-	mockManager.clients["test-group"] = []*client.SekiroClient{
+	mockManager.clients["test-group"] = []*client.RpcClient{
 		{ClientID: "client-1"},
 		{ClientID: "client-2"},
 	}
@@ -195,9 +195,9 @@ func TestHandleInvoke_RoundRobinSelectsDifferentClients(t *testing.T) {
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
 
-	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1 := client.NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(client.StatusOnline)
-	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2 := client.NewRpcClient("test-group", "client-2", nil)
 	c2.SetStatus(client.StatusOnline)
 	mockManager.AddClient("test-group", c1)
 	mockManager.AddClient("test-group", c2)
@@ -229,9 +229,9 @@ func TestHandleInvoke_ConstantInvokePinsClient(t *testing.T) {
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
 
-	c1 := client.NewSekiroClient("test-group", "client-1", nil)
+	c1 := client.NewRpcClient("test-group", "client-1", nil)
 	c1.SetStatus(client.StatusOnline)
-	c2 := client.NewSekiroClient("test-group", "client-2", nil)
+	c2 := client.NewRpcClient("test-group", "client-2", nil)
 	c2.SetStatus(client.StatusOnline)
 	mockManager.AddClient("test-group", c1)
 	mockManager.AddClient("test-group", c2)

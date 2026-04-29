@@ -15,7 +15,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&server, "server", "localhost:5612", "Sekiro server address")
+	flag.StringVar(&server, "server", "localhost:5612", "Rpc server address")
 	flag.StringVar(&group, "group", "test-group", "Target client group")
 	flag.StringVar(&api, "api", "test", "API to invoke")
 }
@@ -23,8 +23,8 @@ func init() {
 func main() {
 	flag.Parse()
 
-	// Create Sekiro invoker
-	invoker := client.NewSekiroInvoker([]string{server})
+	// Create Rpc invoker
+	invoker := client.NewRpcInvoker([]string{server})
 	defer invoker.Destroy()
 
 	// Create invoke request

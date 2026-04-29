@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
-     <RootNamespace>SekiroClientDotnet</RootNamespace>
+     <RootNamespace>RpcClientDotnet</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

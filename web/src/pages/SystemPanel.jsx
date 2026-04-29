@@ -79,7 +79,7 @@ const CONFIG_DEFINITIONS = [
     key: 'sekiro.defendIdleInvoke',
     label: '空转调用保护',
     type: 'boolean',
-    description: 'https://github.com/yint-tech/sekiro-open/blob/master/src/main/java/cn/iinti/sekiro3/open/core/client/NettySekiroGroup.java#L178'
+    description: 'https://github.com/yint-tech/sekiro-open/blob/master/src/main/java/cn/iinti/sekiro3/open/core/client/NettyRpcGroup.java#L178'
   }
 ]
 

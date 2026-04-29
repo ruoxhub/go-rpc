@@ -6,7 +6,7 @@ import threading
 
 from tornado import iostream, ioloop
 
-from sekiro.SekiroCommon import _SekiroPacket, AbsSekiroConn, _bytes_to_int
+from sekiro.RpcCommon import _RpcPacket, AbsRpcConn, _bytes_to_int
 
 
 def _decode_sekiro_fast_json(data: bytes, client_id: str) -> str:
@@ -49,14 +49,14 @@ class _Record:
         return self._response
 
     @staticmethod
-    def decode_sekiro_packet(pkg: _SekiroPacket) -> dict:
+    def decode_sekiro_packet(pkg: _RpcPacket) -> dict:
         # 如果数据有压缩，那么需要在端上解压
         compress_method = pkg.headers.get('COMPRESS_METHOD')
         if compress_method is not None and compress_method != 'COMPRESS_METHOD_NONE':
             if compress_method != 'COMPRESS_METHOD_GZIP':
                 # 当前sekiro只支持标准的gzip压缩算法的解压，当然目前只有java端的对端支持了压缩，
-                # 即当前只有python的invoker调用xposed的SekiroClient会默认走到压缩
-                # 压缩行为的判定在SekiroClient，他通过报文大小来决定是否启动压缩，以及通过用户的主动控制来确定是否压缩
+                # 即当前只有python的invoker调用xposed的RpcClient会默认走到压缩
+                # 压缩行为的判定在RpcClient，他通过报文大小来决定是否启动压缩，以及通过用户的主动控制来确定是否压缩
                 return {
                     "status": -1,
                     "message": "invoker client error, the python client just only support gzip compress method ,"
@@ -89,7 +89,7 @@ class _Record:
                 "status": -1,
                 "message": res
             }
-        elif isinstance(res, _SekiroPacket):
+        elif isinstance(res, _RpcPacket):
             self._response = self.decode_sekiro_packet(res)
         else:
             self._response = {
@@ -101,7 +101,7 @@ class _Record:
         self.condition.release()
 
 
-class _InvokerConn(AbsSekiroConn):
+class _InvokerConn(AbsRpcConn):
     def __init__(self, api_token: str, host: str, port: int, condition: threading.Condition):
         super().__init__(host, port)
         self._api_token = api_token
@@ -109,7 +109,7 @@ class _InvokerConn(AbsSekiroConn):
         self._start_wait_condition = condition
         self.running_request = {}
 
-    def make_register_pkg(self) -> _SekiroPacket:
+    def make_register_pkg(self) -> _RpcPacket:
         # reset seq when reconnect to sekiro server
         self._seq = 0
         for key in self.running_request.keys():
@@ -120,12 +120,12 @@ class _InvokerConn(AbsSekiroConn):
         self._start_wait_condition.notify_all()
         self._start_wait_condition.release()
 
-        register_cmd = _SekiroPacket()
+        register_cmd = _RpcPacket()
         register_cmd.message_type = 0x30
         register_cmd.seq = -1
         return register_cmd
 
-    def handle_packet(self, sekiro_packet: _SekiroPacket, stream: iostream):
+    def handle_packet(self, sekiro_packet: _RpcPacket, stream: iostream):
         if sekiro_packet.message_type == 0x24:
             print("connect to sekiro server success")
             return
@@ -142,7 +142,7 @@ class _InvokerConn(AbsSekiroConn):
         seq = self._seq
         self._seq += 1
 
-        sekiro_packet = _SekiroPacket()
+        sekiro_packet = _RpcPacket()
         sekiro_packet.message_type = 0x31
         sekiro_packet.seq = seq
 
@@ -171,7 +171,7 @@ class _InvokerConn(AbsSekiroConn):
         return ret
 
 
-class SekiroInvoker:
+class RpcInvoker:
     def __init__(self, api_token="", server_list=None):
         if server_list is None:
             server_list = ["sekiro.iinti.cn:5612"]

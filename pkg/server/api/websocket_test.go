@@ -30,8 +30,8 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 func TestHandleRegister_MissingParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
-	mockSekiroHandler := wsHandler.NewHandler(mockManager, nil, nil)
-	handler := NewWebSocketHandler(mockSekiroHandler)
+	mockRpcHandler := wsHandler.NewHandler(mockManager, nil, nil)
+	handler := NewWebSocketHandler(mockRpcHandler)
 
 	// 创建 gin engine 并注册路由
 	router := gin.New()
@@ -55,8 +55,8 @@ func TestHandleRegister_MissingParams(t *testing.T) {
 func TestHandleRegister_ValidParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
-	mockSekiroHandler := wsHandler.NewHandler(mockManager, nil, nil)
-	handler := NewWebSocketHandler(mockSekiroHandler)
+	mockRpcHandler := wsHandler.NewHandler(mockManager, nil, nil)
+	handler := NewWebSocketHandler(mockRpcHandler)
 
 	// 创建 gin engine 并注册路由
 	router := gin.New()

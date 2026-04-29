@@ -1,34 +1,34 @@
 package protocol
 
-// SekiroPacketType defines the types of Sekiro packets
-type SekiroPacketType byte
+// RpcPacketType defines the types of Rpc packets
+type RpcPacketType byte
 
 // Packet type constants
 const (
 	// Heartbeat packets
-	PacketTypeHeartbeat SekiroPacketType = 0
+	PacketTypeHeartbeat RpcPacketType = 0
 
 	// Client to Server packets
-	PacketTypeRegister        SekiroPacketType = 16
-	PacketTypeInvokeResponse  SekiroPacketType = 17
-	PacketTypeOffline         SekiroPacketType = 18
-	PacketTypeCmdResponse     SekiroPacketType = 19
-	PacketTypeInvokeStreamClose SekiroPacketType = 20
+	PacketTypeRegister        RpcPacketType = 16
+	PacketTypeInvokeResponse  RpcPacketType = 17
+	PacketTypeOffline         RpcPacketType = 18
+	PacketTypeCmdResponse     RpcPacketType = 19
+	PacketTypeInvokeStreamClose RpcPacketType = 20
 
 	// Server to Client packets
-	PacketTypeSInvoke         SekiroPacketType = 32
-	PacketTypeSCmd            SekiroPacketType = 33
-	PacketTypeSOfflineResponse SekiroPacketType = 34
-	PacketTypeSInvokeResponse SekiroPacketType = 35
-	PacketTypeSInvokeConnected SekiroPacketType = 36
+	PacketTypeSInvoke         RpcPacketType = 32
+	PacketTypeSCmd            RpcPacketType = 33
+	PacketTypeSOfflineResponse RpcPacketType = 34
+	PacketTypeSInvokeResponse RpcPacketType = 35
+	PacketTypeSInvokeConnected RpcPacketType = 36
 
 	// Internal/Invoker packets
-	PacketTypeIConnect        SekiroPacketType = 48
-	PacketTypeIInvoke         SekiroPacketType = 49
+	PacketTypeIConnect        RpcPacketType = 48
+	PacketTypeIInvoke         RpcPacketType = 49
 )
 
 // String returns the string representation of the packet type
-func (t SekiroPacketType) String() string {
+func (t RpcPacketType) String() string {
 	switch t {
 	case PacketTypeHeartbeat:
 		return "HEARTBEAT"
@@ -62,6 +62,6 @@ func (t SekiroPacketType) String() string {
 }
 
 // NewPacket creates a new packet with the given type
-func (t SekiroPacketType) NewPacket() *SekiroPacket {
-	return NewSekiroPacket().SetType(byte(t))
+func (t RpcPacketType) NewPacket() *RpcPacket {
+	return NewRpcPacket().SetType(byte(t))
 }

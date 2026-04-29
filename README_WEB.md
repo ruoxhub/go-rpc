@@ -1,8 +1,8 @@
-# Sekiro Go - Web 管理系统
+# Rpc Go - Web 管理系统
 
 ## 项目概述
 
-这是 Sekiro RPC 系统的 Go 语言实现，包含完整的 Web 管理界面。
+这是 Rpc RPC 系统的 Go 语言实现，包含完整的 Web 管理界面。
 
 ### 技术栈
 

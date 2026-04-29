@@ -12,17 +12,17 @@ import (
 )
 
 type (
-	SekiroResponse interface {
+	RpcResponse interface {
 		Success(data interface{})
 		Fail(errorMsg string)
 	}
 
 	RequestHandler interface {
-		handleRequest(request map[string]interface{}, response SekiroResponse)
+		handleRequest(request map[string]interface{}, response RpcResponse)
 	}
 )
 
-type SekiroClient struct {
+type RpcClient struct {
 	sekiroGroup string
 	server      string
 	ClientId    string
@@ -31,12 +31,12 @@ type SekiroClient struct {
 	running  bool
 }
 
-func (client *SekiroClient) RegisterHandler(action string, handler *RequestHandler) *SekiroClient {
+func (client *RpcClient) RegisterHandler(action string, handler *RequestHandler) *RpcClient {
 	client.handlers[action] = handler
 	return client
 }
 
-func (client *SekiroClient) Start() {
+func (client *RpcClient) Start() {
 	if client.running {
 		return
 	}
@@ -44,11 +44,11 @@ func (client *SekiroClient) Start() {
 	go client.startSync()
 }
 
-func MakeClientDefault(group string) *SekiroClient {
+func MakeClientDefault(group string) *RpcClient {
 	return MakeClient(group, "", "")
 }
 
-func MakeClient(group string, server string, clientId string) *SekiroClient {
+func MakeClient(group string, server string, clientId string) *RpcClient {
 	if group == "" {
 		log.Printf("please setup group param")
 		return nil
@@ -64,7 +64,7 @@ func MakeClient(group string, server string, clientId string) *SekiroClient {
 	print(`       welcome to use sekiro framework
 for more support please visit our website: https://iinti.cn
 `)
-	return &SekiroClient{
+	return &RpcClient{
 		ClientId:    clientId,
 		sekiroGroup: group,
 		server:      server,
@@ -72,7 +72,7 @@ for more support please visit our website: https://iinti.cn
 	}
 }
 
-func (client *SekiroClient) startSync() {
+func (client *RpcClient) startSync() {
 	for client.running {
 		client.runLoop()
 		// loop退出代表网络断开，所以5s后重新连接
@@ -82,7 +82,7 @@ func (client *SekiroClient) startSync() {
 	}
 }
 
-func readSekiroPacket(conn net.Conn) (*SekiroPacket, error) {
+func readRpcPacket(conn net.Conn) (*RpcPacket, error) {
 	magic := int64(0)
 	err := binary.Read(conn, binary.BigEndian, &magic)
 	if err != nil {
@@ -106,7 +106,7 @@ func readSekiroPacket(conn net.Conn) (*SekiroPacket, error) {
 	return decode(body)
 }
 
-func (client *SekiroClient) onSekiroPacket(conn net.Conn, packet *SekiroPacket) {
+func (client *RpcClient) onRpcPacket(conn net.Conn, packet *RpcPacket) {
 	if packet.MessageType == TypeHeartbeat {
 		_, _ = conn.Write(packet.encode())
 		return
@@ -116,7 +116,7 @@ func (client *SekiroClient) onSekiroPacket(conn net.Conn, packet *SekiroPacket) 
 		return
 	}
 
-	sekiroResponse := SekiroResponseImpl{
+	sekiroResponse := RpcResponseImpl{
 		conn:    conn,
 		seq:     packet.seq,
 		respond: false,
@@ -141,11 +141,11 @@ func (client *SekiroClient) onSekiroPacket(conn net.Conn, packet *SekiroPacket) 
 		sekiroResponse.Fail("sekiro no handler for this action")
 		return
 	}
-	var response SekiroResponse = &sekiroResponse
+	var response RpcResponse = &sekiroResponse
 	go (*handler).handleRequest(request, response)
 }
 
-func (client *SekiroClient) runLoop() {
+func (client *RpcClient) runLoop() {
 	log.Printf("begin connect to: %s with clientId:%s", client.server, client.ClientId)
 	conn, err := net.Dial("tcp", client.server)
 	if err != nil {
@@ -154,7 +154,7 @@ func (client *SekiroClient) runLoop() {
 	}
 
 	// write register cmd
-	sekiroPacket := SekiroPacket{
+	sekiroPacket := RpcPacket{
 		seq:         -1,
 		MessageType: CTypeRegister,
 		Headers:     make(map[string]string),
@@ -170,12 +170,12 @@ func (client *SekiroClient) runLoop() {
 
 	// begin loop
 	for true {
-		packet, err := readSekiroPacket(conn)
+		packet, err := readRpcPacket(conn)
 		if err != nil {
 			log.Printf("read sekiro packet error %v", err)
 			_ = conn.Close()
 			break
 		}
-		client.onSekiroPacket(conn, packet)
+		client.onRpcPacket(conn, packet)
 	}
 }

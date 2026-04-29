@@ -1,4 +1,4 @@
-// Package detector implements protocol detection for Sekiro server
+// Package detector implements protocol detection for Rpc server
 package detector
 
 import (

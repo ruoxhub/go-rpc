@@ -13,8 +13,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
-// SekiroHandler handles Sekiro protocol connections
-type SekiroHandler struct {
+// RpcHandler handles Rpc protocol connections
+type RpcHandler struct {
 	conn            net.Conn
 	compressManager *compress.CompressorManager
 	reader          *bufio.Reader
@@ -22,10 +22,10 @@ type SekiroHandler struct {
 	closed          bool
 }
 
-func newSekiroHandler(conn net.Conn, compressManager *compress.CompressorManager, firstRead []byte) *SekiroHandler {
+func newRpcHandler(conn net.Conn, compressManager *compress.CompressorManager, firstRead []byte) *RpcHandler {
 	// Use MultiReader to combine already-read data with remaining connection data
 	reader := bufio.NewReader(io.MultiReader(bytes.NewReader(firstRead), conn))
-	return &SekiroHandler{
+	return &RpcHandler{
 		conn:            conn,
 		compressManager: compressManager,
 		reader:          reader,
@@ -33,7 +33,7 @@ func newSekiroHandler(conn net.Conn, compressManager *compress.CompressorManager
 }
 
 // Handle handles the connection
-func (h *SekiroHandler) Handle(ctx context.Context) error {
+func (h *RpcHandler) Handle(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -58,7 +58,7 @@ func (h *SekiroHandler) Handle(ctx context.Context) error {
 }
 
 // Receive receives a packet
-func (h *SekiroHandler) Receive() (*protocol.SekiroPacket, error) {
+func (h *RpcHandler) Receive() (*protocol.RpcPacket, error) {
 	packet, err := protocol.Decode(h.reader)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func (h *SekiroHandler) Receive() (*protocol.SekiroPacket, error) {
 }
 
 // Send sends a packet
-func (h *SekiroHandler) Send(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) Send(packet *protocol.RpcPacket) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -102,7 +102,7 @@ func (h *SekiroHandler) Send(packet *protocol.SekiroPacket) error {
 }
 
 // Close closes the connection
-func (h *SekiroHandler) Close() error {
+func (h *RpcHandler) Close() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -115,11 +115,11 @@ func (h *SekiroHandler) Close() error {
 }
 
 // handlePacket handles a received packet
-func (h *SekiroHandler) handlePacket(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) handlePacket(packet *protocol.RpcPacket) error {
 	logger.Debugf("Received packet: type=%s, serial=%d",
-		protocol.SekiroPacketType(packet.Type), packet.SerialNumber)
+		protocol.RpcPacketType(packet.Type), packet.SerialNumber)
 
-	switch protocol.SekiroPacketType(packet.Type) {
+	switch protocol.RpcPacketType(packet.Type) {
 	case protocol.PacketTypeHeartbeat:
 		return h.handleHeartbeat(packet)
 	case protocol.PacketTypeRegister:
@@ -129,34 +129,34 @@ func (h *SekiroHandler) handlePacket(packet *protocol.SekiroPacket) error {
 	case protocol.PacketTypeOffline:
 		return h.handleOffline(packet)
 	default:
-		logger.Debugf("Unhandled packet type: %s", protocol.SekiroPacketType(packet.Type))
+		logger.Debugf("Unhandled packet type: %s", protocol.RpcPacketType(packet.Type))
 	}
 
 	return nil
 }
 
 // handleHeartbeat handles heartbeat packets
-func (h *SekiroHandler) handleHeartbeat(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) handleHeartbeat(packet *protocol.RpcPacket) error {
 	logger.Debug("Heartbeat received")
 	// Echo heartbeat back
 	return h.Send(packet)
 }
 
 // handleRegister handles client registration
-func (h *SekiroHandler) handleRegister(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) handleRegister(packet *protocol.RpcPacket) error {
 	logger.Debug("Register packet received")
 	// Registration handling will be implemented with client manager
 	return nil
 }
 
 // handleInvokeResponse handles invoke response
-func (h *SekiroHandler) handleInvokeResponse(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) handleInvokeResponse(packet *protocol.RpcPacket) error {
 	logger.Debug("Invoke response received")
 	return nil
 }
 
 // handleOffline handles client offline
-func (h *SekiroHandler) handleOffline(packet *protocol.SekiroPacket) error {
+func (h *RpcHandler) handleOffline(packet *protocol.RpcPacket) error {
 	logger.Debug("Client offline notification received")
 	return nil
 }

@@ -76,7 +76,7 @@ func NewDefaultNotifier() *DefaultNotifier {
 			Port:     25,
 			Username: "",
 			Password: "",
-			From:     "alert@sekiro.local",
+			From:     "alert@rpc.local",
 			UseTLS:   false,
 		},
 	}
@@ -107,7 +107,7 @@ func (n *DefaultNotifier) SendWebhook(url string, payload *WebhookPayload) error
 
 	// 设置请求头
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "Sekiro-Alert-Notifier/1.0")
+	req.Header.Set("User-Agent", "Rpc-Alert-Notifier/1.0")
 
 	// 发送请求
 	resp, err := n.httpClient.Do(req)
@@ -196,7 +196,7 @@ func BuildEmailBody(history *model.AlertHistory) (string, error) {
 </head>
 <body>
     <div class="header">
-        <h2>🚨 Sekiro 告警通知</h2>
+        <h2>🚨 Rpc 告警通知</h2>
         <p>级别：{{.Level}}</p>
     </div>
 
@@ -223,7 +223,7 @@ func BuildEmailBody(history *model.AlertHistory) (string, error) {
     </div>
 
     <div class="footer">
-        <p>此邮件由 Sekiro 监控系统自动发送，请勿回复。</p>
+        <p>此邮件由 Rpc 监控系统自动发送，请勿回复。</p>
         <p>如需关闭告警，请访问系统管理页面。</p>
     </div>
 </body>
@@ -309,7 +309,7 @@ func SendAlertNotification(notifier Notifier, rule model.AlertRule, history *mod
 				zap.String("email", rule.Email),
 				zap.Error(err))
 		} else {
-			subject := fmt.Sprintf("[%s] Sekiro 告警：%s", history.Level, history.RuleName)
+			subject := fmt.Sprintf("[%s] Rpc 告警：%s", history.Level, history.RuleName)
 			if err := notifier.SendEmail(rule.Email, subject, emailBody); err != nil {
 				lastErr = fmt.Errorf("email: %w", err)
 				logger.Error("Email notification failed",

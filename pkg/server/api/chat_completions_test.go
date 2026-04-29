@@ -70,7 +70,7 @@ func TestChatCompletionNonStreamInvalidConnectionCleansRecord(t *testing.T) {
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
 
-	c1 := client.NewSekiroClient("g1", "c1", nil)
+	c1 := client.NewRpcClient("g1", "c1", nil)
 	c1.SetStatus(client.StatusOnline)
 	mockManager.AddClient("g1", c1)
 
@@ -98,7 +98,7 @@ func TestChatCompletionStreamInvalidConnectionCleansStream(t *testing.T) {
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
 
-	c1 := client.NewSekiroClient("g1", "c1", nil)
+	c1 := client.NewRpcClient("g1", "c1", nil)
 	c1.SetStatus(client.StatusOnline)
 	mockManager.AddClient("g1", c1)
 
