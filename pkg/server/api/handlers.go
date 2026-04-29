@@ -100,6 +100,7 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 // GET /business/groupList
 func (h *APIHandler) HandleGroupList(c *gin.Context) {
 	groups := h.clientManager.GetAllGroups()
+	logger.Debugf("HandleGroupList: raw groups=%v, count=%d", groups, len(groups))
 	filtered, err := h.filterAccessibleGroups(c, groups)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -108,6 +109,7 @@ func (h *APIHandler) HandleGroupList(c *gin.Context) {
 		})
 		return
 	}
+	logger.Debugf("HandleGroupList: filtered groups=%v, count=%d", filtered, len(filtered))
 	c.JSON(http.StatusOK, gin.H{
 		"status":  0,
 		"message": "success",
@@ -823,7 +825,10 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 				filtered = append(filtered, groupName)
 				continue
 			}
-			return nil, fmt.Errorf("failed to verify group access: %w", err)
+			// 数据库查询异常时保守处理：视为匿名分组并保留，避免临时故障导致 groupList 完全不可用
+			logger.Warnf("filterAccessibleGroups: query group_config failed for %s: %v, treating as anonymous", groupName, err)
+			filtered = append(filtered, groupName)
+			continue
 		}
 
 		if user != nil && (user.IsAdmin || user.UserName == group.UserName) {

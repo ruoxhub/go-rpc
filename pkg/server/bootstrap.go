@@ -121,23 +121,31 @@ func (s *Server) Start() error {
 
 	logger.InitLogger(s.config.Debug)
 
-	if err := database.InitFromConfig(
-		s.yamlConfig.Database.Host,
-		s.yamlConfig.Database.Port,
-		s.yamlConfig.Database.User,
-		s.yamlConfig.Database.Password,
-		s.yamlConfig.Database.DBName,
-		s.yamlConfig.Database.SSLMode,
-	); err != nil {
-		logger.Errorf("Failed to initialize database: %v", err)
-		return fmt.Errorf("failed to initialize database: %w", err)
-	}
+	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
+	disableMetrics := s.yamlConfig != nil && s.yamlConfig.DisableMetrics
+	disableAlert := s.yamlConfig != nil && s.yamlConfig.DisableAlert
 
-	if err := database.AutoMigrate(); err != nil {
-		logger.Errorf("Failed to run database migration: %v", err)
-		return fmt.Errorf("failed to run database migration: %w", err)
+	if !disableDB {
+		if err := database.InitFromConfig(
+			s.yamlConfig.Database.Host,
+			s.yamlConfig.Database.Port,
+			s.yamlConfig.Database.User,
+			s.yamlConfig.Database.Password,
+			s.yamlConfig.Database.DBName,
+			s.yamlConfig.Database.SSLMode,
+		); err != nil {
+			logger.Errorf("Failed to initialize database: %v", err)
+			return fmt.Errorf("failed to initialize database: %w", err)
+		}
+
+		if err := database.AutoMigrate(); err != nil {
+			logger.Errorf("Failed to run database migration: %v", err)
+			return fmt.Errorf("failed to run database migration: %w", err)
+		}
+		logger.Info("Database migration completed successfully")
+	} else {
+		logger.Info("Running in DB-less mode (DisableDatabase=true)")
 	}
-	logger.Info("Database migration completed successfully")
 
 	// 启动配置服务（仅启动时加载一次，后续在配置更新时手动触发刷新）
 	if err := s.configService.Refresh(); err != nil {
@@ -147,26 +155,31 @@ func (s *Server) Start() error {
 	logger.Info("Config service started successfully")
 
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
-	s.metricsCollector = metrics.NewCollector(1 * time.Minute)
+
+	if !disableMetrics {
+		s.metricsCollector = metrics.NewCollector(1 * time.Minute)
+	}
 	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService)
 
-	metricsReader := alert.NewDefaultMetricsReader()
-	s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
+	if !disableAlert {
+		metricsReader := alert.NewDefaultMetricsReader()
+		s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
 
-	// 配置 SMTP 通知
-	if s.yamlConfig != nil {
-		smtpConfig := alert.SMTPConfig{
-			Host:     s.yamlConfig.Alert.SMTP.Host,
-			Port:     s.yamlConfig.Alert.SMTP.Port,
-			Username: s.yamlConfig.Alert.SMTP.Username,
-			Password: s.yamlConfig.Alert.SMTP.Password,
-			From:     s.yamlConfig.Alert.SMTP.From,
-			UseTLS:   s.yamlConfig.Alert.SMTP.UseTLS,
+		// 配置 SMTP 通知
+		if s.yamlConfig != nil {
+			smtpConfig := alert.SMTPConfig{
+				Host:     s.yamlConfig.Alert.SMTP.Host,
+				Port:     s.yamlConfig.Alert.SMTP.Port,
+				Username: s.yamlConfig.Alert.SMTP.Username,
+				Password: s.yamlConfig.Alert.SMTP.Password,
+				From:     s.yamlConfig.Alert.SMTP.From,
+				UseTLS:   s.yamlConfig.Alert.SMTP.UseTLS,
+			}
+			s.alertEvaluator.SetSMTPConfig(smtpConfig)
 		}
-		s.alertEvaluator.SetSMTPConfig(smtpConfig)
-	}
 
-	s.alertEvaluator.Start(context.Background())
+		s.alertEvaluator.Start(context.Background())
+	}
 
 	mode := gin.ReleaseMode
 	if s.config.Debug {
@@ -216,8 +229,12 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) registerRoutes() {
-	webui.RegisterRoutes(s.httpServer.Engine())
-	s.httpServer.Engine().GET("/", webui.ServeIndex)
+	disableWebAdmin := s.yamlConfig != nil && s.yamlConfig.DisableWebAdmin
+
+	if !disableWebAdmin {
+		webui.RegisterRoutes(s.httpServer.Engine())
+		s.httpServer.Engine().GET("/", webui.ServeIndex)
+	}
 
 	// 健康检查端点
 	s.httpServer.Engine().GET("/health", func(c *gin.Context) {
@@ -236,7 +253,11 @@ func (s *Server) registerRoutes() {
 			c.JSON(404, gin.H{"error": "Not found"})
 			return
 		}
-		webui.ServePathOrIndex(c)
+		if !disableWebAdmin {
+			webui.ServePathOrIndex(c)
+			return
+		}
+		c.JSON(404, gin.H{"error": "Not found"})
 	})
 
 	business := s.httpServer.Group("/business")
@@ -253,13 +274,17 @@ func (s *Server) registerRoutes() {
 		business.GET("/register", s.handleRegister)
 	}
 
-	handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator, s.configService)
+	if !disableWebAdmin {
+		handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator, s.configService)
+	}
 
 	v1 := s.httpServer.Group("/v1")
 	v1.Use(middleware.NewAuthMiddleware().OptionalAuth())
 	{
 		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
 	}
+
+	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 
 	rpcAPI := s.httpServer.Group("/rpc-api")
 	// 为 /rpc-api 路由添加配置服务上下文
@@ -268,11 +293,13 @@ func (s *Server) registerRoutes() {
 		c.Next()
 	})
 	{
-		userInfo := rpcAPI.Group("/user-info")
-		{
-			userInfo.POST("/login", handlers.HandleLogin)
-			userInfo.POST("/register", handlers.HandleRegister)
-			userInfo.GET("/userInfo", handlers.HandleGetUserInfo)
+		if !disableDB {
+			userInfo := rpcAPI.Group("/user-info")
+			{
+				userInfo.POST("/login", handlers.HandleLogin)
+				userInfo.POST("/register", handlers.HandleRegister)
+				userInfo.GET("/userInfo", handlers.HandleGetUserInfo)
+			}
 		}
 
 		system := rpcAPI.Group("/system")
@@ -281,11 +308,13 @@ func (s *Server) registerRoutes() {
 			system.GET("/systemInfo", handlers.HandleSystemInfo)
 		}
 
-		frontend := rpcAPI.Group("/frontend")
-		{
-			frontend.GET("/listGroup", handlers.HandleFrontendListGroup)
-			frontend.GET("/anonymousGroupList", handlers.HandleFrontendAnonymousGroupList)
-			frontend.GET("/groupDetail", handlers.HandleFrontendGroupDetail)
+		if !disableDB {
+			frontend := rpcAPI.Group("/frontend")
+			{
+				frontend.GET("/listGroup", handlers.HandleFrontendListGroup)
+				frontend.GET("/anonymousGroupList", handlers.HandleFrontendAnonymousGroupList)
+				frontend.GET("/groupDetail", handlers.HandleFrontendGroupDetail)
+			}
 		}
 	}
 }

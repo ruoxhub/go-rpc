@@ -24,6 +24,18 @@ Mode: release
 # Enable CORS (Cross-Origin Resource Sharing)
 Cors: true
 
+# Disable web admin panel and /api routes (minimal RPC-only mode)
+DisableWebAdmin: false
+
+# Disable metrics collection (no DB writes to metric tables)
+DisableMetrics: false
+
+# Disable alert evaluation engine
+DisableAlert: false
+
+# Disable PostgreSQL entirely (DB-less mode, skips migration and DB-dependent routes)
+DisableDatabase: false
+
 # HTTPS configuration (optional)
 HttpsServices:
   IsEnable: false

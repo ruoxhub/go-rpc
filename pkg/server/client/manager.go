@@ -54,6 +54,12 @@ func (m *ClientManager) Unregister(groupName, clientID string) {
 
 	if ok {
 		group.Unregister(clientID)
+		if group.ClientCount() == 0 {
+			m.mu.Lock()
+			delete(m.groups, groupName)
+			m.mu.Unlock()
+			group.Close()
+		}
 	}
 }
 

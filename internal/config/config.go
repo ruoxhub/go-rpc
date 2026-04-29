@@ -23,6 +23,10 @@ type Config struct {
 	Mode           string        `yaml:"Mode"`           // Running mode (debug, release)
 	Cors           bool          `yaml:"Cors"`           // Enable CORS
 	RouterReplace  RouterReplace `yaml:"RouterReplace"`  // Route prefix replacement
+	DisableWebAdmin bool         `yaml:"DisableWebAdmin"` // Disable web admin panel and /api routes
+	DisableMetrics  bool         `yaml:"DisableMetrics"`  // Disable metrics collection
+	DisableAlert    bool         `yaml:"DisableAlert"`    // Disable alert evaluation engine
+	DisableDatabase bool         `yaml:"DisableDatabase"` // Disable PostgreSQL dependency (DB-less mode)
 	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
 	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
 }

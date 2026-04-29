@@ -155,9 +155,10 @@ func (g *RpcGroup) removeFromOrder(clientID string) {
 // Register registers a client to the group
 func (g *RpcGroup) Register(client *RpcClient) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return
 	}
 	g.commandChan <- groupCommand{
@@ -169,9 +170,10 @@ func (g *RpcGroup) Register(client *RpcClient) {
 // Unregister unregisters a client from the group
 func (g *RpcGroup) Unregister(clientID string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return
 	}
 	g.commandChan <- groupCommand{
@@ -183,9 +185,10 @@ func (g *RpcGroup) Unregister(clientID string) {
 // GetClient gets a client by ID
 func (g *RpcGroup) GetClient(clientID string) *RpcClient {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return nil
 	}
 
@@ -202,9 +205,10 @@ func (g *RpcGroup) GetClient(clientID string) *RpcClient {
 // GetAllClients gets all clients in the group
 func (g *RpcGroup) GetAllClients() []*RpcClient {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return nil
 	}
 
@@ -220,9 +224,10 @@ func (g *RpcGroup) GetAllClients() []*RpcClient {
 // AllocateClient allocates a client for invocation
 func (g *RpcGroup) AllocateClient() *RpcClient {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return nil
 	}
 
@@ -263,9 +268,10 @@ func (g *RpcGroup) Name() string {
 // ClientCount returns the number of clients in the group
 func (g *RpcGroup) ClientCount() int {
 	g.mu.Lock()
-	defer g.mu.Unlock()
+	closed := g.closed
+	g.mu.Unlock()
 
-	if g.closed {
+	if closed {
 		return 0
 	}
 

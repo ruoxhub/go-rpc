@@ -22,10 +22,14 @@ var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}
 // ensureDefaultActions ensures default actions exist for a group
 // 当设备连接到正式分组时，自动添加默认 Actions
 func (h *Handler) ensureDefaultActions(groupName string) {
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
 	for _, actionName := range DefaultGroupActions {
 		// 检查 action 是否已存在
 		var count int64
-		if err := database.GetDB().Model(&model.GroupAction{}).
+		if err := db.Model(&model.GroupAction{}).
 			Where("group_name = ? AND action_name = ?", groupName, actionName).
 			Count(&count).Error; err != nil {
 			logger.Warnf("Failed to check action existence: group=%s, action=%s, err=%v", groupName, actionName, err)
@@ -39,7 +43,7 @@ func (h *Handler) ensureDefaultActions(groupName string) {
 				ActionName: actionName,
 				CreateDate: time.Now(),
 			}
-			if err := database.GetDB().Create(&action).Error; err != nil {
+			if err := db.Create(&action).Error; err != nil {
 				logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", groupName, actionName, err)
 			} else {
 				logger.Infof("Default action created: group=%s, action=%s", groupName, actionName)
@@ -51,8 +55,12 @@ func (h *Handler) ensureDefaultActions(groupName string) {
 // isGroupRegistered checks if a group exists in group_config table
 // 检查分组是否已注册（存在于 group_config 表中）
 func (h *Handler) isGroupRegistered(groupName string) bool {
+	db := database.GetDB()
+	if db == nil {
+		return false
+	}
 	var count int64
-	if err := database.GetDB().Model(&model.GroupConfig{}).
+	if err := db.Model(&model.GroupConfig{}).
 		Where("group_name = ?", groupName).
 		Count(&count).Error; err != nil {
 		logger.Warnf("Failed to check group registration: group=%s, err=%v", groupName, err)
@@ -182,21 +190,24 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// Create or update device record in database
 	remoteIP := extractRemoteIP(conn)
 	now := time.Now()
-	device := model.GroupDevice{
-		GroupName:      group,
-		DeviceID:       clientID,
-		RemoteIP:       remoteIP,
-		LastActiveTime: now,
-	}
 
-	// Use FirstOrCreate to avoid duplicate inserts
-	// If record exists, update LastActiveTime
-	if err := database.GetDB().Where("group_name = ? AND device_id = ?", group, clientID).
-		FirstOrCreate(&device).Error; err != nil {
-		logger.Warnf("Failed to create device record: %v", err)
-		// Database error doesn't affect connection establishment
-	} else {
-		logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
+	if db := database.GetDB(); db != nil {
+		device := model.GroupDevice{
+			GroupName:      group,
+			DeviceID:       clientID,
+			RemoteIP:       remoteIP,
+			LastActiveTime: now,
+		}
+
+		// Use FirstOrCreate to avoid duplicate inserts
+		// If record exists, update LastActiveTime
+		if err := db.Where("group_name = ? AND device_id = ?", group, clientID).
+			FirstOrCreate(&device).Error; err != nil {
+			logger.Warnf("Failed to create device record: %v", err)
+			// Database error doesn't affect connection establishment
+		} else {
+			logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
+		}
 	}
 
 	// Register client
@@ -341,10 +352,12 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *RpcMessage) {
 		}
 
 		// Update LastActiveTime in database
-		if err := database.GetDB().Model(&model.GroupDevice{}).
-			Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
-			Update("last_active_time", time.Now()).Error; err != nil {
-			logger.Warnf("Failed to update device last_active_time: %v", err)
+		if db := database.GetDB(); db != nil {
+			if err := db.Model(&model.GroupDevice{}).
+				Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
+				Update("last_active_time", time.Now()).Error; err != nil {
+				logger.Warnf("Failed to update device last_active_time: %v", err)
+			}
 		}
 	}
 
