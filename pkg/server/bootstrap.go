@@ -3,7 +3,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,21 +13,20 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/sekiro-go/sekiro-go/internal/config"
-	"github.com/sekiro-go/sekiro-go/internal/utils/logger"
-	"github.com/sekiro-go/sekiro-go/pkg/database"
-	"github.com/sekiro-go/sekiro-go/pkg/model"
-	"github.com/sekiro-go/sekiro-go/pkg/server/alert"
-	"github.com/sekiro-go/sekiro-go/pkg/server/api"
-	"github.com/sekiro-go/sekiro-go/pkg/server/client"
-	pkgconfig "github.com/sekiro-go/sekiro-go/pkg/server/config"
-	"github.com/sekiro-go/sekiro-go/pkg/server/forwarder"
-	"github.com/sekiro-go/sekiro-go/pkg/server/handlers"
-	"github.com/sekiro-go/sekiro-go/pkg/server/metrics"
-	"github.com/sekiro-go/sekiro-go/pkg/server/middleware"
-	"github.com/sekiro-go/sekiro-go/pkg/server/websocket"
-	webui "github.com/sekiro-go/sekiro-go/web"
-	"gorm.io/gorm"
+	"github.com/mrh30000/go-rpc/internal/config"
+	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/server/alert"
+	"github.com/mrh30000/go-rpc/pkg/server/api"
+	"github.com/mrh30000/go-rpc/pkg/server/client"
+	pkgconfig "github.com/mrh30000/go-rpc/pkg/server/config"
+	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/handlers"
+	"github.com/mrh30000/go-rpc/pkg/server/metrics"
+	"github.com/mrh30000/go-rpc/pkg/server/middleware"
+	"github.com/mrh30000/go-rpc/pkg/server/websocket"
+	webui "github.com/mrh30000/go-rpc/web"
 )
 
 // Config holds server configuration
@@ -299,6 +297,7 @@ func (s *Server) newHTTPConfig(mode string) *api.Config {
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		Mode:         mode,
+		LocalDebug:   s.config.LocalDebug,
 	}
 }
 
@@ -335,14 +334,16 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 	}
 
 	var group model.GroupConfig
-	if err := db.Where("group_name = ?", groupName).First(&group).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true
-		}
+	result := db.Where("group_name = ?", groupName).Limit(1).Find(&group)
+	if result.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to verify group access",
 		})
 		return false
+	}
+	if result.RowsAffected == 0 {
+		// 未找到分组则视为公开分组，允许任意注册
+		return true
 	}
 
 	user, err := middleware.FindUserByToken(middleware.ExtractAuthTokenFromRequest(c))

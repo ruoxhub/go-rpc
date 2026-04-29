@@ -216,7 +216,7 @@ package main
 
 import (
     "log"
-    "github.com/sekiro-go/sekiro-go/pkg/client"
+    "github.com/mrh30000/go-rpc/pkg/client"
 )
 
 func main() {
@@ -247,7 +247,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/sekiro-go/sekiro-go/pkg/client"
+    "github.com/mrh30000/go-rpc/pkg/client"
 )
 
 func main() {

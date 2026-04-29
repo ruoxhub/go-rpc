@@ -1,4 +1,4 @@
-module github.com/sekiro-go/sekiro-go
+module github.com/mrh30000/go-rpc
 
 go 1.25.0
 

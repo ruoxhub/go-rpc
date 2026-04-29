@@ -19,6 +19,7 @@ type Config struct {
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
 	Mode         string // "debug", "release", "test"
+	LocalDebug   bool   // allow all origins in local debug mode
 }
 
 // DefaultConfig returns default HTTP configuration
@@ -53,7 +54,7 @@ func NewHTTPServer(cfg *Config) *HTTPServer {
 		wsUpgrader: &websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			CheckOrigin:     sameOriginOrNoOrigin,
+			CheckOrigin:     func(r *http.Request) bool { return true },
 		},
 	}
 
@@ -153,5 +154,13 @@ func sameOriginOrNoOrigin(r *http.Request) bool {
 	}
 
 	originHost := strings.TrimPrefix(strings.TrimPrefix(origin, "http://"), "https://")
-	return strings.EqualFold(originHost, r.Host)
+	// 去除端口后再比较，允许同域名不同端口的 WebSocket 连接
+	if idx := strings.LastIndex(originHost, ":"); idx != -1 {
+		originHost = originHost[:idx]
+	}
+	reqHost := r.Host
+	if idx := strings.LastIndex(reqHost, ":"); idx != -1 {
+		reqHost = reqHost[:idx]
+	}
+	return strings.EqualFold(originHost, reqHost)
 }

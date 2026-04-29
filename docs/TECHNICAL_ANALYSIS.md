@@ -587,7 +587,7 @@ Mode: debug
 首先克隆项目代码到本地：
 
 ```bash
-git clone https://github.com/sekiro-go/sekiro-go.git
+git clone https://github.com/mrh30000/go-rpc.git
 cd sekiro-go
 ```
 
