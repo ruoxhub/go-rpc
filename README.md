@@ -198,6 +198,18 @@ Mode: release
 # 启用 CORS 跨域
 Cors: true
 
+# 禁用 Web 管理面板和 /api 路由（仅 RPC 模式）
+DisableWebAdmin: false
+
+# 禁用指标采集（不再写入 metric 相关表）
+DisableMetrics: false
+
+# 禁用告警引擎
+DisableAlert: false
+
+# 禁用 PostgreSQL（无数据库模式，跳过迁移和依赖 DB 的路由）
+DisableDatabase: false
+
 # HTTPS 配置（可选）
 HttpsServices:
   IsEnable: false
@@ -210,7 +222,7 @@ RouterReplace:
   IsEnable: false
   ReplaceRoute: "/sekiro"
 
-# 数据库配置（必需）
+# 数据库配置（必需，当 DisableDatabase 为 false 时）
 Database:
   Host: "localhost"
   Port: 5432
@@ -219,7 +231,7 @@ Database:
   DBName: "sekiro"
   SSLMode: "disable"
 
-# 告警 SMTP 配置（可选）
+# 告警 SMTP 配置（可选，当 DisableAlert 为 false 时生效）
 Alert:
   SMTP:
     Host: "smtp.example.com"

@@ -1,7 +1,7 @@
 """
-Sekiro HTTP API Client
+Rpc HTTP API Client
 
-基于 httpx 和 tenacity 的 Sekiro 公开 HTTP API 客户端。
+基于 httpx 和 tenacity 的 Rpc 公开 HTTP API 客户端。
 支持同步/异步调用、自动重试、错误处理。
 
 覆盖端点:
@@ -34,13 +34,13 @@ DEFAULT_BASE_URL = "http://localhost:5612"
 DEFAULT_TIMEOUT = 30.0
 
 
-class SekiroError(Exception):
-    """Sekiro 客户端基础异常"""
+class RpcError(Exception):
+    """Rpc 客户端基础异常"""
     pass
 
 
-class SekiroAPIError(SekiroError):
-    """Sekiro API 返回的业务错误（HTTP 200 但 status != 0）"""
+class RpcAPIError(RpcError):
+    """Rpc API 返回的业务错误（HTTP 200 但 status != 0）"""
 
     def __init__(
         self,
@@ -53,7 +53,7 @@ class SekiroAPIError(SekiroError):
         self.raw_response = raw_response
 
 
-class SekiroHTTPError(SekiroError):
+class RpcHTTPError(RpcError):
     """HTTP 层错误（网络、超时、4xx/5xx 等）"""
 
     def __init__(self, message: str, status_code: Optional[int] = None):
@@ -81,12 +81,12 @@ def _make_retry(attempts: int):
     )
 
 
-class SekiroHTTPClient:
+class RpcHTTPClient:
     """
-    Sekiro 公开 HTTP API 同步客户端
+    Rpc 公开 HTTP API 同步客户端
 
     Usage:
-        >>> client = SekiroHTTPClient(base_url="http://localhost:5612", api_token="your_token")
+        >>> client = RpcHTTPClient(base_url="http://localhost:5612", api_token="your_token")
         >>> print(client.group_list())
         >>> result = client.invoke(group="test", action="hello", params={"name": "world"})
         >>> client.close()
@@ -114,9 +114,6 @@ class SekiroHTTPClient:
             headers["Authorization"] = f"Bearer {self.api_token}"
         return headers
 
-    def _resolve_token(self, token: Optional[str]) -> Optional[str]:
-        return token if token is not None else self.api_token
-
     @_make_retry(3)
     def _request(
         self,
@@ -128,6 +125,9 @@ class SekiroHTTPClient:
         override_timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
         """底层请求方法，自动处理 JSON 序列化与统一响应格式"""
+        # if not self.api_token:
+        #     raise RpcError("api_token is required")
+
         url = f"{self.base_url}{path}"
 
         if params is not None:
@@ -145,22 +145,22 @@ class SekiroHTTPClient:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise SekiroHTTPError(
+            raise RpcHTTPError(
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 status_code=e.response.status_code,
             ) from e
         except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException) as e:
-            raise SekiroHTTPError(f"Request failed: {e}") from e
+            raise RpcHTTPError(f"Request failed: {e}") from e
 
         try:
             data = response.json()
         except json.JSONDecodeError as e:
-            raise SekiroHTTPError(f"Invalid JSON response: {e}") from e
+            raise RpcHTTPError(f"Invalid JSON response: {e}") from e
 
         # 统一响应格式处理（OpenAI 端点除外）
         if isinstance(data, dict) and "status" in data:
             if data["status"] != 0:
-                raise SekiroAPIError(
+                raise RpcAPIError(
                     data.get("message", "Unknown error"),
                     status=data["status"],
                     raw_response=data,
@@ -193,16 +193,11 @@ class SekiroHTTPClient:
     def client_queue(
         self,
         group: str,
-        *,
-        sekiro_token: Optional[str] = None,
     ) -> List[str]:
         """GET /business/clientQueue — 获取某分组下的客户端队列"""
         if not group:
             raise ValueError("group is required")
         params: Dict[str, Any] = {"group": group}
-        token = self._resolve_token(sekiro_token)
-        if token:
-            params["sekiro_token"] = token
         resp = self._request("GET", "/business/clientQueue", params=params)
         return resp.get("data", [])
 
@@ -215,7 +210,6 @@ class SekiroHTTPClient:
         params: Optional[Union[Dict[str, Any], List[Any]]] = None,
         timeout: Optional[int] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         """
         POST /business/invoke — RPC 调用
@@ -226,7 +220,6 @@ class SekiroHTTPClient:
         :param params: 调用参数，需为 JSON 可序列化对象
         :param timeout: 超时时间（秒）
         :param constant_invoke: 一致性哈希开关（如传 "true" 则启用）
-        :param sekiro_token: 访问令牌，默认使用客户端初始化时的 api_token
         """
         if not group or not action:
             raise ValueError("group and action are required")
@@ -238,7 +231,6 @@ class SekiroHTTPClient:
             "params": params,
             "timeout": timeout,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = self._request("POST", "/business/invoke", json_data=payload)
         return resp.get("data")
@@ -250,7 +242,6 @@ class SekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         """POST /business/execjs — 在目标客户端执行 JS 代码"""
         if not group or not code:
@@ -261,7 +252,6 @@ class SekiroHTTPClient:
             "code": code,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = self._request("POST", "/business/execjs", json_data=payload)
         return resp.get("data")
@@ -272,7 +262,6 @@ class SekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         """POST /business/cookie — 获取目标客户端 Cookie"""
         if not group:
@@ -282,7 +271,6 @@ class SekiroHTTPClient:
             "group": group,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = self._request("POST", "/business/cookie", json_data=payload)
         return resp.get("data")
@@ -293,7 +281,6 @@ class SekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         """POST /business/html — 获取目标客户端 HTML"""
         if not group:
@@ -303,7 +290,6 @@ class SekiroHTTPClient:
             "group": group,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = self._request("POST", "/business/html", json_data=payload)
         return resp.get("data")
@@ -317,7 +303,6 @@ class SekiroHTTPClient:
         group: Optional[str] = None,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
@@ -329,7 +314,6 @@ class SekiroHTTPClient:
         :param group: 分组名称
         :param client_id: 指定客户端 ID
         :param constant_invoke: 一致性哈希参数
-        :param sekiro_token: 访问令牌
         :param extra_body: 额外请求参数，将合并到请求体
         """
         if not model:
@@ -349,10 +333,6 @@ class SekiroHTTPClient:
         if constant_invoke is not None:
             payload["constantInvoke"] = constant_invoke
 
-        token = self._resolve_token(sekiro_token)
-        if token is not None:
-            payload["sekiro_token"] = token
-
         if extra_body:
             payload.update(extra_body)
 
@@ -362,25 +342,25 @@ class SekiroHTTPClient:
             response = self._client.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise SekiroHTTPError(
+            raise RpcHTTPError(
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 status_code=e.response.status_code,
             ) from e
         except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException) as e:
-            raise SekiroHTTPError(f"Request failed: {e}") from e
+            raise RpcHTTPError(f"Request failed: {e}") from e
 
         try:
             return response.json()
         except json.JSONDecodeError as e:
-            raise SekiroHTTPError(f"Invalid JSON response: {e}") from e
+            raise RpcHTTPError(f"Invalid JSON response: {e}") from e
 
 
-class AsyncSekiroHTTPClient:
+class AsyncRpcHTTPClient:
     """
-    Sekiro 公开 HTTP API 异步客户端
+    Rpc 公开 HTTP API 异步客户端
 
     Usage:
-        >>> async with AsyncSekiroHTTPClient(api_token="your_token") as client:
+        >>> async with AsyncRpcHTTPClient(api_token="your_token") as client:
         ...     groups = await client.group_list()
         ...     result = await client.invoke("test", "hello", params={"name": "world"})
     """
@@ -407,9 +387,6 @@ class AsyncSekiroHTTPClient:
             headers["Authorization"] = f"Bearer {self.api_token}"
         return headers
 
-    def _resolve_token(self, token: Optional[str]) -> Optional[str]:
-        return token if token is not None else self.api_token
-
     @_make_retry(3)
     async def _request(
         self,
@@ -420,6 +397,9 @@ class AsyncSekiroHTTPClient:
         json_data: Optional[Dict[str, Any]] = None,
         override_timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
+        if not self.api_token:
+            raise RpcError("api_token is required")
+
         url = f"{self.base_url}{path}"
 
         if params is not None:
@@ -437,21 +417,21 @@ class AsyncSekiroHTTPClient:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise SekiroHTTPError(
+            raise RpcHTTPError(
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 status_code=e.response.status_code,
             ) from e
         except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException) as e:
-            raise SekiroHTTPError(f"Request failed: {e}") from e
+            raise RpcHTTPError(f"Request failed: {e}") from e
 
         try:
             data = response.json()
         except json.JSONDecodeError as e:
-            raise SekiroHTTPError(f"Invalid JSON response: {e}") from e
+            raise RpcHTTPError(f"Invalid JSON response: {e}") from e
 
         if isinstance(data, dict) and "status" in data:
             if data["status"] != 0:
-                raise SekiroAPIError(
+                raise RpcAPIError(
                     data.get("message", "Unknown error"),
                     status=data["status"],
                     raw_response=data,
@@ -479,15 +459,10 @@ class AsyncSekiroHTTPClient:
     async def client_queue(
         self,
         group: str,
-        *,
-        sekiro_token: Optional[str] = None,
     ) -> List[str]:
         if not group:
             raise ValueError("group is required")
         params: Dict[str, Any] = {"group": group}
-        token = self._resolve_token(sekiro_token)
-        if token:
-            params["sekiro_token"] = token
         resp = await self._request("GET", "/business/clientQueue", params=params)
         return resp.get("data", [])
 
@@ -500,7 +475,6 @@ class AsyncSekiroHTTPClient:
         params: Optional[Union[Dict[str, Any], List[Any]]] = None,
         timeout: Optional[int] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         if not group or not action:
             raise ValueError("group and action are required")
@@ -511,7 +485,6 @@ class AsyncSekiroHTTPClient:
             "params": params,
             "timeout": timeout,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = await self._request("POST", "/business/invoke", json_data=payload)
         return resp.get("data")
@@ -523,7 +496,6 @@ class AsyncSekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         if not group or not code:
             raise ValueError("group and code are required")
@@ -532,7 +504,6 @@ class AsyncSekiroHTTPClient:
             "code": code,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = await self._request("POST", "/business/execjs", json_data=payload)
         return resp.get("data")
@@ -543,7 +514,6 @@ class AsyncSekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         if not group:
             raise ValueError("group is required")
@@ -551,7 +521,6 @@ class AsyncSekiroHTTPClient:
             "group": group,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = await self._request("POST", "/business/cookie", json_data=payload)
         return resp.get("data")
@@ -562,7 +531,6 @@ class AsyncSekiroHTTPClient:
         *,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
     ) -> Any:
         if not group:
             raise ValueError("group is required")
@@ -570,7 +538,6 @@ class AsyncSekiroHTTPClient:
             "group": group,
             "clientId": client_id,
             "constantInvoke": constant_invoke,
-            "sekiro_token": self._resolve_token(sekiro_token),
         }
         resp = await self._request("POST", "/business/html", json_data=payload)
         return resp.get("data")
@@ -584,7 +551,6 @@ class AsyncSekiroHTTPClient:
         group: Optional[str] = None,
         client_id: Optional[str] = None,
         constant_invoke: Optional[str] = None,
-        sekiro_token: Optional[str] = None,
         extra_body: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not model:
@@ -604,10 +570,6 @@ class AsyncSekiroHTTPClient:
         if constant_invoke is not None:
             payload["constantInvoke"] = constant_invoke
 
-        token = self._resolve_token(sekiro_token)
-        if token is not None:
-            payload["sekiro_token"] = token
-
         if extra_body:
             payload.update(extra_body)
 
@@ -616,14 +578,14 @@ class AsyncSekiroHTTPClient:
             response = await self._client.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise SekiroHTTPError(
+            raise RpcHTTPError(
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 status_code=e.response.status_code,
             ) from e
         except (httpx.ConnectError, httpx.NetworkError, httpx.TimeoutException) as e:
-            raise SekiroHTTPError(f"Request failed: {e}") from e
+            raise RpcHTTPError(f"Request failed: {e}") from e
 
         try:
             return response.json()
         except json.JSONDecodeError as e:
-            raise SekiroHTTPError(f"Invalid JSON response: {e}") from e
+            raise RpcHTTPError(f"Invalid JSON response: {e}") from e
