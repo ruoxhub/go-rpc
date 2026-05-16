@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
@@ -150,14 +149,7 @@ func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatComp
 	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		writeChatError(c, http.StatusOK, "Invalid client connection")
-		return
-	}
-
-	if err := h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON); err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send request: "+err.Error())
@@ -200,13 +192,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 	stream := h.timeoutManager.RegisterStream(sequence, req.Group, targetClient.ClientID, timeout)
 	defer h.timeoutManager.RemoveStream(sequence)
 
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		writeChatError(c, http.StatusOK, "Invalid client connection")
-		return
-	}
-
-	if err := h.wsHandler.SendInvokeRequest(conn, sequence, req.Group, targetClient.ClientID, reqDataJSON, targetClient); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON); err != nil {
 		targetClient.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send request: "+err.Error())
 		return

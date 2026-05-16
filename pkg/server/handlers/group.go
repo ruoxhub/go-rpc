@@ -5,17 +5,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/config"
 	"github.com/mrh30000/go-rpc/pkg/server/middleware"
 )
 
 // GroupHandler 分组管理处理器
-type GroupHandler struct{}
+type GroupHandler struct {
+	groupRepo repository.GroupRepository
+}
 
 // NewGroupHandler 创建分组处理器
-func NewGroupHandler() *GroupHandler {
-	return &GroupHandler{}
+func NewGroupHandler(groupRepo repository.GroupRepository) *GroupHandler {
+	return &GroupHandler{groupRepo: groupRepo}
 }
 
 // GroupListResponse 分组列表响应
@@ -42,45 +45,19 @@ type GroupInfoVO struct {
 
 // List 获取分组列表
 func (h *GroupHandler) List(c *gin.Context) {
-	db := database.GetDB()
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists || user == nil {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		Unauthorized(c, "请先登录")
 		return
 	}
 
-	// 优化版本：使用单次 JOIN + GROUP BY 查询替代 N+1 查询
-	// 查询所有分组及其设备统计信息
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
-
-	var stats []GroupStats
-	query := db.Table("group_config gc").
-		Select(`
-			gc.id,
-			gc.group_name,
-			gc.user_name,
-			gc.quota_qps_group,
-			gc.quota_qps_per_device,
-			gc.create_date,
-			COUNT(gd.id) as total_clients,
-			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
-			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
-		`, activeThreshold, activeThreshold).
-		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name")
-	if !user.IsAdmin {
-		query = query.Where("gc.user_name = ?", user.UserName)
-	}
-	err := query.
-		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
-		Order("gc.create_date DESC").
-		Scan(&stats).Error
-
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	stats, err := h.groupRepo.GetGroupStats(user.UserName, user.IsAdmin, activeThreshold)
 	if err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 构建响应 VO
 	vos := make([]GroupInfoVO, 0, len(stats))
 	for _, s := range stats {
 		vos = append(vos, GroupInfoVO{
@@ -89,34 +66,15 @@ func (h *GroupHandler) List(c *gin.Context) {
 			UserName:          s.UserName,
 			QuotaQpsGroup:     s.QuotaQpsGroup,
 			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
-			CreateTime:        s.CreateDate.Format("2006-01-02 15:04:05"),
+			CreateTime:        s.CreateDate,
 			AvailableClients:  s.AvailableClients,
 			DisabledClients:   s.DisabledClients,
-			// 兼容旧版字段
 			AvailableClientSize: s.AvailableClients,
 			DisableClientSize:   s.DisabledClients,
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-		"total":   int64(len(vos)),
-	})
-}
-
-// GroupStats 分组统计信息 (内部使用)
-type GroupStats struct {
-	ID                int64
-	GroupName         string
-	UserName          string
-	QuotaQpsGroup     float64
-	QuotaQpsPerDevice float64
-	CreateDate        time.Time
-	TotalClients      int64
-	AvailableClients  int64
-	DisabledClients   int64
+	SuccessWithTotal(c, vos, int64(len(vos)))
 }
 
 // CreateGroupRequest 创建分组请求
@@ -130,18 +88,16 @@ type CreateGroupRequest struct {
 func (h *GroupHandler) Create(c *gin.Context) {
 	var req CreateGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 从认证中间件获取当前用户信息
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "请先登录"})
+		Unauthorized(c, "请先登录")
 		return
 	}
 
-	// 获取默认 QPS 配置
 	var defaultGroupQps float64 = 100
 	var defaultDeviceQps float64 = 10
 	cfgSvc, cfgExists := c.Get("configService")
@@ -160,7 +116,6 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		CreateDate:        time.Now(),
 	}
 
-	// 如果用户未指定 QPS，使用默认值
 	if group.QuotaQpsGroup <= 0 {
 		group.QuotaQpsGroup = defaultGroupQps
 	}
@@ -168,12 +123,12 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		group.QuotaQpsPerDevice = defaultDeviceQps
 	}
 
-	if err := database.GetDB().Create(&group).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.groupRepo.CreateGroup(&group); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{"code": 0, "message": "success", "data": group.ID})
+	Success(c, group.ID)
 }
 
 // DeleteGroupRequest 删除分组请求
@@ -185,84 +140,65 @@ type DeleteGroupRequest struct {
 func (h *GroupHandler) Delete(c *gin.Context) {
 	var req DeleteGroupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
-	tx := database.GetDB().Begin()
+	// Use direct DB for transaction
+	db := database.GetDB()
+	tx := db.Begin()
 
-	// 先删除关联的设备和 action
-	if err := tx.Where("group_name = ?", req.GroupName).Delete(&model.GroupDevice{}).Error; err != nil {
+	txRepo := h.groupRepo.WithTx(tx)
+	if err := txRepo.DeleteDevicesByGroup(req.GroupName); err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		InternalError(c, err.Error())
 		return
 	}
-	if err := tx.Where("group_name = ?", req.GroupName).Delete(&model.GroupAction{}).Error; err != nil {
+	if err := txRepo.DeleteActionsByGroup(req.GroupName); err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		InternalError(c, err.Error())
 		return
 	}
-	// 删除分组
-	if err := tx.Where("group_name = ?", req.GroupName).Delete(&model.GroupConfig{}).Error; err != nil {
+	if err := txRepo.DeleteGroup(req.GroupName); err != nil {
 		tx.Rollback()
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		InternalError(c, err.Error())
 		return
 	}
 
 	tx.Commit()
 
-	// 记录审计日志
 	auditDeleteGroup(c, req.GroupName)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 // GetGroupDetail 获取分组详情
 func (h *GroupHandler) GetDetail(c *gin.Context) {
 	groupName := c.Param("groupName")
 
-	group, ok := authorizeGroupAccess(c, groupName)
+	group, ok := authorizeGroupAccess(c, groupName, h.groupRepo)
 	if !ok {
 		return
 	}
 
-	// 优化版本：使用单次查询同时统计活跃和禁用设备数量
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
-
-	var stats struct {
-		Available int64 `json:"available"`
-		Disabled  int64 `json:"disabled"`
-	}
-
-	err := database.GetDB().Model(&model.GroupDevice{}).
-		Select(`
-			SUM(CASE WHEN last_active_time > ? THEN 1 ELSE 0 END) as available,
-			SUM(CASE WHEN last_active_time <= ? THEN 1 ELSE 0 END) as disabled
-		`, activeThreshold, activeThreshold).
-		Where("group_name = ?", groupName).
-		Scan(&stats).Error
-
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	available, disabled, err := h.groupRepo.GetGroupDeviceStats(groupName, activeThreshold)
 	if err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data": gin.H{
+	Success(c, gin.H{
 			"groupName":         group.GroupName,
 			"userName":          group.UserName,
 			"createTime":        group.CreateDate.Format("2006-01-02 15:04:05"),
 			"quotaQpsGroup":     group.QuotaQpsGroup,
 			"quotaQpsPerDevice": group.QuotaQpsPerDevice,
-			"availableClients":  stats.Available,
-			"disabledClients":   stats.Disabled,
-		},
-	})
+			"availableClients":  available,
+			"disabledClients":   disabled,
+		})
 }
 
 // UpdateGroupQpsRequest 更新分组 QPS 请求
@@ -276,10 +212,10 @@ type UpdateGroupQpsRequest struct {
 func (h *GroupHandler) UpdateQps(c *gin.Context) {
 	var req UpdateGroupQpsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
@@ -291,17 +227,13 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 		updates["quota_qps_per_device"] = req.QuotaQpsPerDevice
 	}
 
-	if err := database.GetDB().Model(&model.GroupConfig{}).
-		Where("group_name = ?", req.GroupName).
-		Updates(updates).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.groupRepo.UpdateGroup(req.GroupName, updates); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 记录审计日志
 	auditUpdateQps(c, "group", req.GroupName, req.QuotaQpsGroup)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 // GetGroupDevices 获取分组设备列表
@@ -316,13 +248,13 @@ type DeviceInfoVO struct {
 
 func (h *GroupHandler) GetDevices(c *gin.Context) {
 	groupName := c.Param("groupName")
-	if _, ok := authorizeGroupAccess(c, groupName); !ok {
+	if _, ok := authorizeGroupAccess(c, groupName, h.groupRepo); !ok {
 		return
 	}
 
-	var devices []model.GroupDevice
-	if err := database.GetDB().Where("group_name = ?", groupName).Find(&devices).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	devices, err := h.groupRepo.FindDevicesByGroup(groupName)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
@@ -343,11 +275,7 @@ func (h *GroupHandler) GetDevices(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-	})
+	Success(c, vos)
 }
 
 // DeleteDeviceRequest 删除设备请求
@@ -360,43 +288,36 @@ type DeleteDeviceRequest struct {
 func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 	var req DeleteDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
-		return
-	}
-
-	if err := database.GetDB().Where("group_name = ? AND device_id = ?", req.GroupName, req.DeviceID).
-		Delete(&model.GroupDevice{}).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
-	// 记录审计日志
+	if err := h.groupRepo.DeleteDevice(req.GroupName, req.DeviceID); err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+
 	auditDeleteDevice(c, req.GroupName, req.DeviceID)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 // GetGroupActions 获取分组 Action 列表
 func (h *GroupHandler) GetActions(c *gin.Context) {
 	groupName := c.Param("groupName")
-	if _, ok := authorizeGroupAccess(c, groupName); !ok {
+	if _, ok := authorizeGroupAccess(c, groupName, h.groupRepo); !ok {
 		return
 	}
 
-	var actions []model.GroupAction
-	if err := database.GetDB().Where("group_name = ?", groupName).Find(&actions).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	actions, err := h.groupRepo.FindActionsByGroup(groupName)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    actions,
-	})
+	Success(c, actions)
 }
 
 // AddActionRequest 添加 Action 请求
@@ -409,24 +330,30 @@ type AddActionRequest struct {
 func (h *GroupHandler) AddAction(c *gin.Context) {
 	var req AddActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
-		return
-	}
-
-	// 检查分组是否存在
-	var group model.GroupConfig
-	if err := database.GetDB().Where("group_name = ?", req.GroupName).First(&group).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "group not found"})
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
-	// 检查 action 是否已存在
-	var existing model.GroupAction
-	if err := database.GetDB().Where("group_name = ? AND action_name = ?", req.GroupName, req.ActionName).First(&existing).Error; err == nil {
-		c.JSON(409, gin.H{"code": 409, "message": "action already exists"})
+	group, err := h.groupRepo.FindGroupByName(req.GroupName)
+	if err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+	if group == nil {
+		NotFound(c, "group not found")
+		return
+	}
+
+	existing, err := h.groupRepo.FindAction(req.GroupName, req.ActionName)
+	if err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+	if existing != nil {
+		Error(c, 409, "action already exists")
 		return
 	}
 
@@ -436,16 +363,12 @@ func (h *GroupHandler) AddAction(c *gin.Context) {
 		CreateDate: time.Now(),
 	}
 
-	if err := database.GetDB().Create(&action).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.groupRepo.CreateAction(&action); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    action.ID,
-	})
+	Success(c, action.ID)
 }
 
 // DeleteActionRequest 删除 Action 请求
@@ -458,23 +381,20 @@ type DeleteActionRequest struct {
 func (h *GroupHandler) DeleteAction(c *gin.Context) {
 	var req DeleteActionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
-		return
-	}
-
-	if err := database.GetDB().Where("group_name = ? AND action_name = ?", req.GroupName, req.ActionName).
-		Delete(&model.GroupAction{}).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
-	// 记录审计日志
+	if err := h.groupRepo.DeleteAction(req.GroupName, req.ActionName); err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+
 	auditDeleteAction(c, req.GroupName, req.ActionName)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 // DisableDeviceRequest 禁用/启用设备请求
@@ -488,36 +408,39 @@ type DisableDeviceRequest struct {
 func (h *GroupHandler) DisableDevice(c *gin.Context) {
 	var req DisableDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName); !ok {
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
 		return
 	}
 
-	// 检查设备是否存在
-	var device model.GroupDevice
-	if err := database.GetDB().Where("group_name = ? AND device_id = ?", req.GroupName, req.DeviceID).First(&device).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "device not found"})
+	device, err := h.groupRepo.FindDevice(req.GroupName, req.DeviceID)
+	if err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+	if device == nil {
+		NotFound(c, "device not found")
 		return
 	}
 
 	if req.Disable {
-		// 禁用设备：将最后活跃时间设置为过去
-		if err := database.GetDB().Model(&device).Update("last_active_time", time.Now().Add(-24*time.Hour)).Error; err != nil {
-			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
+			"last_active_time": time.Now().Add(-24 * time.Hour),
+		}); err != nil {
+			InternalError(c, err.Error())
 			return
 		}
 	} else {
-		// 启用设备：更新最后活跃时间为当前
-		if err := database.GetDB().Model(&device).Update("last_active_time", time.Now()).Error; err != nil {
-			c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+		if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
+			"last_active_time": time.Now(),
+		}); err != nil {
+			InternalError(c, err.Error())
 			return
 		}
 	}
 
-	// 记录审计日志
 	auditDisableDevice(c, req.GroupName, req.DeviceID)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }

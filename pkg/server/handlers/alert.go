@@ -1,13 +1,16 @@
 package handlers
 
 import (
+	"fmt"
+
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
 // AlertHandler 告警管理处理器
 type AlertHandler struct {
+	alertRepo repository.AlertRepository
 	evaluator AlertEvaluator
 }
 
@@ -17,8 +20,9 @@ type AlertEvaluator interface {
 }
 
 // NewAlertHandler 创建告警管理处理器
-func NewAlertHandler(evaluator AlertEvaluator) *AlertHandler {
+func NewAlertHandler(alertRepo repository.AlertRepository, evaluator AlertEvaluator) *AlertHandler {
 	return &AlertHandler{
+		alertRepo: alertRepo,
 		evaluator: evaluator,
 	}
 }
@@ -37,10 +41,7 @@ func isValidOperator(op string) bool {
 // validateAlertOperator 验证告警操作符
 func validateAlertOperator(c *gin.Context, op string) bool {
 	if !isValidOperator(op) {
-		c.JSON(400, gin.H{
-			"code":    400,
-			"message": "非法的操作符，应为：>, <, >=, <=, ==, !=",
-		})
+		BadRequest(c, "非法的操作符，应为：>, <, >=, <=, ==, !=")
 		return false
 	}
 	return true
@@ -81,54 +82,34 @@ type CreateAlertRuleRequest struct {
 
 // UpdateAlertRuleRequest 更新告警规则请求
 type UpdateAlertRuleRequest struct {
-	ID          int64   `json:"id" binding:"required"`
-	Name        *string `json:"name"`
-	Description *string `json:"description"`
-	Group       *string `json:"group"`
-	API         *string `json:"api"`
-	MetricName  *string `json:"metricName"`
-	Operator    *string `json:"operator"`
+	ID          int64    `json:"id" binding:"required"`
+	Name        *string  `json:"name"`
+	Description *string  `json:"description"`
+	Group       *string  `json:"group"`
+	API         *string  `json:"api"`
+	MetricName  *string  `json:"metricName"`
+	Operator    *string  `json:"operator"`
 	Threshold   *float64 `json:"threshold"`
-	Window      *int    `json:"window"`
-	WebhookURL  *string `json:"webhookUrl"`
-	Email       *string `json:"email"`
-	Enabled     *bool   `json:"enabled"`
+	Window      *int     `json:"window"`
+	WebhookURL  *string  `json:"webhookUrl"`
+	Email       *string  `json:"email"`
+	Enabled     *bool    `json:"enabled"`
 }
 
 // GetAlertRules 获取告警规则列表
-// GET /api/alerts/rules
 func (h *AlertHandler) GetAlertRules(c *gin.Context) {
 	var query model.AlertRuleQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 构建查询
-	dbQuery := database.GetDB().Table("alert_rule")
-
-	if query.Group != "" {
-		dbQuery = dbQuery.Where("\"group\" = ?", query.Group)
-	}
-	if query.Enabled != nil {
-		dbQuery = dbQuery.Where("enabled = ?", *query.Enabled)
-	}
-
-	// 获取总数
-	var total int64
-	dbQuery.Count(&total)
-
-	// 分页
-	offset := (query.Page - 1) * query.PageSize
-	dbQuery = dbQuery.Offset(offset).Limit(query.PageSize).Order("created_at DESC")
-
-	var rules []model.AlertRule
-	if err := dbQuery.Find(&rules).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	rules, total, err := h.alertRepo.FindRulesByQuery(query)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 转换为 VO
 	var vos []AlertRuleVO
 	for _, rule := range rules {
 		vos = append(vos, AlertRuleVO{
@@ -149,22 +130,22 @@ func (h *AlertHandler) GetAlertRules(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-		"total":   total,
-	})
+	SuccessWithTotal(c, vos, total)
 }
 
 // GetAlertRule 获取告警规则详情
-// GET /api/alerts/rules/:id
 func (h *AlertHandler) GetAlertRule(c *gin.Context) {
 	id := c.Param("id")
 
-	var rule model.AlertRule
-	if err := database.GetDB().First(&rule, id).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "规则不存在"})
+	var ruleID int64
+	if _, err := fmt.Sscanf(id, "%d", &ruleID); err != nil {
+		BadRequest(c, "无效的规则 ID")
+		return
+	}
+
+	rule, err := h.alertRepo.FindRuleByID(ruleID)
+	if err != nil || rule == nil {
+		NotFound(c, "规则不存在")
 		return
 	}
 
@@ -185,23 +166,17 @@ func (h *AlertHandler) GetAlertRule(c *gin.Context) {
 		UpdatedAt:   rule.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vo,
-	})
+	Success(c, vo)
 }
 
 // CreateAlertRule 创建告警规则
-// POST /api/alerts/rules
 func (h *AlertHandler) CreateAlertRule(c *gin.Context) {
 	var req CreateAlertRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 验证操作符
 	if !validateAlertOperator(c, req.Operator) {
 		return
 	}
@@ -220,46 +195,44 @@ func (h *AlertHandler) CreateAlertRule(c *gin.Context) {
 		Enabled:     req.Enabled,
 	}
 
-	if err := database.GetDB().Create(&rule).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "创建失败：" + err.Error()})
+	if err := h.alertRepo.CreateRule(&rule); err != nil {
+		InternalError(c, "创建失败：" + err.Error())
 		return
 	}
 
-	// 重新加载规则
 	if h.evaluator != nil {
 		h.evaluator.ReloadRules()
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    rule,
-	})
+	Success(c, rule)
 }
 
 // UpdateAlertRule 更新告警规则
-// PUT /api/alerts/rules/:id
 func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
 	id := c.Param("id")
 
 	var req UpdateAlertRuleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 验证操作符（如果提供了）
 	if req.Operator != nil && !validateAlertOperator(c, *req.Operator) {
 		return
 	}
 
-	var rule model.AlertRule
-	if err := database.GetDB().First(&rule, id).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "规则不存在"})
+	var ruleID int64
+	if _, err := fmt.Sscanf(id, "%d", &ruleID); err != nil {
+		BadRequest(c, "无效的规则 ID")
 		return
 	}
 
-	// 更新字段（指针字段允许清空）
+	rule, err := h.alertRepo.FindRuleByID(ruleID)
+	if err != nil || rule == nil {
+		NotFound(c, "规则不存在")
+		return
+	}
+
 	if req.Name != nil {
 		rule.Name = *req.Name
 	}
@@ -294,48 +267,38 @@ func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
 		rule.Enabled = *req.Enabled
 	}
 
-	if err := database.GetDB().Save(&rule).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "更新失败：" + err.Error()})
+	if err := h.alertRepo.UpdateRule(rule); err != nil {
+		InternalError(c, "更新失败：" + err.Error())
 		return
 	}
 
-	// 重新加载规则
 	if h.evaluator != nil {
 		h.evaluator.ReloadRules()
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    rule,
-	})
+	Success(c, rule)
 }
 
 // DeleteAlertRule 删除告警规则
-// DELETE /api/alerts/rules/:id
 func (h *AlertHandler) DeleteAlertRule(c *gin.Context) {
 	id := c.Param("id")
 
-	var rule model.AlertRule
-	if err := database.GetDB().First(&rule, id).Error; err != nil {
-		c.JSON(404, gin.H{"code": 404, "message": "规则不存在"})
+	var ruleID int64
+	if _, err := fmt.Sscanf(id, "%d", &ruleID); err != nil {
+		BadRequest(c, "无效的规则 ID")
 		return
 	}
 
-	if err := database.GetDB().Delete(&rule).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "删除失败：" + err.Error()})
+	if err := h.alertRepo.DeleteRule(ruleID); err != nil {
+		InternalError(c, "删除失败：" + err.Error())
 		return
 	}
 
-	// 重新加载规则
 	if h.evaluator != nil {
 		h.evaluator.ReloadRules()
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-	})
+	Success(c, nil)
 }
 
 // AlertHistoryVO 告警历史 VO
@@ -357,48 +320,19 @@ type AlertHistoryVO struct {
 }
 
 // GetAlertHistory 获取告警历史
-// GET /api/alerts/history
 func (h *AlertHandler) GetAlertHistory(c *gin.Context) {
 	var query model.AlertHistoryQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 构建查询
-	dbQuery := database.GetDB().Table("alert_history")
-
-	if query.RuleID > 0 {
-		dbQuery = dbQuery.Where("rule_id = ?", query.RuleID)
-	}
-	if query.Group != "" {
-		dbQuery = dbQuery.Where("\"group\" = ?", query.Group)
-	}
-	if query.Level != "" {
-		dbQuery = dbQuery.Where("level = ?", query.Level)
-	}
-	if query.StartTime != "" {
-		dbQuery = dbQuery.Where("triggered_at >= ?", query.StartTime)
-	}
-	if query.EndTime != "" {
-		dbQuery = dbQuery.Where("triggered_at <= ?", query.EndTime)
-	}
-
-	// 获取总数
-	var total int64
-	dbQuery.Count(&total)
-
-	// 分页
-	offset := (query.Page - 1) * query.PageSize
-	dbQuery = dbQuery.Offset(offset).Limit(query.PageSize).Order("triggered_at DESC")
-
-	var histories []model.AlertHistory
-	if err := dbQuery.Find(&histories).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	histories, total, err := h.alertRepo.FindHistoryByQuery(query)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 转换为 VO
 	var vos []AlertHistoryVO
 	for _, h := range histories {
 		vos = append(vos, AlertHistoryVO{
@@ -419,10 +353,5 @@ func (h *AlertHandler) GetAlertHistory(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-		"total":   total,
-	})
+	SuccessWithTotal(c, vos, total)
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mrh30000/go-rpc/internal/config"
 	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/server/config"
 	"github.com/mrh30000/go-rpc/pkg/server/middleware"
@@ -20,49 +21,32 @@ type LoginRequest struct {
 }
 
 // HandleLogin 处理登录请求
-// POST /rpc-api/user-info/login
 func HandleLogin(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(400, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiBadRequest(c, err.Error())
 		return
 	}
 
-	// 查询用户
 	var user model.UserInfo
 	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&user).Error; err != nil {
-		c.JSON(401, gin.H{
-			"status":  -1,
-			"message": "用户名或密码错误",
-		})
+		RpcApiUnauthorized(c, "用户名或密码错误")
 		return
 	}
 
-	// 验证密码
 	if !password.CheckPassword(req.Password, user.Password) {
-		c.JSON(401, gin.H{
-			"status":  -1,
-			"message": "用户名或密码错误",
-		})
+		RpcApiUnauthorized(c, "用户名或密码错误")
 		return
 	}
 
-	// 更新最后登录时间
 	database.GetDB().Model(&user).Update("last_active", time.Now())
 
-	// 返回用户信息（包含 loginToken 和 apiToken）
 	updateTime := ""
 	if user.UpdateTime != nil {
 		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data": gin.H{
+	RpcApiSuccess(c, gin.H{
 			"id":         user.ID,
 			"userName":   user.UserName,
 			"lastActive": user.LastActive.Format("2006-01-02T15:04:05"),
@@ -73,49 +57,32 @@ func HandleLogin(c *gin.Context) {
 			"updateTime": updateTime,
 			"permission": user.Permission,
 			"quotaQps":   user.QuotaQps,
-		},
-	})
+		})
 }
 
 // HandleGetUserInfo 获取当前用户信息
-// GET /rpc-api/user-info/userInfo
 func HandleGetUserInfo(c *gin.Context) {
 	token := middleware.ExtractAuthTokenFromRequest(c)
 	if token == "" {
-		c.JSON(200, gin.H{
-			"status":  -1,
-			"message": "请重新登录",
-			"ok":      false,
-		})
+		RpcApiError(c, -1, "请重新登录")
 		return
 	}
 
 	user, err := middleware.FindUserByToken(token)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"status":  -1,
-			"message": "请重新登录",
-			"ok":      false,
-		})
+		RpcApiError(c, -1, "请重新登录")
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data": gin.H{
-			"id":       user.ID,
-			"userName": user.UserName,
-			"isAdmin":  user.IsAdmin,
-		},
-		"ok": true,
+	RpcApiSuccess(c, gin.H{
+		"id":       user.ID,
+		"userName": user.UserName,
+		"isAdmin":  user.IsAdmin,
 	})
 }
 
 // HandleSystemNotice 获取系统通知
-// GET /rpc-api/system/systemNotice
 func HandleSystemNotice(c *gin.Context) {
-	// 从 context 获取配置服务
 	cfgSvc, exists := c.Get("configService")
 	var systemNotice string = ""
 	if exists {
@@ -124,43 +91,41 @@ func HandleSystemNotice(c *gin.Context) {
 		}
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data":    systemNotice,
-	})
+	RpcApiSuccess(c, systemNotice)
 }
 
 // HandleSystemInfo 获取系统信息
-// GET /rpc-api/system/systemInfo
 func HandleSystemInfo(c *gin.Context) {
 	yamlConfig := config.DefaultConfig()
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data": gin.H{
-			"version":       "1.0.0",
-			"buildTime":     "2026-03-20",
-			"expireTime":    time.Now().AddDate(0, 1, 0).Format("2006-01-02 15:04"), // 一个月后过期
-			"isExpire":      false,
-			"mode":          yamlConfig.Mode,
-			"cors":          yamlConfig.Cors,
-			"port":          yamlConfig.Port,
-			"host":          yamlConfig.Host,
-			"database":      "postgresql",
-			"clientVersion": "Go Rpc v1.0.0",
-		},
+	RpcApiSuccess(c, gin.H{
+		"version":       "1.0.0",
+		"buildTime":     "2026-03-20",
+		"expireTime":    time.Now().AddDate(0, 1, 0).Format("2006-01-02 15:04"),
+		"isExpire":      false,
+		"mode":          yamlConfig.Mode,
+		"cors":          yamlConfig.Cors,
+		"port":          yamlConfig.Port,
+		"host":          yamlConfig.Host,
+		"database":      "postgresql",
+		"clientVersion": "Go Rpc v1.0.0",
 	})
 }
 
 // HandleFrontendListGroup 获取分组列表（前端兼容接口）
-// GET /rpc-api/frontend/listGroup
 func HandleFrontendListGroup(c *gin.Context) {
+	// Try to use groupRepo from context if available
+	if groupRepo, exists := c.Get("groupRepo"); exists {
+		if gr, ok := groupRepo.(repository.GroupRepository); ok {
+			listGroupViaRepo(c, gr)
+			return
+		}
+	}
+
+	// Fallback: use direct DB
 	db := database.GetDB()
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
 
-	// 使用优化版本：单次 JOIN + GROUP BY 查询替代 N+1 查询
 	var stats []struct {
 		ID                int64     `json:"id"`
 		GroupName         string    `json:"groupName"`
@@ -174,12 +139,8 @@ func HandleFrontendListGroup(c *gin.Context) {
 
 	err := db.Table("group_config gc").
 		Select(`
-			gc.id,
-			gc.group_name,
-			gc.user_name,
-			gc.quota_qps_group,
-			gc.quota_qps_per_device,
-			gc.create_date,
+			gc.id, gc.group_name, gc.user_name,
+			gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date,
 			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
 			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
 		`, activeThreshold, activeThreshold).
@@ -189,14 +150,10 @@ func HandleFrontendListGroup(c *gin.Context) {
 		Scan(&stats).Error
 
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiInternalError(c, err.Error())
 		return
 	}
 
-	// 构建响应 VO
 	vos := make([]GroupInfoVO, 0, len(stats))
 	for _, s := range stats {
 		vos = append(vos, GroupInfoVO{
@@ -211,37 +168,94 @@ func HandleFrontendListGroup(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data":    vos,
-		"ok":      true,
-	})
+	RpcApiSuccess(c, vos)
 }
 
-// HandleFrontendAnonymousGroupList 获取匿名分组列表（前端兼容接口）
-// GET /rpc-api/frontend/anonymousGroupList
-func HandleFrontendAnonymousGroupList(c *gin.Context) {
-	anonymousHandler := NewAnonymousGroupHandler()
-	anonymousHandler.ListOptimized(c)
-}
-
-// HandleFrontendGroupDetail 获取分组详情（前端兼容接口）
-// GET /rpc-api/frontend/groupDetail?groupName=xxx
-func HandleFrontendGroupDetail(c *gin.Context) {
-	groupName := c.Query("groupName")
-	if groupName == "" {
-		c.JSON(400, gin.H{
-			"status":  -1,
-			"message": "groupName 参数必填",
-		})
+// listGroupViaRepo 使用 GroupRepository 查询分组列表（前端格式）
+func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	stats, err := groupRepo.GetGroupStats("", true, activeThreshold)
+	if err != nil {
+		RpcApiInternalError(c, err.Error())
 		return
 	}
 
-	// 将 groupName 设置为 URL 参数，以便 GetDetail 方法可以读取
+	vos := make([]GroupInfoVO, 0, len(stats))
+	for _, s := range stats {
+		vos = append(vos, GroupInfoVO{
+			ID:                s.ID,
+			GroupName:         s.GroupName,
+			UserName:          s.UserName,
+			QuotaQpsGroup:     s.QuotaQpsGroup,
+			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
+			CreateTime:        s.CreateDate,
+			AvailableClients:  s.AvailableClients,
+			DisableClientSize: s.DisabledClients,
+		})
+	}
+
+	RpcApiSuccess(c, vos)
+}
+
+// HandleFrontendAnonymousGroupList 获取匿名分组列表
+func HandleFrontendAnonymousGroupList(c *gin.Context) {
+	// Use groupRepo if available in context
+	if groupRepo, exists := c.Get("groupRepo"); exists {
+		if gr, ok := groupRepo.(repository.GroupRepository); ok {
+			listAnonymousViaRepo(c, gr)
+			return
+		}
+	}
+	anonymousHandler := NewAnonymousGroupHandler(nil)
+	anonymousHandler.List(c)
+}
+
+// listAnonymousViaRepo 使用 GroupRepository 查询匿名分组列表
+func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	stats, err := groupRepo.FindAnonymousDeviceGroups(activeThreshold)
+	if err != nil {
+		RpcApiInternalError(c, err.Error())
+		return
+	}
+
+	vos := make([]AnonymousGroupVO, len(stats))
+	for i, s := range stats {
+		vos[i] = AnonymousGroupVO{
+			GroupName:        s.GroupName,
+			AvailableClients: s.AvailableClients,
+			DisabledClients:  s.DisabledClients,
+			TotalClients:     s.TotalClients,
+		}
+	}
+
+	if len(vos) == 0 {
+		vos = []AnonymousGroupVO{}
+	}
+
+	RpcApiSuccess(c, vos)
+}
+
+// HandleFrontendGroupDetail 获取分组详情
+func HandleFrontendGroupDetail(c *gin.Context) {
+	groupName := c.Query("groupName")
+	if groupName == "" {
+		RpcApiBadRequest(c, "groupName 参数必填")
+		return
+	}
+
 	c.Params = append(c.Params, gin.Param{Key: "groupName", Value: groupName})
 
-	groupHandler := NewGroupHandler()
+	// Use groupRepo if available in context
+	if groupRepo, exists := c.Get("groupRepo"); exists {
+		if gr, ok := groupRepo.(repository.GroupRepository); ok {
+			groupHandler := NewGroupHandler(gr)
+			groupHandler.GetDetail(c)
+			return
+		}
+	}
+
+	groupHandler := NewGroupHandler(nil)
 	groupHandler.GetDetail(c)
 }
 
@@ -252,19 +266,14 @@ type RegisterRequest struct {
 }
 
 // HandleRegister 处理注册请求
-// POST /rpc-api/user-info/register
 func HandleRegister(c *gin.Context) {
-	// 检查是否允许注册
 	cfgSvc, exists := c.Get("configService")
 	if !exists {
 		// 配置服务未初始化，使用默认值允许注册
 	} else {
 		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
 			if !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
-				c.JSON(403, gin.H{
-					"status":  -1,
-					"message": "当前不允许注册新用户",
-				})
+				RpcApiForbidden(c, "当前不允许注册新用户")
 				return
 			}
 		}
@@ -272,36 +281,24 @@ func HandleRegister(c *gin.Context) {
 
 	var req RegisterRequest
 	if err := c.ShouldBind(&req); err != nil {
-		c.JSON(400, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiBadRequest(c, err.Error())
 		return
 	}
 
-	// 检查用户是否已存在
 	var existingUser model.UserInfo
 	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&existingUser).Error; err == nil {
-		c.JSON(200, gin.H{
-			"status":  -1,
-			"message": "用户名已存在",
-		})
+		RpcApiError(c, -1, "用户名已存在")
 		return
 	}
 
 	now := time.Now()
 
-	// 哈希密码
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status":  -1,
-			"message": "密码加密失败",
-		})
+		RpcApiInternalError(c, "密码加密失败")
 		return
 	}
 
-	// 获取默认 QPS 配置
 	var defaultQps float64 = 100
 	if cfgSvc != nil {
 		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
@@ -322,20 +319,13 @@ func HandleRegister(c *gin.Context) {
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
-		c.JSON(500, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiInternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "注册成功",
-		"data": gin.H{
-			"id":       user.ID,
-			"userName": user.UserName,
-		},
+	RpcApiSuccess(c, gin.H{
+		"id":       user.ID,
+		"userName": user.UserName,
 	})
 }
 
@@ -343,22 +333,15 @@ func HandleRegister(c *gin.Context) {
 func HandleUserAdd(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiBadRequest(c, err.Error())
 		return
 	}
 
 	now := time.Now()
 
-	// 哈希密码
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status":  -1,
-			"message": "密码加密失败",
-		})
+		RpcApiInternalError(c, "密码加密失败")
 		return
 	}
 
@@ -375,16 +358,9 @@ func HandleUserAdd(c *gin.Context) {
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
-		c.JSON(500, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		RpcApiInternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":  0,
-		"message": "success",
-		"data":    user.ID,
-	})
+	RpcApiSuccess(c, user.ID)
 }

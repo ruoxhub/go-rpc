@@ -2,19 +2,19 @@ package handlers
 
 import (
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/pkg/database"
-	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 )
 
 // MetricHandler 监控指标处理器
-type MetricHandler struct{}
+type MetricHandler struct {
+	metricRepo repository.MetricRepository
+}
 
 // NewMetricHandler 创建监控指标处理器
-func NewMetricHandler() *MetricHandler {
-	return &MetricHandler{}
+func NewMetricHandler(metricRepo repository.MetricRepository) *MetricHandler {
+	return &MetricHandler{metricRepo: metricRepo}
 }
 
 // MetricDataVO 指标数据 VO
@@ -39,11 +39,10 @@ type GetMetricsRequest struct {
 func (h *MetricHandler) GetMetrics(c *gin.Context) {
 	var req GetMetricsRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	var metrics []model.MetricMinute
 	table := "metric_minute"
 	switch req.TimeRange {
 	case "hours":
@@ -52,13 +51,9 @@ func (h *MetricHandler) GetMetrics(c *gin.Context) {
 		table = "metric_day"
 	}
 
-	query := database.GetDB().Table(table)
-	if req.Name != "" {
-		query = query.Where("name = ?", req.Name)
-	}
-
-	if err := query.Order("time_key DESC").Limit(100).Find(&metrics).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	metrics, err := h.metricRepo.FindMetrics(table, req.Name, req.StartTime, req.EndTime, 100)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
@@ -91,90 +86,49 @@ func (h *MetricHandler) GetMetrics(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-	})
+	Success(c, vos)
 }
 
 // GetMetricList 获取指标列表
 func (h *MetricHandler) GetMetricList(c *gin.Context) {
-	var metricTags []model.MetricTag
-	if err := database.GetDB().Find(&metricTags).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	tags, err := h.metricRepo.FindMetricTags()
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    metricTags,
-	})
+	Success(c, tags)
 }
 
 // GetDashboardData 获取大盘数据
 func (h *MetricHandler) GetDashboardData(c *gin.Context) {
-	// 获取调用量统计
-	var totalCalls int64
-	database.GetDB().Table("metric_minute").Select("SUM(value)").Where("type = ?", "counter").Scan(&totalCalls)
+	data, err := h.metricRepo.GetDashboardData()
+	if err != nil {
+		InternalError(c, err.Error())
+		return
+	}
 
-	// 获取在线设备数
-	var onlineDevices int64
-	database.GetDB().Table("group_device").Where("last_active_time > ?", time.Now().Add(-5*time.Minute)).Count(&onlineDevices)
-
-	// 获取分组总数
-	var totalGroups int64
-	database.GetDB().Table("group_config").Count(&totalGroups)
-
-	// 获取用户总数
-	var totalUsers int64
-	database.GetDB().Table("user_info").Count(&totalUsers)
-
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data": gin.H{
-			"totalCalls":    totalCalls,
-			"onlineDevices": onlineDevices,
-			"totalGroups":   totalGroups,
-			"totalUsers":    totalUsers,
-		},
-	})
+	Success(c, gin.H{
+			"totalCalls":    data.TotalCalls,
+			"onlineDevices": data.OnlineDevices,
+			"totalGroups":   data.TotalGroups,
+			"totalUsers":    data.TotalUsers,
+		})
 }
 
 // GetLatencyPercentiles 获取延迟百分位数（P50/P90/P99）
-// GET /api/metrics/latency/percentiles
 func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 	group := c.Query("group")
 	api := c.Query("api")
 	startTime := c.Query("startTime")
 	endTime := c.Query("endTime")
 
-	// 构建查询
-	query := database.GetDB().Table("metric_minute").Where("type = ?", "latency")
-
-	if group != "" {
-		query = query.Where("tag1 = ?", group)
-	}
-	if api != "" {
-		query = query.Where("tag2 = ?", api)
-	}
-	if startTime != "" {
-		query = query.Where("time_key >= ?", startTime)
-	}
-	if endTime != "" {
-		query = query.Where("time_key <= ?", endTime)
-	}
-
-	// 获取 P50/P90/P99 指标
-	var latencyMetrics []model.MetricMinute
-	if err := query.Where("name LIKE ? OR name LIKE ? OR name LIKE ?", "%.p%", "%_p%", "%.latency").Find(&latencyMetrics).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	latencyMetrics, err := h.metricRepo.GetLatencyPercentiles(group, api, startTime, endTime)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 按 API 分组
 	type LatencyStats struct {
 		API   string  `json:"api"`
 		Group string  `json:"group"`
@@ -193,7 +147,6 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 			}
 		}
 
-		// 从 name 中提取百分位数并赋值，如 "invoke.latency.p50" -> p50
 		stats := apiStats[key]
 		if strings.Contains(m.Name, ".p50") || strings.HasSuffix(m.Name, "_p50") {
 			stats.P50 = m.Value
@@ -204,15 +157,10 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 		}
 	}
 
-	// 转换为数组
 	var result []LatencyStats
 	for _, stats := range apiStats {
 		result = append(result, *stats)
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    result,
-	})
+	Success(c, result)
 }

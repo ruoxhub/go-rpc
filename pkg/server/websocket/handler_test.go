@@ -41,7 +41,7 @@ func TestHandler_NewHandler(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil)
 	defer handler.Shutdown()
 
 	if handler.clientManager == nil {
@@ -58,7 +58,7 @@ func TestHandler_NewHandler(t *testing.T) {
 func TestHandler_DefaultConfig(t *testing.T) {
 	manager := client.NewClientManager()
 
-	handler := NewHandler(manager, nil, nil)
+	handler := NewHandler(manager, nil, nil, nil)
 	defer handler.Shutdown()
 
 	if handler.timeoutManager == nil {
@@ -70,7 +70,7 @@ func TestHandler_GetTimeoutManager(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil)
 	defer handler.Shutdown()
 
 	got := handler.GetTimeoutManager()
@@ -83,7 +83,7 @@ func TestHandler_Shutdown(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil)
 
 	// Shutdown should not panic
 	handler.Shutdown()

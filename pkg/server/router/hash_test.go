@@ -31,16 +31,31 @@ func TestConsistentHashRing_Add(t *testing.T) {
 	ring.Add("client-2")
 	ring.Add("client-3")
 
-	if ring.Len() != 3 {
-		t.Errorf("Expected 3 nodes, got %d", ring.Len())
+	expectedVNodes := 3 * defaultVirtualNodeCount
+	if ring.Len() != expectedVNodes {
+		t.Errorf("Expected %d virtual nodes (3 physical × %d vnodes), got %d", expectedVNodes, defaultVirtualNodeCount, ring.Len())
+	}
+
+	if ring.PhysicalNodeCount() != 3 {
+		t.Errorf("Expected 3 physical nodes, got %d", ring.PhysicalNodeCount())
 	}
 
 	// Verify nodes are sorted by hash
-	if ring.nodes[0].Hash > ring.nodes[1].Hash {
-		t.Error("Nodes should be sorted by hash")
+	for i := 1; i < ring.Len(); i++ {
+		if ring.nodes[i-1].Hash > ring.nodes[i].Hash {
+			t.Error("Nodes should be sorted by hash")
+		}
 	}
-	if ring.nodes[1].Hash > ring.nodes[2].Hash {
-		t.Error("Nodes should be sorted by hash")
+
+	// Verify all virtual nodes point back to correct physical nodes
+	physicalCount := make(map[string]int)
+	for _, node := range ring.nodes {
+		physicalCount[node.PhysicalClientID]++
+	}
+	for _, id := range []string{"client-1", "client-2", "client-3"} {
+		if count := physicalCount[id]; count != defaultVirtualNodeCount {
+			t.Errorf("Physical node %s should have %d virtual nodes, got %d", id, defaultVirtualNodeCount, count)
+		}
 	}
 }
 
@@ -54,14 +69,19 @@ func TestConsistentHashRing_Remove(t *testing.T) {
 	// Remove middle node
 	ring.Remove("client-2")
 
-	if ring.Len() != 2 {
-		t.Errorf("Expected 2 nodes after removal, got %d", ring.Len())
+	expectedVNodes := 2 * defaultVirtualNodeCount
+	if ring.Len() != expectedVNodes {
+		t.Errorf("Expected %d virtual nodes after removal, got %d", expectedVNodes, ring.Len())
 	}
 
-	// Verify client-2 is removed
+	if ring.PhysicalNodeCount() != 2 {
+		t.Errorf("Expected 2 physical nodes after removal, got %d", ring.PhysicalNodeCount())
+	}
+
+	// Verify client-2 virtual nodes are removed
 	for _, node := range ring.nodes {
-		if node.ClientID == "client-2" {
-			t.Error("client-2 should be removed")
+		if node.PhysicalClientID == "client-2" {
+			t.Error("client-2 virtual nodes should be removed")
 		}
 	}
 }
@@ -79,19 +99,25 @@ func TestConsistentHashRing_Get(t *testing.T) {
 	ring.Add("client-2")
 	ring.Add("client-3")
 
-	// Same key should always route to same node
+	// Same key should always route to same physical node
 	key := "test-key"
 	node1 := ring.Get(key)
 	node2 := ring.Get(key)
 	if node1 != node2 {
-		t.Errorf("Expected same node, got %s and %s", node1, node2)
+		t.Errorf("Expected same physical node for same key, got %s and %s", node1, node2)
 	}
 
-	// Different keys should (likely) route to different nodes
-	node3 := ring.Get("different-key")
-	if node3 == node1 {
-		// This is technically okay due to hash collisions, but unlikely
-		t.Log("Warning: Different keys routed to same node (hash collision)")
+	// Get should return physical client IDs (not virtual node keys)
+	for i := 0; i < 20; i++ {
+		k := string(rune('a' + i))
+		result := ring.Get(k)
+		if result == "" {
+			t.Errorf("Expected non-empty result for key %q", k)
+		}
+		// Should be one of the physical nodes
+		if result != "client-1" && result != "client-2" && result != "client-3" {
+			t.Errorf("Expected physical node ID, got %q", result)
+		}
 	}
 }
 
@@ -120,19 +146,89 @@ func TestConsistentHashRing_Removal_Reroute(t *testing.T) {
 	key := "test-key"
 	initialNode := ring.Get(key)
 
-	// Remove the node responsible for this key
+	// Remove the physical node responsible for this key
 	if initialNode != "" {
 		ring.Remove(initialNode)
 
-		// Key should now route to a different node
+		// Key should now route to a different physical node
 		newNode := ring.Get(key)
 		if newNode == initialNode {
-			t.Error("Key should route to different node after removal")
+			t.Error("Key should route to different physical node after removal")
 		}
 		if newNode == "" {
-			t.Error("Key should still route to a node")
+			t.Error("Key should still route to a node after removal")
 		}
 	}
+}
+
+func TestConsistentHashRing_WithSingleVNode(t *testing.T) {
+	ring := NewConsistentHashRingWithVirtualNodes(1)
+
+	ring.Add("client-1")
+	ring.Add("client-2")
+	ring.Add("client-3")
+
+	if ring.Len() != 3 {
+		t.Errorf("Expected 3 nodes (1 vnode each), got %d", ring.Len())
+	}
+
+	// Same key should route to same node
+	key := "test-key"
+	node1 := ring.Get(key)
+	node2 := ring.Get(key)
+	if node1 != node2 {
+		t.Errorf("Expected same node, got %s and %s", node1, node2)
+	}
+}
+
+func TestConsistentHashRing_Distribution(t *testing.T) {
+	// With virtual nodes, keys should be more evenly distributed
+	ring := NewConsistentHashRing()
+	ring.Add("client-1")
+	ring.Add("client-2")
+
+	// Route 1000 different keys and count distribution
+	counts := make(map[string]int)
+	for i := 0; i < 1000; i++ {
+		key := string(rune('a'+(i%26))) + string(rune('0'+(i/26)%10))
+		result := ring.Get(key)
+		counts[result]++
+	}
+
+	// With virtual nodes, distribution should be roughly even (40-60% each)
+	total := counts["client-1"] + counts["client-2"]
+	if total != 1000 {
+		t.Errorf("Expected 1000 total routes, got %d", total)
+	}
+
+	ratio1 := float64(counts["client-1"]) / float64(total)
+	if ratio1 < 0.3 || ratio1 > 0.7 {
+		t.Errorf("Expected roughly even distribution (30-70%%), client-1 got %.1f%%", ratio1*100)
+	}
+}
+
+func TestConsistentHashRing_WithoutVirtualNodesDistribution(t *testing.T) {
+	// Without virtual nodes, 2 physical nodes may have very uneven distribution
+	ring := NewConsistentHashRingWithVirtualNodes(1)
+	ring.Add("client-1")
+	ring.Add("client-2")
+
+	counts := make(map[string]int)
+	for i := 0; i < 1000; i++ {
+		key := string(rune('a'+(i%26))) + string(rune('0'+(i/26)%10))
+		result := ring.Get(key)
+		counts[result]++
+	}
+
+	// Without virtual nodes, distribution might be less even, but should still be
+	// within a reasonable range (both nodes get some traffic)
+	total := counts["client-1"] + counts["client-2"]
+	if total != 1000 {
+		t.Errorf("Expected 1000 total routes, got %d", total)
+	}
+
+	ratio1 := float64(counts["client-1"]) / float64(total)
+	t.Logf("Without virtual nodes (2 physical): client-1=%.1f%%, client-2=%.1f%%", ratio1*100, (1-ratio1)*100)
 }
 
 func TestHashKey_Exported(t *testing.T) {

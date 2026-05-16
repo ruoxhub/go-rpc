@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -103,18 +101,11 @@ func (h *APIHandler) HandleGroupList(c *gin.Context) {
 	logger.Debugf("HandleGroupList: raw groups=%v, count=%d", groups, len(groups))
 	filtered, err := h.filterAccessibleGroups(c, groups)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		BusinessServerError(c, err.Error())
 		return
 	}
 	logger.Debugf("HandleGroupList: filtered groups=%v, count=%d", filtered, len(filtered))
-	c.JSON(http.StatusOK, gin.H{
-		"status":  0,
-		"message": "success",
-		"data":    filtered,
-	})
+	BusinessSuccess(c, filtered)
 }
 
 // HandleClientQueue handles /business/clientQueue request
@@ -122,10 +113,7 @@ func (h *APIHandler) HandleGroupList(c *gin.Context) {
 func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 	group := c.Query("group")
 	if group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
+		BusinessError(c, "group parameter required")
 		return
 	}
 	if !h.authorizeRegisteredGroupAccess(c, group, c.Query("sekiro_token")) {
@@ -138,11 +126,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 		clientIDs[i] = c.ClientID
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"status":  0,
-		"message": "success",
-		"data":    clientIDs,
-	})
+	BusinessSuccess(c, clientIDs)
 }
 
 // HandleInvoke handles /business/invoke request
@@ -176,10 +160,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 
 	// 参数验证
 	if req.Action == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "action parameter required",
-		})
+		BusinessError(c, "action parameter required")
 		return
 	}
 
@@ -213,10 +194,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Errorf("ExecJS handler panic recovered: %v", r)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  -1,
-				"message": "服务器内部错误",
-			})
+			BusinessServerError(c, "服务器内部错误")
 		}
 	}()
 
@@ -243,10 +221,7 @@ func (h *APIHandler) HandleExecJS(c *gin.Context) {
 
 	// 参数验证
 	if req.Code == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "code parameter required",
-		})
+		BusinessError(c, "code parameter required")
 		return
 	}
 
@@ -268,10 +243,7 @@ func (h *APIHandler) HandleGetCookie(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Errorf("GetCookie handler panic recovered: %v", r)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  -1,
-				"message": "服务器内部错误",
-			})
+			BusinessServerError(c, "服务器内部错误")
 		}
 	}()
 
@@ -311,10 +283,7 @@ func (h *APIHandler) HandleGetHtml(c *gin.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Errorf("GetHtml handler panic recovered: %v", r)
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"status":  -1,
-				"message": "服务器内部错误",
-			})
+			BusinessServerError(c, "服务器内部错误")
 		}
 	}()
 
@@ -367,37 +336,20 @@ func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, act
 		return nil, nil
 	}
 
-	params := router.RouteParams{GroupName: groupName}
-	strategy := "round_robin"
-	if shouldUseConsistentHash(constantInvoke) {
-		params.HashKey = buildConsistentHashKey(groupName, action, payload)
-		strategy = "consistent_hash"
-	}
-
-	selected := h.router.Route(group, params)
+	// Delegate strategy selection (consistent hash vs round-robin) to the Router.
+	// The Router will auto-detect ConstantInvoke and build the hash key from Action + Payload.
+	selected := h.router.Route(group, router.RouteParams{
+		GroupName:      groupName,
+		ConstantInvoke: constantInvoke,
+		Action:         action,
+		Payload:        payload,
+	})
 	if selected == nil {
 		return nil, nil
 	}
 
-	logger.Infof("Route selected: strategy=%s, group=%s, clientId=%s", strategy, groupName, selected.ClientID)
+	logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
 	return selected, nil
-}
-
-func shouldUseConsistentHash(value string) bool {
-	if value == "" {
-		return false
-	}
-
-	enabled, err := strconv.ParseBool(value)
-	return err == nil && enabled
-}
-
-func buildConsistentHashKey(groupName, action string, payload interface{}) string {
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return groupName + ":" + action
-	}
-	return groupName + ":" + action + ":" + string(encoded)
 }
 
 // ==================== Request Builder Implementations ====================
@@ -560,10 +512,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 
 	// 参数验证
 	if group == "" {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "group parameter required",
-		})
+		BusinessError(c, "group parameter required")
 		return
 	}
 	if !h.authorizeRegisteredGroupAccess(c, group, builder.GetAccessToken()) {
@@ -574,10 +523,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	if builder.ShouldRecordMetrics() && h.configService != nil && h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
 		if constantInvoke == "true" || constantInvoke == "1" {
 			logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", group, action)
-			c.JSON(http.StatusOK, gin.H{
-				"status":  -1,
-				"message": "空转调用被拒绝，请联系管理员配置实际处理逻辑",
-			})
+			BusinessError(c, "空转调用被拒绝，请联系管理员配置实际处理逻辑")
 			return
 		}
 	}
@@ -585,28 +531,19 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	// 构建请求数据
 	reqAction, reqParams, err := builder.BuildRequestData()
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to build request data: " + err.Error(),
-		})
+		BusinessError(c, "Failed to build request data: " + err.Error())
 		return
 	}
 
 	// 分配客户端
 	targetClient, err := h.selectTargetClient(group, clientID, constantInvoke, reqAction, reqParams)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": err.Error(),
-		})
+		BusinessError(c, err.Error())
 		return
 	}
 
 	if targetClient == nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "no client available",
-		})
+		BusinessError(c, "no client available")
 		return
 	}
 
@@ -618,10 +555,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 
 	reqDataJSON, err := marshalJSON(reqData)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"status":  -1,
-			"message": "Failed to marshal request data: " + err.Error(),
-		})
+		BusinessError(c, "Failed to marshal request data: " + err.Error())
 		return
 	}
 
@@ -634,28 +568,15 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	invokeRecord.Timeout = timeout
 
 	// 获取 WebSocket 连接并发送请求
-	conn, ok := targetClient.Connection.(*websocket.Conn)
-	if !ok {
-		h.timeoutManager.Remove(sequence)
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Invalid client connection",
-			"group":    group,
-			"clientId": targetClient.ClientID,
-		})
-		return
-	}
-
-	// 发送 invoke 请求
-	err = h.wsHandler.SendInvokeRequest(conn, sequence, group, targetClient.ClientID, reqDataJSON, targetClient)
+	err = h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON)
 	if err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Failed to send request: " + err.Error(),
-			"group":    group,
-			"clientId": targetClient.ClientID,
+		c.JSON(http.StatusOK, BusinessExtraResponse{
+			Status:   -1,
+			Message:  "Failed to send request: " + err.Error(),
+			Group:    group,
+			ClientID: targetClient.ClientID,
 		})
 		return
 	}
@@ -689,11 +610,11 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 			h.metricsCollector.Incr("invoke.total", map[string]string{"group": group, "api": metricAPI, "status": "timeout"}, 1)
 			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": group, "api": metricAPI}, float64(time.Since(startTime).Milliseconds()))
 		}
-		c.JSON(http.StatusOK, gin.H{
-			"status":   -1,
-			"message":  "Request timeout",
-			"group":    group,
-			"clientId": targetClient.ClientID,
+		c.JSON(http.StatusOK, BusinessExtraResponse{
+			Status:   -1,
+			Message:  "Request timeout",
+			Group:    group,
+			ClientID: targetClient.ClientID,
 		})
 		return
 	case resp := <-responseChan:
@@ -716,11 +637,16 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		}
 
 		if resp.Error != "" {
-			c.JSON(http.StatusOK, gin.H{
-				"status":   resp.Status,
-				"message":  resp.Error,
-				"group":    group,
-				"clientId": targetClient.ClientID,
+			// 使用 resp.Status 可能为 0，此时不视为 -1 错误
+			status := resp.Status
+			if status == 0 {
+				status = -1
+			}
+			c.JSON(http.StatusOK, BusinessExtraResponse{
+				Status:   status,
+				Message:  resp.Error,
+				Group:    group,
+				ClientID: targetClient.ClientID,
 			})
 			return
 		}
@@ -748,12 +674,12 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		}
 
 		// 如果响应不是有效 JSON，当作字符串处理
-		c.JSON(http.StatusOK, gin.H{
-			"status":   resp.Status,
-			"message":  message,
-			"group":    group,
-			"clientId": targetClient.ClientID,
-			"data":     string(resp.Data),
+		c.JSON(http.StatusOK, BusinessExtraResponse{
+			Status:   resp.Status,
+			Message:  message,
+			Group:    group,
+			ClientID: targetClient.ClientID,
+			Data:     string(resp.Data),
 		})
 	}
 }
@@ -769,10 +695,7 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, t
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return true
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  -1,
-			"message": "failed to verify group access: " + err.Error(),
-		})
+		BusinessServerError(c, "failed to verify group access: " + err.Error())
 		return false
 	}
 
@@ -781,18 +704,12 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, t
 	}
 	user, err := middleware.FindUserByToken(token)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"status":  -1,
-			"message": "registered group requires a valid sekiro token",
-		})
+		BusinessUnauthorized(c, "registered group requires a valid sekiro token")
 		return false
 	}
 
 	if !user.IsAdmin && user.UserName != group.UserName {
-		c.JSON(http.StatusForbidden, gin.H{
-			"status":  -1,
-			"message": "no access to registered group",
-		})
+		BusinessForbidden(c, "no access to registered group")
 		return false
 	}
 

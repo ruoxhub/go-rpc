@@ -16,6 +16,8 @@ import (
 	"github.com/mrh30000/go-rpc/internal/config"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/alert"
 	"github.com/mrh30000/go-rpc/pkg/server/api"
@@ -53,6 +55,7 @@ type Server struct {
 	config           *Config
 	yamlConfig       *config.Config
 	shutdown         chan struct{}
+	eventBus         *eventbus.EventBus
 	clientManager    *client.ClientManager
 	httpServer       *api.HTTPServer
 	apiHandler       *api.APIHandler
@@ -68,10 +71,15 @@ type Server struct {
 
 func NewServer(config *Config) *Server {
 	wsCtx, wsCancel := context.WithCancel(context.Background())
+	eb := eventbus.New()
+	cm := client.NewClientManager()
+	cm.SetEventBus(eb)
+
 	return &Server{
 		config:         config,
 		shutdown:       make(chan struct{}),
-		clientManager:  client.NewClientManager(),
+		eventBus:       eb,
+		clientManager:  cm,
 		timeoutManager: forwarder.NewTimeoutManager(nil),
 		configService:  pkgconfig.NewService(),
 		wsCtx:          wsCtx,
@@ -154,12 +162,37 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Config service started successfully")
 
-	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil)
+	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus)
 
 	if !disableMetrics {
 		s.metricsCollector = metrics.NewCollector(1 * time.Minute)
 	}
 	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService)
+
+	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
+	if s.metricsCollector != nil {
+		s.eventBus.Subscribe(eventbus.EventClientConnect, func(event interface{}) {
+			e := event.(*eventbus.ClientConnectEvent)
+			current := s.clientManager.GetClientsByGroup(e.Group)
+			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, float64(len(current)))
+		})
+		s.eventBus.Subscribe(eventbus.EventClientDisconnect, func(event interface{}) {
+			e := event.(*eventbus.ClientDisconnectEvent)
+			current := s.clientManager.GetClientsByGroup(e.Group)
+			count := float64(0)
+			if current != nil {
+				count = float64(len(current))
+			}
+			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, count)
+		})
+	}
+
+	// 注册事件订阅：健康降级 → 记录告警
+	s.eventBus.Subscribe(eventbus.EventClientHealthDegraded, func(event interface{}) {
+		e := event.(*eventbus.ClientHealthDegradedEvent)
+		logger.Warnf("Client health degraded: group=%s, clientId=%s, failCount=%d",
+			e.Group, e.ClientID, e.FailCount)
+	})
 
 	if !disableAlert {
 		metricsReader := alert.NewDefaultMetricsReader()
@@ -275,7 +308,18 @@ func (s *Server) registerRoutes() {
 	}
 
 	if !disableWebAdmin {
-		handlers.SetupWebRoutes(s.httpServer.Engine(), s.alertEvaluator, s.configService)
+		db := database.GetDB()
+		deps := handlers.Deps{
+			UserRepo:       repository.NewUserRepository(db),
+			GroupRepo:      repository.NewGroupRepository(db),
+			SysConfigRepo:  repository.NewSysConfigRepository(db),
+			ServerNodeRepo: repository.NewServerNodeRepository(db),
+			SysLogRepo:     repository.NewSysLogRepository(db),
+			TraceRepo:      repository.NewTraceRepository(db),
+			AlertRepo:      repository.NewAlertRepository(db),
+			MetricRepo:     repository.NewMetricRepository(db),
+		}
+		handlers.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
 	}
 
 	v1 := s.httpServer.Group("/v1")
@@ -287,9 +331,12 @@ func (s *Server) registerRoutes() {
 	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 
 	rpcAPI := s.httpServer.Group("/rpc-api")
-	// 为 /rpc-api 路由添加配置服务上下文
+	// 为 /rpc-api 路由添加配置服务和仓储上下文
 	rpcAPI.Use(func(c *gin.Context) {
 		c.Set("configService", s.configService)
+		if !disableDB {
+			c.Set("groupRepo", repository.NewGroupRepository(database.GetDB()))
+		}
 		c.Next()
 	})
 	{

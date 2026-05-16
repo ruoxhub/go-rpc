@@ -3,6 +3,8 @@ package client
 import (
 	"sync"
 	"time"
+
+	"github.com/mrh30000/go-rpc/pkg/server/transport"
 )
 
 // ClientStatus represents client connection status
@@ -16,27 +18,27 @@ const (
 
 // RpcClient represents a connected Rpc client
 type RpcClient struct {
-	Group      string
-	ClientID   string
-	Connection interface{} // WebSocket connection handler or similar
-	Status     ClientStatus
-	LastActive time.Time
-	// Health check fields
-	IsHealthy bool // whether the client is healthy
-	FailCount int  // consecutive failure count
-	mu        sync.RWMutex
-	writeMu   sync.Mutex // protects WebSocket writes from concurrent access
+	Group             string
+	ClientID          string
+	Connection        transport.Connection
+	Status            ClientStatus
+	LastActive        time.Time
+	IsHealthy         bool
+	FailCount         int
+	OnHealthDegraded  func(client *RpcClient)
+	mu                sync.RWMutex
+	writeMu           sync.Mutex
 }
 
 // NewRpcClient creates a new RpcClient
-func NewRpcClient(group, clientID string, conn interface{}) *RpcClient {
+func NewRpcClient(group, clientID string, conn transport.Connection) *RpcClient {
 	return &RpcClient{
 		Group:      group,
 		ClientID:   clientID,
 		Connection: conn,
 		Status:     StatusConnected,
 		LastActive: time.Now(),
-		IsHealthy:  true, // default to healthy
+		IsHealthy:  true,
 		FailCount:  0,
 	}
 }
@@ -65,10 +67,7 @@ func (c *RpcClient) GetStatus() ClientStatus {
 // Close closes the client connection
 func (c *RpcClient) Close() {
 	if c.Connection != nil {
-		// Type assertion to close the connection
-		if closer, ok := c.Connection.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = c.Connection.Close()
 	}
 }
 
@@ -83,11 +82,15 @@ func (c *RpcClient) MarkSuccess() {
 // MarkFailure marks a failed operation and increments failure count
 func (c *RpcClient) MarkFailure() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	wasHealthy := c.IsHealthy
 	c.FailCount++
-	// Consider client unhealthy after 3 consecutive failures
 	if c.FailCount >= 3 {
 		c.IsHealthy = false
+	}
+	c.mu.Unlock()
+
+	if wasHealthy && !c.IsHealthy && c.OnHealthDegraded != nil {
+		c.OnHealthDegraded(c)
 	}
 }
 

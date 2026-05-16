@@ -1,6 +1,7 @@
 package client
 
 import (
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -206,25 +207,11 @@ func TestHelperFunctions(t *testing.T) {
 			expected: 0,
 		},
 		{
-			name: "netJoinHostPort",
+			name: "net.JoinHostPort",
 			fn: func() interface{} {
-				return netJoinHostPort("localhost", 5612)
+				return net.JoinHostPort("localhost", "5612")
 			},
 			expected: "localhost:5612",
-		},
-		{
-			name: "formatInt",
-			fn: func() interface{} {
-				return formatInt(5612)
-			},
-			expected: "5612",
-		},
-		{
-			name: "formatInt zero",
-			fn: func() interface{} {
-				return formatInt(0)
-			},
-			expected: "0",
 		},
 		{
 			name: "formatDuration",

@@ -19,7 +19,7 @@ func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
 
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 	clientManager := client.NewClientManager()
-	wsHandler := websocket.NewHandler(clientManager, timeoutMgr, nil)
+	wsHandler := websocket.NewHandler(clientManager, timeoutMgr, nil, nil)
 	defer wsHandler.Shutdown()
 
 	httpServer := api.NewHTTPServer(&api.Config{

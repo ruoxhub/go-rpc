@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -10,24 +11,23 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/server/transport"
 )
 
 // DefaultGroupActions 默认分组 Actions 列表
-// 当设备连接到正式分组时，这些 Actions 会被自动添加到 group_actions 表中
 var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}
 
 // ensureDefaultActions ensures default actions exist for a group
-// 当设备连接到正式分组时，自动添加默认 Actions
 func (h *Handler) ensureDefaultActions(groupName string) {
 	db := database.GetDB()
 	if db == nil {
 		return
 	}
 	for _, actionName := range DefaultGroupActions {
-		// 检查 action 是否已存在
 		var count int64
 		if err := db.Model(&model.GroupAction{}).
 			Where("group_name = ? AND action_name = ?", groupName, actionName).
@@ -37,7 +37,6 @@ func (h *Handler) ensureDefaultActions(groupName string) {
 		}
 
 		if count == 0 {
-			// 添加默认 action
 			action := model.GroupAction{
 				GroupName:  groupName,
 				ActionName: actionName,
@@ -53,7 +52,6 @@ func (h *Handler) ensureDefaultActions(groupName string) {
 }
 
 // isGroupRegistered checks if a group exists in group_config table
-// 检查分组是否已注册（存在于 group_config 表中）
 func (h *Handler) isGroupRegistered(groupName string) bool {
 	db := database.GetDB()
 	if db == nil {
@@ -73,23 +71,18 @@ func (h *Handler) isGroupRegistered(groupName string) bool {
 type MessageType string
 
 const (
-	// MessageTypeHeartbeat is the heartbeat message type
-	MessageTypeHeartbeat MessageType = "heartbeat"
-	// MessageTypeInvoke is the invoke request message type
-	MessageTypeInvoke MessageType = "invoke"
-	// MessageTypeInvokeResponse is the invoke response message type
+	MessageTypeHeartbeat     MessageType = "heartbeat"
+	MessageTypeInvoke        MessageType = "invoke"
 	MessageTypeInvokeResponse MessageType = "invoke_response"
-	// MessageTypeInvokeStream is the invoke streaming response message type
-	MessageTypeInvokeStream MessageType = "invoke_stream"
-	// MessageTypeBind is the bind message type (deprecated)
-	MessageTypeBind MessageType = "bind"
+	MessageTypeInvokeStream  MessageType = "invoke_stream"
+	MessageTypeBind          MessageType = "bind"
 )
 
 // RpcMessage represents a Rpc protocol message
 type RpcMessage struct {
 	Type      MessageType     `json:"type"`
-	Sequence  string          `json:"sequence,omitempty"`       // Rpc 协议字段
-	RpcSeq string          `json:"__sekiro_seq__,omitempty"` // JavaScript 客户端使用的字段
+	Sequence  string          `json:"sequence,omitempty"`
+	RpcSeq    string          `json:"__sekiro_seq__,omitempty"`
 	Group     string          `json:"group,omitempty"`
 	ClientID  string          `json:"clientId,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
@@ -122,17 +115,15 @@ func extractRemoteIP(conn *websocket.Conn) string {
 
 // Handler handles WebSocket connections for Rpc clients
 type Handler struct {
-	clientManager  *client.ClientManager
-	timeoutManager *forwarder.TimeoutManager
-	// heartbeatTimeout is the timeout for heartbeat messages
+	clientManager    *client.ClientManager
+	timeoutManager   *forwarder.TimeoutManager
 	heartbeatTimeout time.Duration
-	// mu protects handlers
-	mu sync.RWMutex
+	eventBus         *eventbus.EventBus
+	mu               sync.RWMutex
 }
 
 // HandlerConfig holds configuration for Handler
 type HandlerConfig struct {
-	// HeartbeatTimeout is the timeout for heartbeat messages
 	HeartbeatTimeout time.Duration
 }
 
@@ -144,7 +135,7 @@ func DefaultHandlerConfig() *HandlerConfig {
 }
 
 // NewHandler creates a new Handler
-func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutManager, config *HandlerConfig) *Handler {
+func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutManager, config *HandlerConfig, eventBus *eventbus.EventBus) *Handler {
 	if config == nil {
 		config = DefaultHandlerConfig()
 	}
@@ -156,6 +147,7 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 		clientManager:    manager,
 		timeoutManager:   timeoutMgr,
 		heartbeatTimeout: config.HeartbeatTimeout,
+		eventBus:         eventBus,
 	}
 }
 
@@ -163,31 +155,38 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, group, clientID string) {
 	logger.Infof("WebSocket connection established: group=%s, clientId=%s", group, clientID)
 
-	// Recover from panics in gorilla/websocket (NextReader can panic on
-	// concurrent or closed connections). Without this, a panic kills the
-	// entire process with exit status 2.
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Warnf("WebSocket handler recovered from panic: group=%s, clientId=%s, error=%v", group, clientID, r)
 		}
 	}()
 
-	// Create Rpc client
-	sekiroClient := client.NewRpcClient(group, clientID, conn)
+	// Wrap the WebSocket connection in a transport.Connection for the RpcClient.
+	// Keep the raw *websocket.Conn for read-side operations (ReadMessage, SetReadDeadline).
+	wsTransport := transport.NewWSConnection(conn)
+	sekiroClient := client.NewRpcClient(group, clientID, wsTransport)
 	sekiroClient.SetStatus(client.StatusOnline)
 
-	// 检查分组是否已注册（存在于 group_config 表中）
+	// 设置健康降级回调，通过 EventBus 发布事件
+	if h.eventBus != nil {
+		sekiroClient.OnHealthDegraded = func(c *client.RpcClient) {
+			h.eventBus.Publish(eventbus.EventClientHealthDegraded, &eventbus.ClientHealthDegradedEvent{
+				Group:     c.Group,
+				ClientID:  c.ClientID,
+				FailCount: c.GetFailCount(),
+				Timestamp: time.Now(),
+			})
+		}
+	}
+
 	isRegistered := h.isGroupRegistered(group)
 	if isRegistered {
 		logger.Infof("Connected to registered group: group=%s", group)
-		// 正式分组：自动添加默认 Actions
 		h.ensureDefaultActions(group)
 	} else {
 		logger.Infof("Connected to anonymous group (not registered): group=%s", group)
-		// 匿名分组：设备归入匿名分组管理
 	}
 
-	// Create or update device record in database
 	remoteIP := extractRemoteIP(conn)
 	now := time.Now()
 
@@ -199,43 +198,31 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 			LastActiveTime: now,
 		}
 
-		// Use FirstOrCreate to avoid duplicate inserts
-		// If record exists, update LastActiveTime
 		if err := db.Where("group_name = ? AND device_id = ?", group, clientID).
 			FirstOrCreate(&device).Error; err != nil {
 			logger.Warnf("Failed to create device record: %v", err)
-			// Database error doesn't affect connection establishment
 		} else {
 			logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
 		}
 	}
 
-	// Register client
 	h.clientManager.Register(sekiroClient)
 
-	// closed flag prevents ReadMessage calls after the connection is closed,
-	// avoiding gorilla/websocket "repeated read on failed websocket connection" panic.
 	var closed bool
 
-	// Ensure cleanup on exit
 	defer func() {
 		closed = true
 		sekiroClient.SetStatus(client.StatusOffline)
 		h.clientManager.Unregister(group, clientID)
-		conn.Close()
+		wsTransport.Close()
 		logger.Infof("WebSocket connection closed: group=%s, clientId=%s", group, clientID)
 	}()
 
-	// Message processing loop
-	// Use ReadMessage with read deadline as the blocking point instead of
-	// a select+default busy-loop which would spin the CPU.
 	for {
-		// Skip ReadMessage if connection is already closed (e.g. by concurrent invoke timeout)
 		if closed {
 			return
 		}
 
-		// Check context cancellation for graceful shutdown
 		select {
 		case <-ctx.Done():
 			logger.Infof("WebSocket handler context cancelled: group=%s, clientId=%s", group, clientID)
@@ -243,25 +230,18 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		default:
 		}
 
-		// Check heartbeat timeout
 		if time.Since(sekiroClient.LastActive) > h.heartbeatTimeout {
 			logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
 			return
 		}
 
-		// Set read deadline to half the heartbeat interval so we periodically
-		// wake up to check the heartbeat condition.
 		conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
 
-		// Read message (blocks until message arrives or deadline)
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			// Check if the error is a read deadline (timeout) which we use for heartbeat checks
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				// Read deadline reached — loop back to check heartbeat
 				continue
 			}
-			// Connection closed (normal or abnormal)
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
 				logger.Debugf("WebSocket read error: %v", err)
 			} else {
@@ -270,47 +250,38 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 			return
 		}
 
-		// Update last active time
 		sekiroClient.UpdateActive()
-
-		// Process message
-		h.processMessage(ctx, conn, message)
+		h.processMessage(ctx, sekiroClient, message)
 	}
 }
 
 // processMessage processes a WebSocket message
-func (h *Handler) processMessage(ctx context.Context, conn *websocket.Conn, data []byte) {
+func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcClient, data []byte) {
 	logger.Infof("Received raw message")
 
 	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
 		logger.Errorf("Failed to parse message: %v", err)
-		h.sendError(conn, "invalid message format", "", nil)
+		h.sendError(sekiroClient, "invalid message format", "")
 		return
 	}
 
 	sequence := msg.GetSequence()
 	logger.Infof("Parsed message: type=%s, sequence=%s, status=%d, Error=%s", msg.Type, sequence, msg.Status, msg.Error)
 
-	// 如果消息类型为invoke_response，或者消息包含__sekiro_seq__和 status 字段但没有 type 字段
-	// 则视为 invoke_response（兼容 JavaScript 客户端的响应格式）
 	if msg.Type == MessageTypeInvokeResponse || (sequence != "" && msg.Type == "") {
-		h.handleInvokeResponse(conn, &msg, data)
+		h.handleInvokeResponse(&msg, data)
 		return
 	}
 
 	switch msg.Type {
 	case MessageTypeHeartbeat:
-		h.handleHeartbeat(conn, &msg)
+		h.handleHeartbeat(sekiroClient, &msg)
 	case MessageTypeInvokeStream:
 		h.handleInvokeStream(&msg)
 	default:
 		logger.Warnf("Unknown message type: %s", msg.Type)
-		var sekiroClient *client.RpcClient
-		if msg.Group != "" && msg.ClientID != "" {
-			sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
-		}
-		h.sendError(conn, "unknown message type", sequence, sekiroClient)
+		h.sendError(sekiroClient, "unknown message type", sequence)
 	}
 }
 
@@ -340,18 +311,14 @@ func (h *Handler) handleInvokeStream(msg *RpcMessage) {
 }
 
 // handleHeartbeat handles heartbeat messages
-func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *RpcMessage) {
+func (h *Handler) handleHeartbeat(sekiroClient *client.RpcClient, msg *RpcMessage) {
 	logger.Debugf("Heartbeat received from %s/%s", msg.Group, msg.ClientID)
 
-	var sekiroClient *client.RpcClient
-	// Mark client as healthy on successful heartbeat
 	if msg.Group != "" && msg.ClientID != "" {
-		sekiroClient = h.clientManager.GetClient(msg.Group, msg.ClientID)
-		if sekiroClient != nil {
-			sekiroClient.MarkSuccess()
+		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+			sc.MarkSuccess()
 		}
 
-		// Update LastActiveTime in database
 		if db := database.GetDB(); db != nil {
 			if err := db.Model(&model.GroupDevice{}).
 				Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
@@ -361,38 +328,27 @@ func (h *Handler) handleHeartbeat(conn *websocket.Conn, msg *RpcMessage) {
 		}
 	}
 
-	// Send heartbeat response
 	response := RpcMessage{
 		Type:      MessageTypeHeartbeat,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(conn, &response, sekiroClient)
+	h.sendMessage(sekiroClient, &response)
 }
 
 // handleInvokeResponse handles invoke response messages
-func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, rawData []byte) {
+func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 	sequence := msg.GetSequence()
 	if sequence == "" {
 		logger.Warnf("Invoke response missing sequence number")
 		return
 	}
 
-	// JavaScript 客户端返回的响应格式：
-	// 成功时：{"data": "...", "code": 0, "status": 0, "__sekiro_seq__": "..."}
-	// 或者：{"result": "...", "code": 0, "status": 0, "__sekiro_seq__": "..."} (当 handler 返回对象时)
-	// 失败时：{"message": "...", "status": -1, "__sekiro_seq__": "..."}
-	//
-	// msg.Data 是从 JSON 中解析的 data 字段的原始内容（json.RawMessage）
-	// 如果 Data 为空但 status >= 0，说明 handler 返回的是对象而不是字符串，需要特殊处理
-
 	var responseData []byte
 	var errorMessage string
 
-	// 提取错误信息：优先使用 error 字段，如果不存在则使用 message 字段（兼容 JavaScript 客户端）
 	if msg.Error != "" {
 		errorMessage = msg.Error
 	} else if msg.Status < 0 {
-		// 重新解析原始消息，尝试提取 message 字段作为错误信息
 		var rawMsg map[string]interface{}
 		if err := json.Unmarshal(rawData, &rawMsg); err == nil {
 			if msgVal, ok := rawMsg["message"]; ok {
@@ -404,14 +360,10 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, ra
 	}
 
 	if len(msg.Data) > 0 {
-		// 有 data 字段，直接使用
 		responseData = msg.Data
 	} else if msg.Status >= 0 {
-		// 成功响应但 data 为空，可能是 handler 返回了对象
-		// 重新解析原始消息，提取除元数据字段外的所有内容作为数据
 		var rawMsg map[string]interface{}
 		if err := json.Unmarshal(rawData, &rawMsg); err == nil {
-			// 移除元数据字段
 			delete(rawMsg, "__sekiro_seq__")
 			delete(rawMsg, "status")
 			delete(rawMsg, "code")
@@ -419,7 +371,6 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, ra
 			delete(rawMsg, "type")
 			delete(rawMsg, "error")
 
-			// 如果还有剩余内容，作为数据返回
 			if len(rawMsg) > 0 {
 				responseData, _ = json.Marshal(rawMsg)
 			} else {
@@ -433,25 +384,19 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, ra
 
 	logger.Infof("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
 
-	// Complete the invoke request
 	response := &forwarder.InvokeResponse{
 		Data:   responseData,
 		Error:  errorMessage,
 		Status: msg.Status,
 	}
 
-	// Mark client health based on response status
 	if msg.Status >= 0 {
-		// Success - mark client as healthy
-		sekiroClient := h.clientManager.GetClient(msg.Group, msg.ClientID)
-		if sekiroClient != nil {
-			sekiroClient.MarkSuccess()
+		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+			sc.MarkSuccess()
 		}
 	} else {
-		// Failure - mark client failure
-		sekiroClient := h.clientManager.GetClient(msg.Group, msg.ClientID)
-		if sekiroClient != nil {
-			sekiroClient.MarkFailure()
+		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+			sc.MarkFailure()
 		}
 	}
 
@@ -460,64 +405,55 @@ func (h *Handler) handleInvokeResponse(conn *websocket.Conn, msg *RpcMessage, ra
 	}
 }
 
-// sendMessage sends a message to the client
-func (h *Handler) sendMessage(conn *websocket.Conn, msg *RpcMessage, sekiroClient *client.RpcClient) {
+// sendMessage sends a message to the client via its transport connection.
+func (h *Handler) sendMessage(sekiroClient *client.RpcClient, msg *RpcMessage) {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		logger.Errorf("Failed to marshal message: %v", err)
 		return
 	}
 
-	// Acquire write lock to prevent concurrent writes
-	if sekiroClient != nil {
-		sekiroClient.GetWriteLock().Lock()
-		defer sekiroClient.GetWriteLock().Unlock()
-	} else {
-		logger.Warnf("sendMessage called with nil sekiroClient, concurrent write risk on conn")
+	if sekiroClient == nil || sekiroClient.Connection == nil {
+		logger.Warnf("sendMessage called with nil client or connection")
+		return
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := sekiroClient.Connection.Send(data); err != nil {
 		logger.Debugf("Failed to send message: %v", err)
 	}
 }
 
 // sendError sends an error message to the client
-func (h *Handler) sendError(conn *websocket.Conn, errorMsg, sequence string, sekiroClient *client.RpcClient) {
+func (h *Handler) sendError(sekiroClient *client.RpcClient, errorMsg, sequence string) {
 	msg := RpcMessage{
 		Type:      "error",
 		Error:     errorMsg,
 		Sequence:  sequence,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(conn, &msg, sekiroClient)
+	h.sendMessage(sekiroClient, &msg)
 }
 
-// SendInvokeRequest sends an invoke request to a client
-// The message format is compatible with the JavaScript client
-func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clientID string, data []byte, sekiroClient *client.RpcClient) error {
-	// Parse the request data
+// SendInvokeRequest sends an invoke request to a client.
+// The transport connection is obtained from the RpcClient.
+func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, group, clientID string, data []byte) error {
 	var reqData map[string]interface{}
 	if err := json.Unmarshal(data, &reqData); err != nil {
 		logger.Errorf("Failed to parse request data: %v", err)
 		return err
 	}
 
-	// Build message compatible with JavaScript client
-	// The JavaScript client expects: { "action": "...", "__sekiro_seq__": "...", ... }
 	msgData := make(map[string]interface{})
 	for k, v := range reqData {
 		msgData[k] = v
 	}
 	msgData["__sekiro_seq__"] = sequence
 
-	// Marshal the message with action and sequence at root level
 	fullMsg := make(map[string]interface{})
 	fullMsg["type"] = MessageTypeInvoke
 	fullMsg["group"] = group
 	fullMsg["clientId"] = clientID
 	fullMsg["timestamp"] = time.Now().UnixMilli()
-	// Merge request data at root level
 	for k, v := range msgData {
 		fullMsg[k] = v
 	}
@@ -530,19 +466,11 @@ func (h *Handler) SendInvokeRequest(conn *websocket.Conn, sequence, group, clien
 
 	logger.Infof("Sending invoke message")
 
-	// Acquire write lock to prevent concurrent writes
-	if sekiroClient != nil {
-		sekiroClient.GetWriteLock().Lock()
-		defer sekiroClient.GetWriteLock().Unlock()
+	if sekiroClient == nil || sekiroClient.Connection == nil {
+		return errors.New("invalid client connection")
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if err := conn.WriteMessage(websocket.TextMessage, msgDataJSON); err != nil {
-		logger.Debugf("Failed to send message: %v", err)
-		return err
-	}
-
-	return nil
+	return sekiroClient.Connection.Send(msgDataJSON)
 }
 
 // GetTimeoutManager returns the timeout manager

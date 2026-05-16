@@ -4,19 +4,31 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/pkg/database"
-	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/server/config"
 )
 
 // SysConfigHandler 系统配置处理器
 type SysConfigHandler struct {
-	configService pkgconfig.Service
+	sysConfigRepo repository.SysConfigRepository
+	serverNodeRepo repository.ServerNodeRepository
+	sysLogRepo     repository.SysLogRepository
+	configService  pkgconfig.Service
 }
 
 // NewSysConfigHandler 创建系统配置处理器
-func NewSysConfigHandler(service pkgconfig.Service) *SysConfigHandler {
-	return &SysConfigHandler{configService: service}
+func NewSysConfigHandler(
+	sysConfigRepo repository.SysConfigRepository,
+	serverNodeRepo repository.ServerNodeRepository,
+	sysLogRepo repository.SysLogRepository,
+	service pkgconfig.Service,
+) *SysConfigHandler {
+	return &SysConfigHandler{
+		sysConfigRepo:  sysConfigRepo,
+		serverNodeRepo: serverNodeRepo,
+		sysLogRepo:     sysLogRepo,
+		configService:  service,
+	}
 }
 
 // ConfigVO 配置项 VO
@@ -28,13 +40,12 @@ type ConfigVO struct {
 
 // List 获取系统配置列表
 func (h *SysConfigHandler) List(c *gin.Context) {
-	var configs []model.SysConfig
-	if err := database.GetDB().Find(&configs).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	configs, err := h.sysConfigRepo.FindAll()
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 配置项中文标签映射
 	labelMap := map[string]string{
 		"sekiro.user.allowRegister":            "是否允许注册用户",
 		"sekiro.outIpTestUrl":                  "出口 ip 探测 URL",
@@ -63,11 +74,7 @@ func (h *SysConfigHandler) List(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-	})
+	Success(c, vos)
 }
 
 // UpdateConfigRequest 更新配置请求
@@ -80,51 +87,39 @@ type UpdateConfigRequest struct {
 func (h *SysConfigHandler) Update(c *gin.Context) {
 	var req UpdateConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	if err := database.GetDB().Model(&model.SysConfig{}).
-		Where("config_key = ?", req.Key).
-		Update("config_value", req.Value).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.sysConfigRepo.Upsert(req.Key, req.Value); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 配置更新后，立即触发配置服务刷新
 	if h.configService != nil {
 		if err := h.configService.Refresh(); err != nil {
-			c.JSON(500, gin.H{"code": 500, "message": "配置已保存，但刷新失败：" + err.Error()})
+			InternalError(c, "配置已保存，但刷新失败：" + err.Error())
 			return
 		}
 	}
 
-	// 记录审计日志
 	auditUpdateConfig(c, req.Key, req.Value)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 // GetServerNodes 获取服务器节点列表
 func (h *SysConfigHandler) GetServerNodes(c *gin.Context) {
-	var nodes []model.ServerNode
-	if err := database.GetDB().Find(&nodes).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	nodes, err := h.serverNodeRepo.FindAll()
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    nodes,
-	})
+	Success(c, nodes)
 }
 
-// GetSysLogs 获取系统日志列表（增强版）
-// GET /api/sysconfig/logs
-// 支持过滤：level, startTime, endTime, keyword, page, pageSize
+// GetSysLogs 获取系统日志列表
 func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
-	// 获取查询参数
 	level := c.Query("level")
 	startTime := c.Query("startTime")
 	endTime := c.Query("endTime")
@@ -132,7 +127,6 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 	page := c.DefaultQuery("page", "1")
 	pageSize := c.DefaultQuery("pageSize", "20")
 
-	// 解析分页参数
 	var pageInt, pageSizeInt int
 	fmt.Sscanf(page, "%d", &pageInt)
 	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
@@ -143,38 +137,16 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 		pageSizeInt = 20
 	}
 
-	// 构建查询
-	query := database.GetDB().Table("sys_log")
-
-	// 按级别过滤
-	if level != "" {
-		query = query.Where("level = ?", level)
-	}
-
-	// 按时间范围过滤
-	if startTime != "" {
-		query = query.Where("create_time >= ?", startTime)
-	}
-	if endTime != "" {
-		query = query.Where("create_time <= ?", endTime)
-	}
-
-	// 按关键词搜索（消息内容）
-	if keyword != "" {
-		query = query.Where("message LIKE ? OR detail LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
-	}
-
-	// 获取总数
-	var total int64
-	query.Count(&total)
-
-	// 分页
-	offset := (pageInt - 1) * pageSizeInt
-	query = query.Offset(offset).Limit(pageSizeInt).Order("create_time DESC")
-
-	var logs []model.SysLog
-	if err := query.Find(&logs).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	logs, total, err := h.sysLogRepo.FindAll(repository.SysLogQuery{
+		Level:     level,
+		StartTime: startTime,
+		EndTime:   endTime,
+		Keyword:   keyword,
+		Page:      pageInt,
+		PageSize:  pageSizeInt,
+	})
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
@@ -189,10 +161,7 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 }
 
 // GetAppLogs 获取应用日志列表（最近的文件日志）
-// GET /api/sysconfig/app-logs
-// 支持过滤：level, traceId, group, startTime, endTime, page, pageSize
 func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
-	// 获取查询参数
 	level := c.Query("level")
 	traceId := c.Query("traceId")
 	group := c.Query("group")
@@ -201,7 +170,6 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 	page := c.DefaultQuery("page", "1")
 	pageSize := c.DefaultQuery("pageSize", "50")
 
-	// 解析分页参数
 	var pageInt, pageSizeInt int
 	fmt.Sscanf(page, "%d", &pageInt)
 	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
@@ -212,8 +180,6 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 		pageSizeInt = 50
 	}
 
-	// 构建查询（从 metric_minute 模拟查询日志，实际应该读日志文件）
-	// 这里返回一个示例结构，实际应该读取并解析 JSON 日志文件
 	type AppLogEntry struct {
 		Timestamp string `json:"timestamp"`
 		Level     string `json:"level"`
@@ -224,32 +190,31 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 		Status    int    `json:"status,omitempty"`
 	}
 
-	// 模拟返回最近的请求日志（从 trace_record 查询）
+	_ = level // level filtering not implemented for app logs
+
 	var logs []AppLogEntry
-	dbQuery := database.GetDB().Table("trace_record").
+	// This is a complex analytics query spanning trace_record;
+	// use the global DB instance directly.
+	db := repository.GetDB()
+	rawQuery := db.Table("trace_record").
 		Select("start_time as timestamp, 'INFO' as level, api as message, trace_id, \"group\", duration_ms, CASE WHEN status='SUCCESS' THEN 200 ELSE 500 END as status")
 
-	if level != "" {
-		// 简化处理：级别过滤暂不实现
-	}
 	if traceId != "" {
-		dbQuery = dbQuery.Where("trace_id = ?", traceId)
+		rawQuery = rawQuery.Where("trace_id = ?", traceId)
 	}
 	if group != "" {
-		dbQuery = dbQuery.Where("\"group\" = ?", group)
+		rawQuery = rawQuery.Where(`"group" = ?`, group)
 	}
 	if startTime != "" {
-		dbQuery = dbQuery.Where("start_time >= ?", startTime)
+		rawQuery = rawQuery.Where("start_time >= ?", startTime)
 	}
 	if endTime != "" {
-		dbQuery = dbQuery.Where("start_time <= ?", endTime)
+		rawQuery = rawQuery.Where("start_time <= ?", endTime)
 	}
 
 	offset := (pageInt - 1) * pageSizeInt
-	dbQuery = dbQuery.Offset(offset).Limit(pageSizeInt).Order("start_time DESC")
-
-	if err := dbQuery.Scan(&logs).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := rawQuery.Offset(offset).Limit(pageSizeInt).Order("start_time DESC").Scan(&logs).Error; err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 

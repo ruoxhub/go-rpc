@@ -2,7 +2,7 @@
 package client
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +11,7 @@ import (
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/compress"
 	"github.com/mrh30000/go-rpc/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/server/transport"
 )
 
 // RpcClient represents a Rpc client connection
@@ -27,9 +28,7 @@ type RpcClient struct {
 
 // clientConnection holds the actual network connection and handlers
 type clientConnection struct {
-	conn        net.Conn
-	reader      *bufio.Reader
-	closed      bool
+	tcpConn     *transport.TCPConnection
 	mu          sync.Mutex
 	sendSeq     int32
 	respWaiters map[int32]chan *protocol.RpcPacket
@@ -55,28 +54,24 @@ func (c *RpcClient) Start() error {
 		return io.ErrClosedPipe
 	}
 
-	// Connect to server
-	addr := fmt.Sprintf("%s:%d", c.ServerHost, c.ServerPort)
+	addr := net.JoinHostPort(c.ServerHost, fmt.Sprintf("%d", c.ServerPort))
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return err
 	}
 
 	c.Connection = &clientConnection{
-		conn:        conn,
-		reader:      bufio.NewReader(conn),
+		tcpConn:     transport.NewTCPConnection(conn),
 		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 	}
 
 	logger.Infof("Connected to Rpc server at %s", addr)
 
-	// Send registration packet
 	if err := c.sendRegister(); err != nil {
 		conn.Close()
 		return err
 	}
 
-	// Start read loop
 	go c.readLoop()
 
 	return nil
@@ -104,7 +99,6 @@ func (c *RpcClient) readLoop() {
 			return
 		}
 
-		// Handle packet
 		go c.handlePacket(packet)
 	}
 }
@@ -115,22 +109,18 @@ func (c *RpcClient) handlePacket(packet *protocol.RpcPacket) {
 
 	switch protocol.RpcPacketType(packet.Type) {
 	case protocol.PacketTypeHeartbeat:
-		// Echo heartbeat
 		c.Connection.send(packet)
 
 	case protocol.PacketTypeSInvoke:
-		// Handle invoke request from server
 		c.handleInvoke(packet)
 
 	case protocol.PacketTypeSCmd:
-		// Handle command from server
 		c.handleCommand(packet)
 	}
 }
 
 // handleInvoke handles invoke request
 func (c *RpcClient) handleInvoke(packet *protocol.RpcPacket) {
-	// User should implement their own handler
 	logger.Debug("Invoke request received")
 }
 
@@ -149,7 +139,6 @@ func (c *RpcClient) handleDisconnect() {
 		c.Connection = nil
 	}
 
-	// Notify waiters
 	c.notifyDisconnect()
 }
 
@@ -182,26 +171,23 @@ func (c *RpcClient) Destroy(waitSeconds int64) {
 
 // send sends a packet
 func (c *clientConnection) send(packet *protocol.RpcPacket) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return io.ErrClosedPipe
-	}
-
 	var buf []byte
-	encoder := &bufWriter{buf: &buf}
+	encoder := &protocol.BufWriter{Buf: &buf}
 	if err := packet.Encode(encoder); err != nil {
 		return err
 	}
 
-	_, err := c.conn.Write(buf)
-	return err
+	return c.tcpConn.Send(buf)
 }
 
 // receive receives a packet
 func (c *clientConnection) receive(compressManager *compress.CompressorManager) (*protocol.RpcPacket, error) {
-	packet, err := protocol.Decode(c.reader)
+	raw, err := c.tcpConn.Receive()
+	if err != nil {
+		return nil, err
+	}
+
+	packet, err := protocol.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
 	}
@@ -217,25 +203,7 @@ func (c *clientConnection) receive(compressManager *compress.CompressorManager) 
 
 // close closes the connection
 func (c *clientConnection) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.closed {
-		return
-	}
-
-	c.closed = true
-	c.conn.Close()
-}
-
-// bufWriter implements io.Writer
-type bufWriter struct {
-	buf *[]byte
-}
-
-func (w *bufWriter) Write(p []byte) (n int, err error) {
-	*w.buf = append(*w.buf, p...)
-	return len(p), nil
+	c.tcpConn.Close()
 }
 
 // RegisterHandler registers a handler for incoming invocations
@@ -243,6 +211,5 @@ type RegisterHandler func(request []byte) ([]byte, error)
 
 // Register registers a handler for the client
 func (c *RpcClient) Register(handler RegisterHandler) {
-	// Implementation for handling invocations
 	_ = handler
 }

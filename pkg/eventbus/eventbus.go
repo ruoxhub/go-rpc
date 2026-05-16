@@ -1,62 +1,61 @@
-// Package eventbus implements event bus for Rpc client events
+// Package eventbus 实现 RPC 客户端事件的事件发布-订阅总线
 package eventbus
 
 import (
 	"sync"
 )
 
-// Event represents an event interface
-type Event interface {
-	OnEvent(data interface{})
-}
+// EventHandler 事件处理函数类型
+type EventHandler func(event interface{})
 
-// EventBus manages event registration and dispatch
+// EventBus 管理事件的注册和分发
 type EventBus struct {
-	handlers map[string][]Event
+	handlers map[string][]EventHandler
 	mu       sync.RWMutex
 }
 
-// NewEventBus creates a new EventBus
-func NewEventBus() *EventBus {
+// New 创建一个新的 EventBus
+func New() *EventBus {
 	return &EventBus{
-		handlers: make(map[string][]Event),
+		handlers: make(map[string][]EventHandler),
 	}
 }
 
-// Register registers an event handler
-func (eb *EventBus) Register(eventType string, handler Event) {
+// Subscribe 订阅指定事件类型
+func (eb *EventBus) Subscribe(eventType string, handler EventHandler) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
 	eb.handlers[eventType] = append(eb.handlers[eventType], handler)
 }
 
-// Unregister unregisters an event handler
-func (eb *EventBus) Unregister(eventType string, handler Event) {
+// Unsubscribe 取消订阅指定事件类型
+func (eb *EventBus) Unsubscribe(eventType string, handler EventHandler) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
 	handlers := eb.handlers[eventType]
 	for i, h := range handlers {
-		if h == handler {
+		if sameHandler(h, handler) {
 			eb.handlers[eventType] = append(handlers[:i], handlers[i+1:]...)
 			return
 		}
 	}
 }
 
-// Dispatch dispatches an event to all registered handlers
-func (eb *EventBus) Dispatch(eventType string, data interface{}) {
+// Publish 向所有注册的处理器发布事件（异步，不阻塞调用方）
+func (eb *EventBus) Publish(eventType string, event interface{}) {
 	eb.mu.RLock()
-	handlers := eb.handlers[eventType]
+	handlers := make([]EventHandler, len(eb.handlers[eventType]))
+	copy(handlers, eb.handlers[eventType])
 	eb.mu.RUnlock()
 
 	for _, handler := range handlers {
-		handler.OnEvent(data)
+		handler(event)
 	}
 }
 
-// Clear clears all handlers for an event type
+// Clear 清除指定事件类型的所有处理器
 func (eb *EventBus) Clear(eventType string) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
@@ -64,10 +63,22 @@ func (eb *EventBus) Clear(eventType string) {
 	delete(eb.handlers, eventType)
 }
 
-// ClearAll clears all handlers
+// ClearAll 清除所有事件处理器
 func (eb *EventBus) ClearAll() {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
-	eb.handlers = make(map[string][]Event)
+	eb.handlers = make(map[string][]EventHandler)
+}
+
+// HandlerCount 返回指定事件类型的处理器数量
+func (eb *EventBus) HandlerCount(eventType string) int {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return len(eb.handlers[eventType])
+}
+
+// sameHandler 比较两个处理函数是否为同一个（通过地址）
+func sameHandler(a, b EventHandler) bool {
+	return funcEqual(a, b)
 }

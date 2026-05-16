@@ -2,12 +2,16 @@ package client
 
 import (
 	"sync"
+	"time"
+
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 )
 
 // ClientManager manages all RpcGroups
 type ClientManager struct {
-	groups map[string]*RpcGroup
-	mu     sync.RWMutex
+	groups   map[string]*RpcGroup
+	mu       sync.RWMutex
+	eventBus *eventbus.EventBus
 }
 
 // NewClientManager creates a new ClientManager
@@ -15,6 +19,12 @@ func NewClientManager() *ClientManager {
 	return &ClientManager{
 		groups: make(map[string]*RpcGroup),
 	}
+}
+
+// SetEventBus sets the event bus for publishing client lifecycle events.
+// If nil, events are not published.
+func (m *ClientManager) SetEventBus(eb *eventbus.EventBus) {
+	m.eventBus = eb
 }
 
 // getOrCreateGroup gets or creates a group
@@ -44,6 +54,14 @@ func (m *ClientManager) getOrCreateGroup(groupName string) *RpcGroup {
 func (m *ClientManager) Register(client *RpcClient) {
 	group := m.getOrCreateGroup(client.Group)
 	group.Register(client)
+
+	if m.eventBus != nil {
+		m.eventBus.Publish(eventbus.EventClientConnect, &eventbus.ClientConnectEvent{
+			Group:     client.Group,
+			ClientID:  client.ClientID,
+			Timestamp: time.Now(),
+		})
+	}
 }
 
 // Unregister unregisters a client
@@ -60,6 +78,14 @@ func (m *ClientManager) Unregister(groupName, clientID string) {
 			m.mu.Unlock()
 			group.Close()
 		}
+	}
+
+	if m.eventBus != nil {
+		m.eventBus.Publish(eventbus.EventClientDisconnect, &eventbus.ClientDisconnectEvent{
+			Group:     groupName,
+			ClientID:  clientID,
+			Timestamp: time.Now(),
+		})
 	}
 }
 

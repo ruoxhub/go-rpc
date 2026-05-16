@@ -5,7 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/config"
 	"github.com/mrh30000/go-rpc/pkg/server/middleware"
@@ -13,10 +13,12 @@ import (
 )
 
 // UserHandler handles user management APIs.
-type UserHandler struct{}
+type UserHandler struct {
+	userRepo repository.UserRepository
+}
 
-func NewUserHandler() *UserHandler {
-	return &UserHandler{}
+func NewUserHandler(userRepo repository.UserRepository) *UserHandler {
+	return &UserHandler{userRepo: userRepo}
 }
 
 type ListUsersResponse struct {
@@ -35,8 +37,11 @@ type UserInfoVO struct {
 }
 
 func (h *UserHandler) List(c *gin.Context) {
-	var users []model.UserInfo
-	result := database.GetDB().Order("id ASC").Find(&users)
+	users, err := h.userRepo.List("id ASC")
+	if err != nil {
+		InternalError(c, err.Error())
+		return
+	}
 
 	vos := make([]UserInfoVO, 0, len(users))
 	for _, u := range users {
@@ -49,12 +54,7 @@ func (h *UserHandler) List(c *gin.Context) {
 		})
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    vos,
-		"total":   result.RowsAffected,
-	})
+	SuccessWithTotal(c, vos, int64(len(vos)))
 }
 
 type AddUserRequest struct {
@@ -67,29 +67,26 @@ type AddUserRequest struct {
 func (h *UserHandler) Add(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	var count int64
-	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("user_name = ?", req.UserName).
-		Count(&count).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	count, err := h.userRepo.CountByUserName(req.UserName)
+	if err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 	if count > 0 {
-		c.JSON(400, gin.H{"code": 400, "message": "user already exists"})
+		BadRequest(c, "user already exists")
 		return
 	}
 
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "failed to hash password"})
+		InternalError(c, "failed to hash password")
 		return
 	}
 
-	// 获取默认 QPS 配置
 	var defaultQps float64 = 100
 	cfgSvc, exists := c.Get("configService")
 	if exists {
@@ -98,7 +95,6 @@ func (h *UserHandler) Add(c *gin.Context) {
 		}
 	}
 
-	// 如果用户未指定 QPS，使用默认值
 	qps := req.QuotaQps
 	if qps <= 0 {
 		qps = defaultQps
@@ -117,12 +113,12 @@ func (h *UserHandler) Add(c *gin.Context) {
 		UpdateTime: &now,
 	}
 
-	if err := database.GetDB().Create(&user).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.userRepo.Create(&user); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{"code": 0, "message": "success", "data": user.ID})
+	Success(c, user.ID)
 }
 
 type UpdateUserQpsRequest struct {
@@ -133,28 +129,25 @@ type UpdateUserQpsRequest struct {
 func (h *UserHandler) UpdateQps(c *gin.Context) {
 	var req UpdateUserQpsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	// 获取用户信息用于审计日志
-	var user model.UserInfo
-	if err := database.GetDB().Where("id = ?", req.UserID).First(&user).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "user not found"})
+	user, err := h.userRepo.FindByID(req.UserID)
+	if err != nil {
+		InternalError(c, "user not found")
 		return
 	}
 
-	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("id = ?", req.UserID).
-		Update("quota_qps", req.QuotaQps).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.userRepo.UpdateFields(req.UserID, map[string]interface{}{
+		"quota_qps": req.QuotaQps,
+	}); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	// 记录审计日志
 	auditUpdateQps(c, "user", user.UserName, req.QuotaQps)
-
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 type DeleteUserRequest struct {
@@ -164,16 +157,16 @@ type DeleteUserRequest struct {
 func (h *UserHandler) Delete(c *gin.Context) {
 	var req DeleteUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
-	if err := database.GetDB().Delete(&model.UserInfo{}, req.UserID).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.userRepo.Delete(req.UserID); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 type ChangePasswordRequest struct {
@@ -183,76 +176,62 @@ type ChangePasswordRequest struct {
 func (h *UserHandler) ChangePassword(c *gin.Context) {
 	var req ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"code": 400, "message": err.Error()})
+		BadRequest(c, err.Error())
 		return
 	}
 
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
+		Unauthorized(c, "please login first")
 		return
 	}
 
 	hashedPassword, err := password.HashPassword(req.NewPassword)
 	if err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": "failed to hash password"})
+		InternalError(c, "failed to hash password")
 		return
 	}
 
-	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("id = ?", user.ID).
-		Updates(map[string]interface{}{
-			"password":    hashedPassword,
-			"update_time": time.Now(),
-		}).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.userRepo.UpdateFields(user.ID, map[string]interface{}{
+		"password": hashedPassword,
+	}); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{"code": 0, "message": "success"})
+	Success(c, nil)
 }
 
 func (h *UserHandler) RefreshToken(c *gin.Context) {
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
+		Unauthorized(c, "please login first")
 		return
 	}
 
 	newToken := uuid.New().String()
-	if err := database.GetDB().Model(&model.UserInfo{}).
-		Where("id = ?", user.ID).
-		Updates(map[string]interface{}{
-			"api_token":   newToken,
-			"update_time": time.Now(),
-		}).Error; err != nil {
-		c.JSON(500, gin.H{"code": 500, "message": err.Error()})
+	if err := h.userRepo.UpdateFields(user.ID, map[string]interface{}{
+		"api_token": newToken,
+	}); err != nil {
+		InternalError(c, err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data":    gin.H{"apiToken": newToken},
-	})
+	Success(c, gin.H{"apiToken": newToken})
 }
 
 func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 	user, exists := middleware.GetCurrentUser(c)
 	if !exists {
-		c.JSON(401, gin.H{"code": 401, "message": "please login first"})
+		Unauthorized(c, "please login first")
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"code":    0,
-		"message": "success",
-		"data": gin.H{
+	Success(c, gin.H{
 			"id":       user.ID,
 			"userName": user.UserName,
 			"apiToken": user.ApiToken,
 			"isAdmin":  user.IsAdmin,
 			"quotaQps": user.QuotaQps,
-		},
-	})
+		})
 }

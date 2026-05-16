@@ -2,7 +2,12 @@ package handlers
 
 import "github.com/gin-gonic/gin"
 
-// Response 统一 API 响应格式
+// ============================================================
+// 管理 API 响应格式 (用于 /api/* 管理端点)
+// 字段名: code / message / data / total
+// ============================================================
+
+// Response 管理 API 统一响应格式
 type Response struct {
 	Code    int         `json:"code"`
 	Message string      `json:"message"`
@@ -60,4 +65,54 @@ func NotFound(c *gin.Context, message string) {
 // InternalError 返回 500 错误
 func InternalError(c *gin.Context, message string) {
 	Error(c, 500, message)
+}
+
+// ============================================================
+// RPC API 响应格式 (用于 /rpc-api/* 前端兼容端点)
+// 字段名: status / message / data
+// 前端 Login.jsx 检查 response.data.status === 0
+// ============================================================
+
+// RpcApiResponse RPC API 响应格式
+type RpcApiResponse struct {
+	Status  int         `json:"status"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+// RpcApiSuccess 返回 RPC API 成功响应
+func RpcApiSuccess(c *gin.Context, data interface{}) {
+	c.JSON(200, RpcApiResponse{
+		Status:  0,
+		Message: "success",
+		Data:    data,
+	})
+}
+
+// RpcApiError 返回 RPC API 错误响应
+func RpcApiError(c *gin.Context, status int, message string) {
+	c.JSON(200, RpcApiResponse{
+		Status:  status,
+		Message: message,
+	})
+}
+
+// RpcApiBadRequest 返回 RPC API 400 错误
+func RpcApiBadRequest(c *gin.Context, message string) {
+	RpcApiError(c, -1, message)
+}
+
+// RpcApiUnauthorized 返回 RPC API 401 错误
+func RpcApiUnauthorized(c *gin.Context, message string) {
+	RpcApiError(c, -1, message)
+}
+
+// RpcApiForbidden 返回 RPC API 403 错误
+func RpcApiForbidden(c *gin.Context, message string) {
+	RpcApiError(c, -1, message)
+}
+
+// RpcApiInternalError 返回 RPC API 500 错误
+func RpcApiInternalError(c *gin.Context, message string) {
+	RpcApiError(c, -1, message)
 }

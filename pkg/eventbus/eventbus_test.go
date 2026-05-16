@@ -3,234 +3,207 @@ package eventbus
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
-// testEvent is a test event implementation
-type testEvent struct {
-	called bool
-	data   interface{}
-	mu     sync.Mutex
-}
-
-func (e *testEvent) OnEvent(data interface{}) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.called = true
-	e.data = data
-}
-
-func (e *testEvent) wasCalled() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.called
-}
-
 func TestNewEventBus(t *testing.T) {
-	bus := NewEventBus()
+	bus := New()
 	if bus == nil {
-		t.Fatal("NewEventBus() returned nil")
+		t.Fatal("New() returned nil")
 	}
 	if bus.handlers == nil {
-		t.Error("NewEventBus() handlers not initialized")
+		t.Error("New() handlers not initialized")
 	}
 }
 
-func TestEventBusRegisterAndDispatch(t *testing.T) {
-	bus := NewEventBus()
-	event := &testEvent{}
+func TestEventBusSubscribeAndPublish(t *testing.T) {
+	bus := New()
+	var called bool
+	var received interface{}
 
-	bus.Register("test.event", event)
-	bus.Dispatch("test.event", "test data")
+	bus.Subscribe("test.event", func(event interface{}) {
+		called = true
+		received = event
+	})
 
-	if !event.wasCalled() {
+	bus.Publish("test.event", "test data")
+
+	if !called {
 		t.Error("Event handler was not called")
 	}
-	if event.data != "test data" {
-		t.Errorf("Event data = %v, want 'test data'", event.data)
+	if received != "test data" {
+		t.Errorf("Event data = %v, want 'test data'", received)
 	}
 }
 
-func TestEventBusUnregister(t *testing.T) {
-	bus := NewEventBus()
-	event := &testEvent{}
+func TestEventBusUnsubscribe(t *testing.T) {
+	bus := New()
+	called := false
+	handler := func(event interface{}) {
+		called = true
+	}
 
-	bus.Register("test.event", event)
-	bus.Unregister("test.event", event)
-	bus.Dispatch("test.event", "test data")
+	bus.Subscribe("test.event", handler)
+	bus.Unsubscribe("test.event", handler)
+	bus.Publish("test.event", "test data")
 
-	// After unregister, handler should not be called
-	// Note: Since we already dispatched once, called might be true from first dispatch
-	// Create a new event to verify
-	event2 := &testEvent{}
-	bus.Register("test.event2", event2)
-	bus.Unregister("test.event2", event2)
-	bus.Dispatch("test.event2", "test data")
-
-	if event2.wasCalled() {
-		t.Error("Event handler should not be called after unregister")
+	if called {
+		t.Error("Event handler should not be called after unsubscribe")
 	}
 }
 
 func TestEventBusMultipleHandlers(t *testing.T) {
-	bus := NewEventBus()
-	event1 := &testEvent{}
-	event2 := &testEvent{}
-	event3 := &testEvent{}
+	bus := New()
+	count := 0
+	var mu sync.Mutex
 
-	bus.Register("multi.event", event1)
-	bus.Register("multi.event", event2)
-	bus.Register("multi.event", event3)
-
-	bus.Dispatch("multi.event", "broadcast")
-
-	if !event1.wasCalled() {
-		t.Error("Event handler 1 was not called")
+	incr := func(event interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		count++
 	}
-	if !event2.wasCalled() {
-		t.Error("Event handler 2 was not called")
-	}
-	if !event3.wasCalled() {
-		t.Error("Event handler 3 was not called")
+
+	bus.Subscribe("multi.event", incr)
+	bus.Subscribe("multi.event", incr)
+	bus.Subscribe("multi.event", incr)
+
+	bus.Publish("multi.event", "broadcast")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if count != 3 {
+		t.Errorf("Expected 3 handler calls, got %d", count)
 	}
 }
 
 func TestEventBusClear(t *testing.T) {
-	bus := NewEventBus()
-	event := &testEvent{}
+	bus := New()
+	called := false
 
-	bus.Register("test.event", event)
+	handler := func(event interface{}) {
+		called = true
+	}
+
+	bus.Subscribe("test.event", handler)
 	bus.Clear("test.event")
-	bus.Dispatch("test.event", "test data")
+	bus.Publish("test.event", "test data")
 
-	if event.wasCalled() {
+	if called {
 		t.Error("Event handler should not be called after clear")
 	}
 }
 
 func TestEventBusClearAll(t *testing.T) {
-	bus := NewEventBus()
-	event1 := &testEvent{}
-	event2 := &testEvent{}
+	bus := New()
+	called1, called2 := false, false
 
-	bus.Register("event1", event1)
-	bus.Register("event2", event2)
+	bus.Subscribe("event1", func(event interface{}) { called1 = true })
+	bus.Subscribe("event2", func(event interface{}) { called2 = true })
 	bus.ClearAll()
 
-	bus.Dispatch("event1", "data")
-	bus.Dispatch("event2", "data")
+	bus.Publish("event1", "data")
+	bus.Publish("event2", "data")
 
-	if event1.wasCalled() || event2.wasCalled() {
+	if called1 || called2 {
 		t.Error("Event handlers should not be called after clear all")
 	}
 }
 
 func TestEventBusUnknownEventType(t *testing.T) {
-	bus := NewEventBus()
+	bus := New()
 
-	// Dispatching to unknown event type should not panic
-	bus.Dispatch("unknown.event", "data")
+	// Publishing to unknown event type should not panic
+	bus.Publish("unknown.event", "data")
 
-	// Unregistering unknown handler should not panic
-	bus.Unregister("unknown.event", &testEvent{})
+	// Unsubscribing unknown handler should not panic
+	bus.Unsubscribe("unknown.event", func(event interface{}) {})
 
 	// Clear unknown event type should not panic
 	bus.Clear("unknown.event")
 }
 
-func TestEventBusConcurrentDispatch(t *testing.T) {
-	bus := NewEventBus()
-	event := &testEvent{}
+func TestEventBusConcurrentPublish(t *testing.T) {
+	bus := New()
+	count := 0
+	var mu sync.Mutex
 
-	bus.Register("concurrent.event", event)
+	bus.Subscribe("concurrent.event", func(event interface{}) {
+		mu.Lock()
+		defer mu.Unlock()
+		count++
+	})
 
-	// Test concurrent dispatches
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bus.Dispatch("concurrent.event", "concurrent data")
+			bus.Publish("concurrent.event", "concurrent data")
 		}()
 	}
 	wg.Wait()
 
-	if !event.wasCalled() {
-		t.Error("Event handler was not called during concurrent dispatch")
-	}
-}
-
-func TestEventBusConcurrentRegister(t *testing.T) {
-	bus := NewEventBus()
-
-	// Test concurrent registrations
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			bus.Register("concurrent.event", &testEvent{})
-		}()
-	}
-	wg.Wait()
-
-	// Should have 10 handlers
-	bus.mu.RLock()
-	count := len(bus.handlers["concurrent.event"])
-	bus.mu.RUnlock()
-
+	mu.Lock()
+	defer mu.Unlock()
 	if count != 10 {
-		t.Errorf("Expected 10 handlers, got %d", count)
+		t.Errorf("Expected 10 handler calls, got %d", count)
 	}
 }
 
-// Test event structs
-func TestClientEvents(t *testing.T) {
-	tests := []struct {
-		name     string
-		event    Event
-		testData interface{}
-	}{
-		{
-			name:     "ClientConnectEvent",
-			event:    &ClientConnectEvent{Group: "test", ClientID: "client1"},
-			testData: nil,
-		},
-		{
-			name:     "ClientDisconnectEvent",
-			event:    &ClientDisconnectEvent{Group: "test", ClientID: "client1"},
-			testData: nil,
-		},
-		{
-			name:     "ClientDestroyEvent",
-			event:    &ClientDestroyEvent{Group: "test", ClientID: "client1"},
-			testData: nil,
-		},
-		{
-			name:     "ClientOnlineEvent",
-			event:    &ClientOnlineEvent{Group: "test", ClientID: "client1"},
-			testData: nil,
-		},
-		{
-			name:     "InvokerConnectEvent",
-			event:    &InvokerConnectEvent{ServerAddr: "localhost:5612"},
-			testData: nil,
-		},
-		{
-			name:     "InvokerDisconnectEvent",
-			event:    &InvokerDisconnectEvent{ServerAddr: "localhost:5612"},
-			testData: nil,
-		},
-		{
-			name:     "InvokerDestroyEvent",
-			event:    &InvokerDestroyEvent{ServerAddr: "localhost:5612"},
-			testData: nil,
-		},
+func TestEventBusConcurrentSubscribe(t *testing.T) {
+	bus := New()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bus.Subscribe("concurrent.event", func(event interface{}) {})
+		}()
+	}
+	wg.Wait()
+
+	if n := bus.HandlerCount("concurrent.event"); n != 10 {
+		t.Errorf("Expected 10 handlers, got %d", n)
+	}
+}
+
+func TestHandlerCount(t *testing.T) {
+	bus := New()
+
+	if n := bus.HandlerCount("nonexistent"); n != 0 {
+		t.Errorf("Expected 0 handlers, got %d", n)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// OnEvent should not panic
-			tt.event.OnEvent(tt.testData)
-		})
+	bus.Subscribe("test.event", func(event interface{}) {})
+	bus.Subscribe("test.event", func(event interface{}) {})
+
+	if n := bus.HandlerCount("test.event"); n != 2 {
+		t.Errorf("Expected 2 handlers, got %d", n)
+	}
+}
+
+func TestEventStructs(t *testing.T) {
+	now := time.Now()
+
+	// Verify all event structs can be created and fields are correct
+	e1 := ClientConnectEvent{Group: "g1", ClientID: "c1", Timestamp: now}
+	if e1.Group != "g1" || e1.ClientID != "c1" {
+		t.Error("ClientConnectEvent fields mismatch")
+	}
+
+	e2 := ClientDisconnectEvent{Group: "g2", ClientID: "c2", Timestamp: now}
+	if e2.Group != "g2" || e2.ClientID != "c2" {
+		t.Error("ClientDisconnectEvent fields mismatch")
+	}
+
+	e3 := ClientHealthDegradedEvent{Group: "g3", ClientID: "c3", FailCount: 5, Timestamp: now}
+	if e3.FailCount != 5 {
+		t.Error("ClientHealthDegradedEvent fields mismatch")
+	}
+
+	e4 := InvokerConnectEvent{ServerAddr: "localhost:5612", Timestamp: now}
+	if e4.ServerAddr != "localhost:5612" {
+		t.Error("InvokerConnectEvent fields mismatch")
 	}
 }

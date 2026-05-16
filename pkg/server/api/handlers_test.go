@@ -216,7 +216,7 @@ func TestHandleInvoke_RoundRobinSelectsDifferentClients(t *testing.T) {
 	json.NewDecoder(w1.Body).Decode(&result1)
 	json.NewDecoder(w2.Body).Decode(&result2)
 
-	if result1["message"] != "Invalid client connection" || result2["message"] != "Invalid client connection" {
+	if result1["message"] != "Failed to send request: invalid client connection" || result2["message"] != "Failed to send request: invalid client connection" {
 		t.Fatalf("Expected invalid connection responses, got %v and %v", result1, result2)
 	}
 	if result1["clientId"] == result2["clientId"] {

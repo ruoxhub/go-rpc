@@ -1,8 +1,8 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"net"
 	"sync"
@@ -10,22 +10,43 @@ import (
 	"time"
 
 	"github.com/mrh30000/go-rpc/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/server/transport"
 )
 
-// bufReadWriteCloser is a mock net.Conn implementation for testing
-type bufReadWriteCloser struct {
+// mockNetConn is a minimal net.Conn for testing.
+type mockNetConn struct {
 	reader io.Reader
 	writer io.Writer
+	closed bool
+	mu     sync.Mutex
 }
 
-func (b bufReadWriteCloser) Read(p []byte) (n int, err error)   { return b.reader.Read(p) }
-func (b bufReadWriteCloser) Write(p []byte) (n int, err error)  { return b.writer.Write(p) }
-func (b bufReadWriteCloser) Close() error                       { return nil }
-func (b bufReadWriteCloser) LocalAddr() net.Addr                { return nil }
-func (b bufReadWriteCloser) RemoteAddr() net.Addr               { return nil }
-func (b bufReadWriteCloser) SetDeadline(t time.Time) error      { return nil }
-func (b bufReadWriteCloser) SetReadDeadline(t time.Time) error  { return nil }
-func (b bufReadWriteCloser) SetWriteDeadline(t time.Time) error { return nil }
+func (m *mockNetConn) Read(p []byte) (n int, err error)  { return m.reader.Read(p) }
+func (m *mockNetConn) Write(p []byte) (n int, err error) { return m.writer.Write(p) }
+func (m *mockNetConn) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	return nil
+}
+func (m *mockNetConn) LocalAddr() net.Addr                { return nil }
+func (m *mockNetConn) RemoteAddr() net.Addr               { return nil }
+func (m *mockNetConn) SetDeadline(t time.Time) error      { return nil }
+func (m *mockNetConn) SetReadDeadline(t time.Time) error  { return nil }
+func (m *mockNetConn) SetWriteDeadline(t time.Time) error { return nil }
+
+// mockConn is a transport.Connection that returns a configurable error on Send.
+type mockConn struct {
+	sendErr error
+	closed  bool
+}
+
+func (m *mockConn) Send(data []byte) error     { return m.sendErr }
+func (m *mockConn) Receive() ([]byte, error)   { return nil, io.EOF }
+func (m *mockConn) Close() error               { m.closed = true; return nil }
+func (m *mockConn) RemoteAddr() string         { return "mock" }
+
+var _ transport.Connection = (*mockConn)(nil)
 
 func TestNewRpcClient(t *testing.T) {
 	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
@@ -51,11 +72,7 @@ func TestNewRpcClient(t *testing.T) {
 
 func TestRpcClientDestroy(t *testing.T) {
 	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
-
-	// Destroy should not panic
 	client.Destroy(0)
-
-	// After destroy, destroyed flag should be set
 	if !client.destroyed {
 		t.Error("destroyed flag not set after Destroy()")
 	}
@@ -63,32 +80,44 @@ func TestRpcClientDestroy(t *testing.T) {
 
 func TestClientConnectionSend(t *testing.T) {
 	conn := &clientConnection{
+		tcpConn:     nil, // will be sent to
 		respWaiters: make(map[int32]chan *protocol.RpcPacket),
-		closed:      true, // Simulate closed connection
 	}
 
 	packet := protocol.NewRpcPacket()
-	err := conn.send(packet)
+	// Nil tcpConn will panic on Send — we test via mock below.
+	_ = packet
+	_ = conn
+}
 
+func TestClientConnectionSendError(t *testing.T) {
+	mock := &mockConn{sendErr: errors.New("connection closed")}
+	conn := &clientConnection{
+		tcpConn:     transport.NewTCPConnection(&mockNetConn{reader: bytes.NewReader(nil), writer: io.Discard}),
+		respWaiters: make(map[int32]chan *protocol.RpcPacket),
+	}
+	// Close the underlying tcpConn
+	conn.tcpConn.Close()
+
+	packet := protocol.NewRpcPacket()
+	err := conn.send(packet)
 	if err == nil {
 		t.Error("send() on closed connection should return error")
 	}
+	_ = mock
 }
 
 func TestClientConnectionClose(t *testing.T) {
-	// Create a mock connection using a bytes buffer as a mock net.Conn
-	buf := &bytes.Buffer{}
+	mock := &mockNetConn{reader: bytes.NewReader([]byte{}), writer: io.Discard}
+	tcpConn := transport.NewTCPConnection(mock)
 	conn := &clientConnection{
-		conn:        &bufReadWriteCloser{reader: bytes.NewReader([]byte{}), writer: buf},
+		tcpConn:     tcpConn,
 		respWaiters: make(map[int32]chan *protocol.RpcPacket),
-		closed:      false,
 	}
 
-	// First close should work
 	conn.close()
-
-	if !conn.closed {
-		t.Error("closed flag not set after close()")
+	if !mock.closed {
+		t.Error("underlying connection not closed")
 	}
 
 	// Second close should be no-op (not panic)
@@ -96,10 +125,10 @@ func TestClientConnectionClose(t *testing.T) {
 }
 
 func TestClientConnectionReceive(t *testing.T) {
-	// This test requires a valid reader, so we just verify the function exists
-	// and the compress manager can be nil
+	mock := &mockNetConn{reader: bytes.NewReader([]byte{}), writer: io.Discard}
+	tcpConn := transport.NewTCPConnection(mock)
 	conn := &clientConnection{
-		reader:      bufio.NewReader(bytes.NewReader([]byte{})),
+		tcpConn:     tcpConn,
 		respWaiters: make(map[int32]chan *protocol.RpcPacket),
 	}
 
@@ -111,26 +140,22 @@ func TestClientConnectionReceive(t *testing.T) {
 }
 
 func TestNotifyDisconnect(t *testing.T) {
-	// notifyDisconnect only closes channels, it doesn't set the closed flag
-	// The closed flag is set by the close() method
-	// This test verifies that notifyDisconnect doesn't panic with valid connection
-
 	ch1 := make(chan *protocol.RpcPacket, 1)
 
 	conn := &clientConnection{
+		tcpConn:     transport.NewTCPConnection(&mockNetConn{reader: bytes.NewReader(nil), writer: io.Discard}),
 		respWaiters: map[int32]chan *protocol.RpcPacket{
 			1: ch1,
 		},
 	}
+	conn.tcpConn.Close()
 
 	client := &RpcClient{
 		Connection: conn,
 	}
 
-	// Notify disconnect should close all channels without panicking
 	client.notifyDisconnect()
 
-	// Verify channel is closed
 	_, ok := <-ch1
 	if ok {
 		t.Error("Channel should be closed after notifyDisconnect")
@@ -138,15 +163,12 @@ func TestNotifyDisconnect(t *testing.T) {
 }
 
 func TestNotifyDisconnectChannels(t *testing.T) {
-	// Test that channels are properly closed
 	ch1 := make(chan *protocol.RpcPacket, 1)
 	ch2 := make(chan *protocol.RpcPacket, 1)
 
-	// Manually close channels to simulate what notifyDisconnect does
 	close(ch1)
 	close(ch2)
 
-	// Verify channels are closed
 	_, ok := <-ch1
 	if ok {
 		t.Error("Channel 1 should be closed")
@@ -161,14 +183,12 @@ func TestNotifyDisconnectNilConnection(t *testing.T) {
 	client := &RpcClient{
 		Connection: nil,
 	}
-
-	// Should not panic
 	client.notifyDisconnect()
 }
 
 func TestBufWriter(t *testing.T) {
 	var buf []byte
-	writer := &bufWriter{buf: &buf}
+	writer := &protocol.BufWriter{Buf: &buf}
 
 	data := []byte("test data")
 	n, err := writer.Write(data)
@@ -192,16 +212,12 @@ func TestRegisterHandler(t *testing.T) {
 	}
 
 	client.Register(handler)
-
-	// Register should not panic
-	// Note: The current implementation is a stub, so we just verify it doesn't crash
 }
 
 func TestRpcClientStartDestroyed(t *testing.T) {
 	client := NewRpcClient("test-group", "client-1", "localhost", 5612)
 	client.Destroy(0)
 
-	// Start after destroy should return error
 	err := client.Start()
 	if err == nil {
 		t.Error("Start() after Destroy should return error")
@@ -209,11 +225,12 @@ func TestRpcClientStartDestroyed(t *testing.T) {
 }
 
 func TestClientConnectionSendConcurrent(t *testing.T) {
-	// Test that send is safe for concurrent use
+	mock := &mockConn{sendErr: errors.New("closed")}
 	conn := &clientConnection{
+		tcpConn:     transport.NewTCPConnection(&mockNetConn{reader: bytes.NewReader(nil), writer: io.Discard}),
 		respWaiters: make(map[int32]chan *protocol.RpcPacket),
-		closed:      true, // Closed to avoid actual network operations
 	}
+	conn.tcpConn.Close()
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -221,14 +238,14 @@ func TestClientConnectionSendConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			packet := protocol.NewRpcPacket()
-			conn.send(packet) // Will return error, but should be thread-safe
+			conn.send(packet)
 		}()
 	}
 	wg.Wait()
+	_ = mock
 }
 
 func TestInvokeRequestResponse(t *testing.T) {
-	// Test InvokeRequest struct
 	req := &InvokeRequest{
 		Group:   "test-group",
 		Api:     "test-api",
@@ -245,7 +262,6 @@ func TestInvokeRequestResponse(t *testing.T) {
 }
 
 func TestInvokeResponse(t *testing.T) {
-	// Test InvokeResponse struct
 	resp := &InvokeResponse{
 		Code:    0,
 		Message: "success",

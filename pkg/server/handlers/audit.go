@@ -5,10 +5,19 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/middleware"
 )
+
+// sysLogRepoVar is a package-level repository reference used by audit functions.
+// It is set during initialization in SetupWebRoutes or bootstrap.
+var sysLogRepoVar repository.SysLogRepository
+
+// SetSysLogRepository sets the SysLogRepository for audit logging.
+func SetSysLogRepository(repo repository.SysLogRepository) {
+	sysLogRepoVar = repo
+}
 
 // AuditAction 定义审计操作类型
 type AuditAction string
@@ -38,7 +47,9 @@ func logAudit(c *gin.Context, action AuditAction, resource string, detail string
 		CreateTime: time.Now(),
 	}
 
-	database.GetDB().Create(&audit)
+	if sysLogRepoVar != nil {
+		sysLogRepoVar.Create(&audit)
+	}
 }
 
 // 审计日志辅助函数
