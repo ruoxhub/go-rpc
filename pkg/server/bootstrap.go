@@ -489,6 +489,7 @@ func (s *Server) Shutdown() {
 		s.metricsCollector.Shutdown()
 	}
 
+	s.clientManager.Stop()
 	s.clientManager.CleanupAll()
 	logger.Info("Server stopped")
 }

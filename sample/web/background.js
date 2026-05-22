@@ -7,16 +7,27 @@ let wsConnection = null;
 let hasCapturedXClientData = false;
 let hasCapturedXBrowserValidation = false;
 
+// ── 浏览器环境检测 ──
+// Firefox 在全局暴露 browser 对象（且 browser !== chrome），Chrome 不暴露
+const isFirefox = (function () {
+  try {
+    return typeof browser !== 'undefined' && browser.runtime && browser.runtime.getURL('').indexOf('moz-extension:') === 0;
+  } catch (e) {
+    return false;
+  }
+})();
+
 // ── APM 上报拦截（zhipin.com DEVICE_ACTION 反检测） ──
 // 拦截发往 apm-fe.zhipin.com 的 DEVICE_ACTION 上报请求，
 // 阻止服务端获知本地 WebSocket 代理和 Chrome 扩展检测结果。
 (function installApmBlockRule() {
-  var dnr = (typeof chrome !== 'undefined') && chrome.declarativeNetRequest;
+  var dnr = (typeof chrome !== 'undefined' && chrome.declarativeNetRequest) ||
+            (typeof browser !== 'undefined' && browser.declarativeNetRequest);
   if (!dnr) return;
 
   // 细粒度功能检测：确保动态规则 API 可用
   if (typeof dnr.addDynamicRules !== 'function' || typeof dnr.getDynamicRules !== 'function') {
-    console.warn('[Background] declarativeNetRequest dynamic rules API not available in this Chrome version');
+    console.warn('[Background] declarativeNetRequest dynamic rules API not available');
     return;
   }
 
@@ -47,6 +58,14 @@ let hasCapturedXBrowserValidation = false;
     console.warn('[Background] declarativeNetRequest error:', e);
   }
 })();
+
+// ── webRequest 拦截 YouTube 请求头 ──
+// Firefox 不支持 extraHeaders 选项，需要做兼容处理
+var webRequestExtraInfoSpec = ["requestHeaders"];
+if (!isFirefox) {
+  // Chrome 需要 extraHeaders 才能获取 X-Client-Data 等自定义头
+  webRequestExtraInfoSpec.push("extraHeaders");
+}
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
     async (details) => {
@@ -96,7 +115,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
         }
     },
     { urls: ["*://*.youtube.com/*"] },
-    ["requestHeaders", "extraHeaders"]
+    webRequestExtraInfoSpec
 );
 
 // Listen for messages from content script
@@ -193,6 +212,182 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
         return true; // 保持消息通道打开以进行异步响应
     }
+    else if (request.action === 'navigate') {
+        // 浏览器标签页导航
+        const { url, tabId, newTab } = request;
+        if (!url) {
+            safeSendResponse({ success: false, error: 'URL is required' });
+            return false;
+        }
+
+        const doNavigate = (targetTabId) => {
+            chrome.tabs.update(targetTabId, { url }, (tab) => {
+                if (chrome.runtime.lastError) {
+                    safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    return;
+                }
+                safeSendResponse({
+                    success: true,
+                    tabId: tab.id,
+                    title: tab.title || '',
+                    url: tab.url || url
+                });
+            });
+        };
+
+        if (newTab) {
+            chrome.tabs.create({ url }, (tab) => {
+                safeSendResponse({
+                    success: true,
+                    tabId: tab.id,
+                    title: tab.title || '',
+                    url: tab.url || url
+                });
+            });
+            return true;
+        }
+
+        if (tabId) {
+            doNavigate(tabId);
+        } else {
+            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (tabs && tabs.length > 0) {
+                    doNavigate(tabs[0].id);
+                } else {
+                    safeSendResponse({ success: false, error: 'No active tab found' });
+                }
+            });
+        }
+        return true;
+    }
+    else if (request.action === 'tabs') {
+        // 标签页查询与操作 (query/create/update/remove/get)
+        const { method, args } = request;
+        if (!method || !chrome.tabs[method]) {
+            safeSendResponse({ success: false, error: `Unknown tabs method: ${method}` });
+            return false;
+        }
+
+        try {
+            const methodFn = chrome.tabs[method];
+            const methodArgs = args || [];
+
+            // chrome.tabs.remove 接受 (tabIds, callback) 或 (tabIds) → Promise
+            // chrome.tabs.query/get/create/update 接受 (arg1, ..., callback) 或 (arg1, ...) → Promise
+            if (method === 'remove') {
+                methodFn(methodArgs[0], () => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, tabs: null, tabId: null });
+                    }
+                });
+            } else if (method === 'query') {
+                methodFn(methodArgs[0] || {}, (tabs) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, tabs: tabs, tabId: tabs && tabs.length > 0 ? tabs[0].id : null });
+                    }
+                });
+            } else if (method === 'get') {
+                methodFn(methodArgs[0], (tab) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, tabs: tab, tabId: tab.id });
+                    }
+                });
+            } else if (method === 'create') {
+                methodFn(methodArgs[0] || {}, (tab) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, tabs: tab, tabId: tab.id });
+                    }
+                });
+            } else if (method === 'update') {
+                methodFn(methodArgs[0], methodArgs[1] || {}, (tab) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, tabs: tab, tabId: tab.id });
+                    }
+                });
+            } else {
+                safeSendResponse({ success: false, error: `Unsupported tabs method: ${method}` });
+            }
+        } catch (e) {
+            safeSendResponse({ success: false, error: e.message || 'Tabs operation failed' });
+        }
+        return true;
+    }
+    else if (request.action === 'getCookies') {
+        // 获取 Cookie（需要 cookies 权限）
+        const { url, name } = request;
+        try {
+            const getAll = () => {
+                chrome.cookies.getAll({ url: url || undefined }, (cookies) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, cookies: cookies || [] });
+                    }
+                });
+            };
+
+            if (name) {
+                // 按名称过滤特定 cookie
+                chrome.cookies.getAll({ url: url || undefined, name }, (cookies) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, cookies: cookies || [] });
+                    }
+                });
+            } else {
+                getAll();
+            }
+        } catch (e) {
+            safeSendResponse({ success: false, error: e.message || 'getCookies failed', cookies: [] });
+        }
+        return true;
+    }
+    else if (request.action === 'screenshot') {
+        // 截取标签页截图（需要 activeTab 或 tabs 权限）
+        const { tabId } = request;
+        try {
+            const captureOptions = {};
+            if (tabId) {
+                // chrome.tabs.captureVisibleTab 只能截取窗口，不支持指定 tabId
+                // 这里使用 tabId 找到对应窗口
+                chrome.tabs.get(tabId, (tab) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                        return;
+                    }
+                    chrome.tabs.captureVisibleTab(tab.windowId, captureOptions, (dataUrl) => {
+                        if (chrome.runtime.lastError) {
+                            safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                        } else {
+                            safeSendResponse({ success: true, data: dataUrl });
+                        }
+                    });
+                });
+            } else {
+                chrome.tabs.captureVisibleTab(null, captureOptions, (dataUrl) => {
+                    if (chrome.runtime.lastError) {
+                        safeSendResponse({ success: false, error: chrome.runtime.lastError.message });
+                    } else {
+                        safeSendResponse({ success: true, data: dataUrl });
+                    }
+                });
+            }
+        } catch (e) {
+            safeSendResponse({ success: false, error: e.message || 'Screenshot failed' });
+        }
+        return true;
+    }
     else {
         // 未知的 action，同步返回错误
         console.warn('[Background] Unknown action:', request.action);
@@ -214,6 +409,20 @@ chrome.runtime.onConnect.addListener((port) => {
   console.log('[Background] WS bridge connected from tab:', tabId);
 
   let ws = null;
+  let disconnected = false;
+
+  const safePostMessage = (msg) => {
+    if (disconnected) return;
+    try {
+      port.postMessage(msg);
+    } catch (e) {
+      if (e.message.includes('disconnected port')) {
+        disconnected = true;
+      } else {
+        console.error('[Background] postMessage error:', e);
+      }
+    }
+  };
 
   port.onMessage.addListener((msg) => {
     if (msg.action === 'connect') {
@@ -226,27 +435,27 @@ chrome.runtime.onConnect.addListener((port) => {
         ws = new WebSocket(msg.url);
 
         ws.onopen = () => {
-          port.postMessage({ type: 'open', url: msg.url });
+          safePostMessage({ type: 'open', url: msg.url });
         };
 
         ws.onmessage = (event) => {
-          port.postMessage({ type: 'message', data: event.data, url: msg.url });
+          safePostMessage({ type: 'message', data: event.data, url: msg.url });
         };
 
         ws.onclose = (event) => {
-          port.postMessage({ type: 'close', code: event.code, reason: event.reason, url: msg.url });
+          safePostMessage({ type: 'close', code: event.code, reason: event.reason, url: msg.url });
           ws = null;
         };
 
         ws.onerror = () => {
-          port.postMessage({ type: 'error', url: msg.url });
+          safePostMessage({ type: 'error', url: msg.url });
         };
 
         wsConnections.set(port, ws);
         console.log('[Background] WebSocket created for tab:', tabId, 'url:', msg.url);
       } catch (e) {
         console.error('[Background] Failed to create WebSocket:', e);
-        port.postMessage({ type: 'error', url: msg.url, error: e.message });
+        safePostMessage({ type: 'error', url: msg.url, error: e.message });
       }
     } else if (msg.action === 'send') {
       if (ws && ws.readyState === WebSocket.OPEN) {
@@ -265,6 +474,7 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 
   port.onDisconnect.addListener(() => {
+    disconnected = true;
     console.log('[Background] WS bridge port disconnected from tab:', tabId);
     if (ws) {
       try { ws.close(); } catch (e) {}

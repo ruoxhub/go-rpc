@@ -16,7 +16,6 @@ const (
 	cmdGetClient
 	cmdGetAllClients
 	cmdAllocate
-	cmdClose
 )
 
 // groupCommand represents a command to the group goroutine
@@ -34,15 +33,17 @@ type commandResult struct {
 	err     error
 }
 
-// RpcGroup manages clients in a single group using goroutine + channel
+// RpcGroup manages clients in a single group using goroutine + channel.
+// 关停模型：Close() 关闭 done channel；runLoop 监听 done 自然退出；
+// 所有发送方与等待方都用 select+done 防止 close-after-check 的 TOCTOU 死锁。
 type RpcGroup struct {
 	name        string
 	commandChan chan groupCommand
 	clients     map[string]*RpcClient
 	order       []string
 	wg          sync.WaitGroup
-	closed      bool
-	mu          sync.Mutex
+	done        chan struct{}
+	closeOnce   sync.Once
 }
 
 // NewRpcGroup creates a new RpcGroup
@@ -52,6 +53,7 @@ func NewRpcGroup(name string) *RpcGroup {
 		commandChan: make(chan groupCommand, 64),
 		clients:     make(map[string]*RpcClient),
 		order:       make([]string, 0, 8),
+		done:        make(chan struct{}),
 	}
 
 	g.wg.Add(1)
@@ -60,76 +62,107 @@ func NewRpcGroup(name string) *RpcGroup {
 	return g
 }
 
-// runLoop processes commands in a single goroutine
+// runLoop processes commands in a single goroutine until done is closed.
+// done 关闭后，把缓冲区里残留的命令的 callback 全部回填零值结果，让等待方立即解锁。
 func (g *RpcGroup) runLoop() {
 	defer g.wg.Done()
 
-	for cmd := range g.commandChan {
-		switch cmd.typ {
-		case cmdRegister:
-			if _, exists := g.clients[cmd.client.ClientID]; !exists {
-				g.order = append(g.order, cmd.client.ClientID)
-			}
-			g.clients[cmd.client.ClientID] = cmd.client
-			logger.Infof("Client registered: group=%s, clientId=%s", g.name, cmd.client.ClientID)
+	for {
+		select {
+		case <-g.done:
+			g.drainCommands()
+			g.closeAllClients()
+			return
+		case cmd := <-g.commandChan:
+			g.handleCommand(cmd)
+		}
+	}
+}
 
-		case cmdUnregister:
-			if client, ok := g.clients[cmd.clientID]; ok {
-				client.Close()
-				delete(g.clients, cmd.clientID)
-				g.removeFromOrder(cmd.clientID)
-				logger.Infof("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
-			}
+// handleCommand 处理单条命令。
+func (g *RpcGroup) handleCommand(cmd groupCommand) {
+	switch cmd.typ {
+	case cmdRegister:
+		if _, exists := g.clients[cmd.client.ClientID]; !exists {
+			g.order = append(g.order, cmd.client.ClientID)
+		}
+		g.clients[cmd.client.ClientID] = cmd.client
+		logger.Infof("Client registered: group=%s, clientId=%s", g.name, cmd.client.ClientID)
 
-		case cmdGetClient:
-			client := g.clients[cmd.clientID]
-			cmd.callback <- commandResult{client: client}
+	case cmdUnregister:
+		if client, ok := g.clients[cmd.clientID]; ok {
+			client.Close()
+			delete(g.clients, cmd.clientID)
+			g.removeFromOrder(cmd.clientID)
+			logger.Infof("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
+		}
 
-		case cmdGetAllClients:
-			clients := g.snapshotClients()
-			cmd.callback <- commandResult{clients: clients}
+	case cmdGetClient:
+		client := g.clients[cmd.clientID]
+		cmd.callback <- commandResult{client: client}
 
-		case cmdAllocate:
-			// Allocate with health-aware logic
-			var allocated *RpcClient
+	case cmdGetAllClients:
+		clients := g.snapshotClients()
+		cmd.callback <- commandResult{clients: clients}
 
-			// First try to find a healthy client
-			for _, c := range g.clients {
-				if c.GetStatus() == StatusOnline && c.IsHealthy {
-					allocated = c
-					break
+	case cmdAllocate:
+		cmd.callback <- commandResult{client: g.allocate()}
+	}
+}
+
+// allocate 健康优先 → 在线 → 任意，返回首个可分配客户端。
+func (g *RpcGroup) allocate() *RpcClient {
+	var fallbackOnline *RpcClient
+	var fallbackAny *RpcClient
+
+	for _, c := range g.clients {
+		if fallbackAny == nil {
+			fallbackAny = c
+		}
+		if c.GetStatus() != StatusOnline {
+			continue
+		}
+		if fallbackOnline == nil {
+			fallbackOnline = c
+		}
+		if c.IsHealthy {
+			return c
+		}
+	}
+
+	if fallbackOnline != nil {
+		return fallbackOnline
+	}
+	return fallbackAny
+}
+
+// drainCommands 在 done 关闭后回填 commandChan 中残留命令的 callback，
+// 让所有等待方解除阻塞返回零值。
+func (g *RpcGroup) drainCommands() {
+	for {
+		select {
+		case cmd := <-g.commandChan:
+			if cmd.callback != nil {
+				// 非阻塞发送：callback 是 buffer=1 的 channel，等待方还没读时直接成功；
+				// 已读走的情况下 default 落空也无影响（不该出现，但留个保险）。
+				select {
+				case cmd.callback <- commandResult{}:
+				default:
 				}
 			}
-
-			// If no healthy client found, fall back to any online client
-			if allocated == nil {
-				for _, c := range g.clients {
-					if c.GetStatus() == StatusOnline {
-						allocated = c
-						break
-					}
-				}
-			}
-
-			// If still no client found, return any client as last resort
-			if allocated == nil && len(g.clients) > 0 {
-				for _, c := range g.clients {
-					allocated = c
-					break
-				}
-			}
-			cmd.callback <- commandResult{client: allocated}
-
-		case cmdClose:
-			for _, c := range g.clients {
-				c.Close()
-			}
-			g.clients = make(map[string]*RpcClient)
-			g.order = nil
-			cmd.callback <- commandResult{}
+		default:
 			return
 		}
 	}
+}
+
+// closeAllClients 在 runLoop 退出前关闭所有 client。
+func (g *RpcGroup) closeAllClients() {
+	for _, c := range g.clients {
+		c.Close()
+	}
+	g.clients = make(map[string]*RpcClient)
+	g.order = nil
 }
 
 func (g *RpcGroup) snapshotClients() []*RpcClient {
@@ -152,111 +185,91 @@ func (g *RpcGroup) removeFromOrder(clientID string) {
 	}
 }
 
-// Register registers a client to the group
-func (g *RpcGroup) Register(client *RpcClient) {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
-		return
+// sendCommand 把命令塞进 commandChan，已关停时立即返回 false。
+// select 同时监听 done 与 channel send，避免 channel 已无消费者时永久阻塞。
+func (g *RpcGroup) sendCommand(cmd groupCommand) bool {
+	select {
+	case <-g.done:
+		return false
+	default:
 	}
-	g.commandChan <- groupCommand{
+
+	select {
+	case g.commandChan <- cmd:
+		return true
+	case <-g.done:
+		return false
+	}
+}
+
+// waitCallback 等待回调，已关停时立即返回零值。
+func (g *RpcGroup) waitCallback(callback chan commandResult) commandResult {
+	select {
+	case r := <-callback:
+		return r
+	case <-g.done:
+		return commandResult{}
+	}
+}
+
+// Register registers a client to the group. 已关停时静默丢弃。
+func (g *RpcGroup) Register(client *RpcClient) {
+	g.sendCommand(groupCommand{
 		typ:    cmdRegister,
 		client: client,
-	}
+	})
 }
 
-// Unregister unregisters a client from the group
+// Unregister unregisters a client from the group. 已关停时静默丢弃。
 func (g *RpcGroup) Unregister(clientID string) {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
-		return
-	}
-	g.commandChan <- groupCommand{
+	g.sendCommand(groupCommand{
 		typ:      cmdUnregister,
 		clientID: clientID,
-	}
+	})
 }
 
-// GetClient gets a client by ID
+// GetClient gets a client by ID. 已关停时返回 nil。
 func (g *RpcGroup) GetClient(clientID string) *RpcClient {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
-		return nil
-	}
-
 	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
+	if !g.sendCommand(groupCommand{
 		typ:      cmdGetClient,
 		clientID: clientID,
 		callback: callback,
-	}
-	result := <-callback
-	return result.client
-}
-
-// GetAllClients gets all clients in the group
-func (g *RpcGroup) GetAllClients() []*RpcClient {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
+	}) {
 		return nil
 	}
+	return g.waitCallback(callback).client
+}
 
+// GetAllClients gets all clients in the group. 已关停时返回 nil。
+func (g *RpcGroup) GetAllClients() []*RpcClient {
 	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
+	if !g.sendCommand(groupCommand{
 		typ:      cmdGetAllClients,
 		callback: callback,
-	}
-	result := <-callback
-	return result.clients
-}
-
-// AllocateClient allocates a client for invocation
-func (g *RpcGroup) AllocateClient() *RpcClient {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
+	}) {
 		return nil
 	}
-
-	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
-		typ:      cmdAllocate,
-		callback: callback,
-	}
-	result := <-callback
-	return result.client
+	return g.waitCallback(callback).clients
 }
 
-// Close closes the group and all clients
-func (g *RpcGroup) Close() {
-	g.mu.Lock()
-	if g.closed {
-		g.mu.Unlock()
-		return
-	}
-	g.closed = true
-	g.mu.Unlock()
-
+// AllocateClient allocates a client for invocation. 已关停时返回 nil。
+func (g *RpcGroup) AllocateClient() *RpcClient {
 	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
-		typ:      cmdClose,
+	if !g.sendCommand(groupCommand{
+		typ:      cmdAllocate,
 		callback: callback,
+	}) {
+		return nil
 	}
-	<-callback
+	return g.waitCallback(callback).client
+}
 
+// Close closes the group and all clients. 多次调用安全。
+func (g *RpcGroup) Close() {
+	g.closeOnce.Do(func() {
+		close(g.done)
+	})
 	g.wg.Wait()
 }
 
@@ -265,23 +278,10 @@ func (g *RpcGroup) Name() string {
 	return g.name
 }
 
-// ClientCount returns the number of clients in the group
+// ClientCount returns the number of clients in the group. 已关停时返回 0。
 func (g *RpcGroup) ClientCount() int {
-	g.mu.Lock()
-	closed := g.closed
-	g.mu.Unlock()
-
-	if closed {
-		return 0
-	}
-
-	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
-		typ:      cmdGetAllClients,
-		callback: callback,
-	}
-	result := <-callback
-	return len(result.clients)
+	clients := g.GetAllClients()
+	return len(clients)
 }
 
 // HasClient checks if a client exists in the group
@@ -291,31 +291,15 @@ func (g *RpcGroup) HasClient(clientID string) bool {
 
 // AllocateClientWithStatus allocates a client with specific status requirement
 func (g *RpcGroup) AllocateClientWithStatus(status ClientStatus) *RpcClient {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if g.closed {
+	c := g.AllocateClient()
+	if c == nil {
 		return nil
 	}
-
-	callback := make(chan commandResult, 1)
-	g.commandChan <- groupCommand{
-		typ:      cmdAllocate,
-		callback: callback,
+	if c.GetStatus() != status {
+		// 当前实现：状态不匹配仍返回 client（保持向后兼容）
+		return c
 	}
-	result := <-callback
-
-	if result.client == nil {
-		return nil
-	}
-
-	if result.client.GetStatus() != status {
-		// If status doesn't match, return nil or the client anyway
-		// depending on requirements
-		return result.client
-	}
-
-	return result.client
+	return c
 }
 
 // ErrNoClientAvailable is returned when no client is available

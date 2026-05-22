@@ -2,7 +2,7 @@ package router
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"fmt"
 	"sort"
 	"strconv"

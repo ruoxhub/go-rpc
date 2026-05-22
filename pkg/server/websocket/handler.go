@@ -2,7 +2,7 @@ package websocket
 
 import (
 	"context"
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"errors"
 	"net"
 	"sync"
@@ -280,6 +280,13 @@ func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcCl
 	case MessageTypeInvokeStream:
 		h.handleInvokeStream(&msg)
 	default:
+		// 客户端"echo 类"畸形响应（type 为空、seq 为空，常见于 client 把服务端心跳响应当作请求处理后回的失败包）
+		// 不能再通过 sendError 回包，否则会与客户端形成"unknown message type ↔ 缺少 action"的无限回环。
+		// 仅记日志静默丢弃。
+		if msg.Type == "" && sequence == "" {
+			logger.Warnf("Discarding malformed message (empty type and sequence): %s", string(data))
+			return
+		}
 		logger.Warnf("Unknown message type: %s", msg.Type)
 		h.sendError(sekiroClient, "unknown message type", sequence)
 	}

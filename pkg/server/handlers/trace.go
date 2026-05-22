@@ -1,7 +1,7 @@
 package handlers
 
 import (
-	"encoding/json"
+	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"

@@ -181,10 +181,15 @@ class BaseClient {
     this.isManualDisconnect = false;
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 50;
     this.baseReconnectDelay = 1000;
     this.maxReconnectDelay = 30000;
     this.isReconnecting = false;
+
+    // 心跳：服务端 60s 内未收到任何消息就会踢人，这里 25s 主动发一次
+    this.heartbeatTimer = null;
+    this.heartbeatInterval = 25000;
+    // 当前连接使用的 clientId（每次重连都会重新生成）
+    this.clientId = null;
 
     // 注册默认的 _execjs handler
     this.handlers.set('_execjs', this._execjsHandler.bind(this));
@@ -386,8 +391,41 @@ class BaseClient {
    */
   buildWebSocketURL() {
     const host = this.config.rpcHost || 'ws://127.0.0.1:5612';
-    const clientId = Math.random().toString(36).substr(2, 9);
-    return `${host}/business/register?group=${this.group}&clientId=${clientId}`;
+    this.clientId = Math.random().toString(36).substr(2, 9);
+    return `${host}/business/register?group=${this.group}&clientId=${this.clientId}`;
+  }
+
+  /**
+   * 启动心跳：每 25s 主动发一次 heartbeat 消息。
+   * 服务端 60s 内收不到任何消息会踢人，主动心跳能在 TCP 半死时让本端及时发现问题。
+   */
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      try {
+        this.socket.send(JSON.stringify({
+          type: 'heartbeat',
+          group: this.group,
+          clientId: this.clientId,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        this.log(`心跳发送异常：${e}`, 'warn');
+      }
+    }, this.heartbeatInterval);
+  }
+
+  /**
+   * 停止心跳定时器
+   */
+  _stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
   }
 
   /**
@@ -506,6 +544,8 @@ class BaseClient {
         this.log(`成功建立连接`);
         // 连接成功后重置重连计数
         this.reconnectAttempts = 0;
+        // 启动心跳，避免 TCP 半死状态服务端踢人
+        this._startHeartbeat();
       };
 
       this.socket.onmessage = (event) => {
@@ -518,6 +558,7 @@ class BaseClient {
 
       this.socket.onclose = (event) => {
         this.socket = null;
+        this._stopHeartbeat();
         if (this.isManualDisconnect) {
           this.log('连接已手动断开');
           this.isReconnecting = false;
@@ -531,9 +572,22 @@ class BaseClient {
 
       this.socket.onerror = (event) => {
         this.log(`WebSocket 连接错误`);
-        // onerror 后必然触发 onclose，由 onclose 统一调度重连
-        // 此处仅标记状态，避免双重重连
         this.isReconnecting = true;
+        // 兜底：onerror 后 onclose 应当紧随而来，但代理路径上偶尔不触发
+        // 5s 内若 socket 仍未进入 CLOSED 状态，强制关闭并主动调度重连
+        const offendingSocket = this.socket;
+        setTimeout(() => {
+          if (this.isManualDisconnect) return;
+          if (this.socket !== offendingSocket) return; // 已经被替换/清理
+          if (!this.socket) return;
+          if (this.socket.readyState === WebSocket.CLOSED) return;
+          this.log('onerror 后 onclose 未触发，强制清理并重连', 'warn');
+          try { this.socket.close(); } catch (e) {}
+          this.socket = null;
+          this._stopHeartbeat();
+          this.isReconnecting = false;
+          this._scheduleReconnect(wsURL);
+        }, 5000);
       };
 
     } catch (e) {
@@ -564,16 +618,14 @@ class BaseClient {
   }
 
   /**
-   * 调度重连（指数退避策略）
+   * 调度重连（指数退避策略，无次数上限）
+   * 早期退避序列：1s, 2s, 4s, 8s, 16s, 32s, 30s, 30s, ...
+   * 第 7 次起延迟封顶在 maxReconnectDelay (30s)，之后按 30s 持续重试。
+   * 不再因为达到次数上限而永久放弃，避免客户端"躺平"导致 server 长期 no client available。
    * @param {string} wsURL
    */
   _scheduleReconnect(wsURL) {
     if (this.isManualDisconnect) {
-      return;
-    }
-
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.log(`已达到最大重连次数 (${this.maxReconnectAttempts})，停止重连`);
       return;
     }
 
@@ -582,9 +634,10 @@ class BaseClient {
     }
 
     this.reconnectAttempts++;
-    // 指数退避：1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
+    // 退避指数封顶在 2^6，避免 Math.pow 在长时间断连后产生天文数字
+    const exponent = Math.min(this.reconnectAttempts - 1, 6);
     const delay = Math.min(
-      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      this.baseReconnectDelay * Math.pow(2, exponent),
       this.maxReconnectDelay
     );
 
@@ -604,6 +657,8 @@ class BaseClient {
   _disconnect() {
     this.log('正在断开连接...');
     this.isManualDisconnect = true;
+
+    this._stopHeartbeat();
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -626,9 +681,23 @@ class BaseClient {
       return;
     }
 
-    const seq = request.__Rpc_seq__ || '';
+    // 服务端会主动下发非业务请求消息：heartbeat 响应、error 通知、以及未来可能新增的控制类消息。
+    // 这些消息没有 action 字段，但同样没有 __sekiro_seq__，不能当作 RPC 请求来回错误响应，
+    // 否则会触发服务端的 unknown-type 兜底再次回包，形成"缺少 action"无限回环。
+    const msgType = typeof request.type === 'string' ? request.type : '';
+    if (msgType === 'heartbeat' || msgType === 'error' || msgType === 'invoke_response') {
+      return;
+    }
+
+    const seq = request.__sekiro_seq__ || '';
 
     if (!request.action) {
+      // 没有 action 也没有 seq 的消息一定不是合法 RPC 请求（合法请求服务端必带 seq）。
+      // 静默丢弃，避免对端继续回环。
+      if (!seq) {
+        this.log(`忽略无 action 且无 seq 的消息：${requestJson}`, 'warn');
+        return;
+      }
       this._sendFailed(seq, '缺少 request 参数 {action}');
       return;
     }
@@ -666,28 +735,23 @@ class BaseClient {
    * @param {*} response - 响应数据
    */
   _sendSuccess(seq, response) {
-    let responseJson;
-
+    // 解析响应内容
+    let parsedResponse = response;
     if (typeof response === 'string') {
       try {
-        responseJson = JSON.parse(response);
+        parsedResponse = JSON.parse(response);
       } catch (e) {
-        responseJson = { data: response };
+        // 保留原始字符串
       }
-    } else if (typeof response === 'object' && response !== null) {
-      responseJson = response;
-    } else {
-      responseJson = { data: response };
     }
 
-    // 确保是数组或字符串时包装为对象
-    if (Array.isArray(responseJson) || typeof responseJson === 'string') {
-      responseJson = { data: responseJson, code: 0 };
-    }
-
-    responseJson.code = 0;
-    responseJson.status = 0;
-    responseJson.__Rpc_seq__ = seq;
+    // 统一包装为 { data, code, status } 格式
+    const responseJson = {
+      data: parsedResponse,
+      code: 0,
+      status: 0,
+      __sekiro_seq__: seq
+    };
 
     const responseText = JSON.stringify(responseJson);
     this._send(responseText);
@@ -702,7 +766,7 @@ class BaseClient {
     const responseJson = {
       message: errorMessage,
       status: -1,
-      __Rpc_seq__: seq
+      __sekiro_seq__: seq
     };
 
     const responseText = JSON.stringify(responseJson);

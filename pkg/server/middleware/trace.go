@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"time"
 
 	"github.com/gin-gonic/gin"

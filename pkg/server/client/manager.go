@@ -7,17 +7,41 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 )
 
+// defaultDebounceDuration 是客户端生命周期事件的默认去抖窗口。
+// 高频上下线场景下 (group, clientID, eventType) 三元组在窗口内的多次触发只发布最后一次。
+const defaultDebounceDuration = 10 * time.Millisecond
+
+// debounceKey 标识一个去抖单元：同一客户端、同一事件类型在窗口内合并。
+type debounceKey struct {
+	group     string
+	clientID  string
+	eventType string
+}
+
+// debouncedEvent 持有 pending timer 与最新 payload。
+type debouncedEvent struct {
+	timer   *time.Timer
+	payload interface{}
+}
+
 // ClientManager manages all RpcGroups
 type ClientManager struct {
 	groups   map[string]*RpcGroup
 	mu       sync.RWMutex
 	eventBus *eventbus.EventBus
+
+	debounceMu       sync.Mutex
+	debounceDuration time.Duration
+	pendingEvents    map[debounceKey]*debouncedEvent
+	stopped          bool
 }
 
 // NewClientManager creates a new ClientManager
 func NewClientManager() *ClientManager {
 	return &ClientManager{
-		groups: make(map[string]*RpcGroup),
+		groups:           make(map[string]*RpcGroup),
+		debounceDuration: defaultDebounceDuration,
+		pendingEvents:    make(map[debounceKey]*debouncedEvent),
 	}
 }
 
@@ -55,13 +79,13 @@ func (m *ClientManager) Register(client *RpcClient) {
 	group := m.getOrCreateGroup(client.Group)
 	group.Register(client)
 
-	if m.eventBus != nil {
-		m.eventBus.Publish(eventbus.EventClientConnect, &eventbus.ClientConnectEvent{
+	m.publishDebounced(eventbus.EventClientConnect, client.Group, client.ClientID, func() interface{} {
+		return &eventbus.ClientConnectEvent{
 			Group:     client.Group,
 			ClientID:  client.ClientID,
 			Timestamp: time.Now(),
-		})
-	}
+		}
+	})
 }
 
 // Unregister unregisters a client
@@ -80,12 +104,75 @@ func (m *ClientManager) Unregister(groupName, clientID string) {
 		}
 	}
 
-	if m.eventBus != nil {
-		m.eventBus.Publish(eventbus.EventClientDisconnect, &eventbus.ClientDisconnectEvent{
+	m.publishDebounced(eventbus.EventClientDisconnect, groupName, clientID, func() interface{} {
+		return &eventbus.ClientDisconnectEvent{
 			Group:     groupName,
 			ClientID:  clientID,
 			Timestamp: time.Now(),
-		})
+		}
+	})
+}
+
+// publishDebounced 在 (group, clientID, eventType) 维度对事件发布做 trailing-only 去抖。
+// 状态更新已经发生，这里只压制下游通知噪音。
+// payloadFn 在每次调用时重新生成 payload，确保 timer 触发时的 Timestamp 反映最近一次事件时间。
+func (m *ClientManager) publishDebounced(eventType, group, clientID string, payloadFn func() interface{}) {
+	if m.eventBus == nil {
+		return
+	}
+
+	key := debounceKey{group: group, clientID: clientID, eventType: eventType}
+	payload := payloadFn()
+
+	m.debounceMu.Lock()
+	if m.stopped {
+		m.debounceMu.Unlock()
+		return
+	}
+
+	if existing, ok := m.pendingEvents[key]; ok {
+		existing.payload = payload
+		existing.timer.Reset(m.debounceDuration)
+		m.debounceMu.Unlock()
+		return
+	}
+
+	pending := &debouncedEvent{payload: payload}
+	m.pendingEvents[key] = pending
+	pending.timer = time.AfterFunc(m.debounceDuration, func() {
+		m.debounceMu.Lock()
+		current, ok := m.pendingEvents[key]
+		if !ok || current != pending {
+			m.debounceMu.Unlock()
+			return
+		}
+		delete(m.pendingEvents, key)
+		toPublish := current.payload
+		bus := m.eventBus
+		m.debounceMu.Unlock()
+
+		if bus != nil {
+			bus.Publish(eventType, toPublish)
+		}
+	})
+	m.debounceMu.Unlock()
+}
+
+// Stop 取消所有待触发的去抖事件，丢弃未发布的最终事件。
+// 设计为关停路径调用：状态更新链路独立，调用 Stop 后再调 CleanupAll。
+// 多次调用是幂等的。
+func (m *ClientManager) Stop() {
+	m.debounceMu.Lock()
+	defer m.debounceMu.Unlock()
+
+	if m.stopped {
+		return
+	}
+	m.stopped = true
+
+	for key, pending := range m.pendingEvents {
+		pending.timer.Stop()
+		delete(m.pendingEvents, key)
 	}
 }
 
