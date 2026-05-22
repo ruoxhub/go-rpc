@@ -146,6 +146,7 @@ func (h *UserHandler) UpdateQps(c *gin.Context) {
 		return
 	}
 
+	middleware.InvalidateToken(user.ApiToken)
 	auditUpdateQps(c, "user", user.UserName, req.QuotaQps)
 	Success(c, nil)
 }
@@ -159,6 +160,11 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		BadRequest(c, err.Error())
 		return
+	}
+
+	user, err := h.userRepo.FindByID(req.UserID)
+	if err == nil && user != nil {
+		middleware.InvalidateToken(user.ApiToken)
 	}
 
 	if err := h.userRepo.Delete(req.UserID); err != nil {
@@ -216,6 +222,9 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 		InternalError(c, err.Error())
 		return
 	}
+
+	middleware.InvalidateToken(user.ApiToken)
+	middleware.InvalidateToken(newToken)
 
 	Success(c, gin.H{"apiToken": newToken})
 }

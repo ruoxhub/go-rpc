@@ -9,6 +9,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/server/config"
+	"github.com/mrh30000/go-rpc/pkg/server/middleware"
 )
 
 // AnonymousGroupHandler 匿名分组处理器
@@ -248,6 +249,8 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	middleware.InvalidateGroup(req.GroupName)
 
 	auditConvertGroup(c, "anonymous:"+req.GroupName, req.GroupName)
 	Success(c, group.ID)

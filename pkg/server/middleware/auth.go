@@ -105,11 +105,39 @@ func ExtractAuthTokenFromRequest(c *gin.Context) string {
 	return ""
 }
 
+// FindUserByToken 根据 api_token 查询用户。
+// 命中缓存时直接返回；未命中走 singleflight 合并并发请求，结果（包含 token 不存在）回写缓存。
+// DB 错误不缓存，避免短暂故障被放大成持续 30s 的错误窗口。
 func FindUserByToken(token string) (*model.UserInfo, error) {
 	if token == "" {
 		return nil, errors.New("empty token")
 	}
 
+	if user, ok := defaultTokenCache.get(token); ok {
+		if user == nil {
+			return nil, errors.New("invalid token")
+		}
+		return user, nil
+	}
+
+	v, err, _ := defaultTokenCache.sf.Do(token, func() (interface{}, error) {
+		// double-check：等到 singleflight 锁的请求中可能已有先到者填好缓存。
+		if user, ok := defaultTokenCache.get(token); ok {
+			if user == nil {
+				return nil, errors.New("invalid token")
+			}
+			return user, nil
+		}
+		return findUserByTokenFromDB(token)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*model.UserInfo), nil
+}
+
+// findUserByTokenFromDB 直接打 DB；按结果决定缓存正/负条目。
+func findUserByTokenFromDB(token string) (*model.UserInfo, error) {
 	db := database.GetDB()
 	if db == nil {
 		return nil, errors.New("database not initialized")
@@ -118,11 +146,13 @@ func FindUserByToken(token string) (*model.UserInfo, error) {
 	var user model.UserInfo
 	if err := db.Where("api_token = ?", token).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			defaultTokenCache.set(token, nil)
 			return nil, errors.New("invalid token")
 		}
 		return nil, err
 	}
 
+	defaultTokenCache.set(token, &user)
 	return &user, nil
 }
 

@@ -128,6 +128,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
+	middleware.InvalidateGroup(group.GroupName)
+
 	Success(c, group.ID)
 }
 
@@ -169,6 +171,8 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	}
 
 	tx.Commit()
+
+	middleware.InvalidateGroup(req.GroupName)
 
 	auditDeleteGroup(c, req.GroupName)
 	Success(c, nil)
@@ -231,6 +235,8 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 		InternalError(c, err.Error())
 		return
 	}
+
+	middleware.InvalidateGroup(req.GroupName)
 
 	auditUpdateQps(c, "group", req.GroupName, req.QuotaQpsGroup)
 	Success(c, nil)

@@ -409,15 +409,24 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		return true
 	}
 
-	var group model.GroupConfig
-	result := db.Where("group_name = ?", groupName).Limit(1).Find(&group)
-	if result.Error != nil {
+	group, err := middleware.LookupGroupConfig(groupName, func(name string) (*model.GroupConfig, error) {
+		var g model.GroupConfig
+		result := db.Where("group_name = ?", name).Limit(1).Find(&g)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil, nil
+		}
+		return &g, nil
+	})
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to verify group access",
 		})
 		return false
 	}
-	if result.RowsAffected == 0 {
+	if group == nil {
 		// 未找到分组则视为公开分组，允许任意注册
 		return true
 	}

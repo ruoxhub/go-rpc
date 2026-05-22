@@ -32,6 +32,10 @@ CREATE TABLE user_info (
     quota_qps DOUBLE PRECISION NOT NULL DEFAULT 10
 );
 
+-- 加速 FindUserByToken 查询；使用部分唯一索引以兼容默认空串。
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_user_info_api_token
+    ON user_info(api_token) WHERE api_token <> '';
+
 -- 系统配置表
 CREATE TABLE sys_config (
     id BIGSERIAL PRIMARY KEY,

@@ -690,13 +690,23 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, t
 		return true
 	}
 
-	var group model.GroupConfig
-	if err := db.Where("group_name = ?", groupName).First(&group).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return true
+	group, err := middleware.LookupGroupConfig(groupName, func(name string) (*model.GroupConfig, error) {
+		var g model.GroupConfig
+		if err := db.Where("group_name = ?", name).First(&g).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
 		}
-		BusinessServerError(c, "failed to verify group access: " + err.Error())
+		return &g, nil
+	})
+	if err != nil {
+		BusinessServerError(c, "failed to verify group access: "+err.Error())
 		return false
+	}
+	if group == nil {
+		// 未配置 group_config，视为匿名分组放行。
+		return true
 	}
 
 	if token == "" {
@@ -733,17 +743,27 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 		}
 	}
 
+	lookup := func(name string) (*model.GroupConfig, error) {
+		var g model.GroupConfig
+		if err := db.Where("group_name = ?", name).First(&g).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return &g, nil
+	}
+
 	filtered := make([]string, 0, len(groups))
 	for _, groupName := range groups {
-		var group model.GroupConfig
-		err := db.Where("group_name = ?", groupName).First(&group).Error
+		group, err := middleware.LookupGroupConfig(groupName, lookup)
 		if err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				filtered = append(filtered, groupName)
-				continue
-			}
 			// 数据库查询异常时保守处理：视为匿名分组并保留，避免临时故障导致 groupList 完全不可用
-			logger.Warnf("filterAccessibleGroups: query group_config failed for %s: %v, treating as anonymous", groupName, err)
+			logger.Warnf("filterAccessibleGroups: lookup group_config failed for %s: %v, treating as anonymous", groupName, err)
+			filtered = append(filtered, groupName)
+			continue
+		}
+		if group == nil {
 			filtered = append(filtered, groupName)
 			continue
 		}

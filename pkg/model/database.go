@@ -10,7 +10,9 @@ type UserInfo struct {
 	LastActive time.Time `json:"last_active" gorm:"not null;default:CURRENT_TIMESTAMP"`
 	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
 	LoginToken string    `json:"-" gorm:"size:64"`
-	ApiToken   string    `json:"api_token" gorm:"size:64;default:''"`
+	// ApiToken 在 PostgreSQL 侧通过部分唯一索引保证非空唯一（见 migration.sql 中 uniq_user_info_api_token）。
+	// 这里只声明常规索引以避免 GORM AutoMigrate 生成冲突的全局唯一索引。
+	ApiToken   string    `json:"api_token" gorm:"size:64;default:'';index:idx_user_info_api_token"`
 	IsAdmin    bool      `json:"is_admin" gorm:"not null;default:false"`
 	UpdateTime *time.Time `json:"update_time" gorm:"type:timestamp"`
 	Permission string    `json:"permission" gorm:"type:text;default:''"`
