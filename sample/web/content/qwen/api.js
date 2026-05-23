@@ -154,41 +154,41 @@
             if (!response.ok) {
                 throw new Error('HTTP ' + response.status + ' ' + response.statusText);
             }
+            return response;
+            // var reader = response.body && response.body.getReader();
+            // if (!reader) {
+            //     throw new Error('Response body is not readable');
+            // }
 
-            var reader = response.body && response.body.getReader();
-            if (!reader) {
-                throw new Error('Response body is not readable');
-            }
+            // var decoder = new TextDecoder();
+            // var buffer = '';
 
-            var decoder = new TextDecoder();
-            var buffer = '';
+            // while (true) {
+            //     var result = await reader.read();
+            //     if (result.done) break;
 
-            while (true) {
-                var result = await reader.read();
-                if (result.done) break;
+            //     var chunk = decoder.decode(result.value, { stream: true });
+            //     buffer += chunk;
 
-                var chunk = decoder.decode(result.value, { stream: true });
-                buffer += chunk;
+            //     var lines = buffer.split('\n');
+            //     buffer = lines.pop() || '';
 
-                var lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (var i = 0; i < lines.length; i++) {
-                    var trimmed = lines[i].trim();
-                    if (trimmed.startsWith('data: ')) {
-                        var data = trimmed.slice(6);
-                        if (data === '[DONE]') {
-                            return;
-                        }
-                        try {
-                            var parsed = JSON.parse(data);
-                            onChunk(parsed);
-                        } catch (e) {
-                            console.warn('[qwenai] Failed to parse SSE chunk:', e);
-                        }
-                    }
-                }
-            }
+            //     for (var i = 0; i < lines.length; i++) {
+            //         var trimmed = lines[i].trim();
+            //         if (trimmed.startsWith('data: ')) {
+            //             var data = trimmed.slice(6);
+            //             if (data === '[DONE]') {
+            //                 return;
+            //             }
+            //             try {
+            //                 var parsed = JSON.parse(data);
+            //                 onChunk(parsed);
+            //             } catch (e) {
+            //                 console.warn('[qwenai] Failed to parse SSE chunk:', e);
+            //             }
+            //         }
+            //     }
+            // }
         } catch (error) {
             console.error('[qwenai] ChatStreamV2 API error:', error);
             throw error;
