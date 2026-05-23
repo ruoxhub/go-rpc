@@ -5,6 +5,7 @@
   "description": "Extract data from social media platforms via WebSocket RPC",
   "permissions": [
     "activeTab",
+    "alarms",
     "storage",
     "tabs",
     "scripting",

@@ -2,6 +2,22 @@
 
 const STORAGE_KEY = 'crawler_rpc_config';
 
+// SW 端心跳间隔（ms）。MAIN 世界的 setInterval 在后台标签会被节流到 30s+，
+// 服务端 60s 内收不到任何消息会踢人，所以心跳必须由 SW 发起 — SW 内的 timer 不受标签节流影响。
+const SW_HEARTBEAT_INTERVAL_MS = 20000;
+
+// SW 保活 alarm。MV3 SW 空闲 30s 即被回收，所有 chrome.runtime.Port 一并断开。
+// 用 chrome.alarms 周期性唤醒 SW（最小 0.5 分钟），结合 ws/心跳活动一起保活。
+const SW_KEEPALIVE_ALARM = 'sekiro-sw-keepalive';
+
+if (typeof chrome !== 'undefined' && chrome.alarms) {
+  chrome.alarms.create(SW_KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    // 处理函数留空：alarm 触发本身即唤醒 SW，足以重置空闲计时。
+    if (alarm.name === SW_KEEPALIVE_ALARM) return;
+  });
+}
+
 let wsConnection = null;
 
 let hasCapturedXClientData = false;
@@ -410,6 +426,9 @@ chrome.runtime.onConnect.addListener((port) => {
 
   let ws = null;
   let disconnected = false;
+  let heartbeatTimer = null;
+  let currentGroup = '';
+  let currentClientId = '';
 
   const safePostMessage = (msg) => {
     if (disconnected) return;
@@ -424,18 +443,66 @@ chrome.runtime.onConnect.addListener((port) => {
     }
   };
 
+  const stopHeartbeat = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  // 在 SW 内启动心跳：MAIN 世界的 setInterval 在后台标签会被节流到 30s+，
+  // 服务端 60s 没收到任何消息会踢人，所以心跳必须由 SW 发出。
+  // SW 的定时器不受标签节流影响，配合 chrome.alarms 保活，足以稳定撑住连接。
+  const startHeartbeat = () => {
+    stopHeartbeat();
+    heartbeatTimer = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      try {
+        ws.send(JSON.stringify({
+          type: 'heartbeat',
+          group: currentGroup,
+          clientId: currentClientId,
+          timestamp: Date.now()
+        }));
+      } catch (e) {
+        console.warn('[Background] Heartbeat send failed:', e.message || e);
+      }
+    }, SW_HEARTBEAT_INTERVAL_MS);
+  };
+
+  // 从 ws://host:port/business/register?group=X&clientId=Y 解析 group/clientId
+  const parseRegisterURL = (url) => {
+    try {
+      const u = new URL(url);
+      return {
+        group: u.searchParams.get('group') || '',
+        clientId: u.searchParams.get('clientId') || ''
+      };
+    } catch (e) {
+      return { group: '', clientId: '' };
+    }
+  };
+
   port.onMessage.addListener((msg) => {
     if (msg.action === 'connect') {
+      stopHeartbeat();
       if (ws) {
         try { ws.close(); } catch (e) {}
         ws = null;
       }
+
+      const meta = parseRegisterURL(msg.url);
+      currentGroup = meta.group;
+      currentClientId = meta.clientId;
 
       try {
         ws = new WebSocket(msg.url);
 
         ws.onopen = () => {
           safePostMessage({ type: 'open', url: msg.url });
+          startHeartbeat();
         };
 
         ws.onmessage = (event) => {
@@ -443,6 +510,7 @@ chrome.runtime.onConnect.addListener((port) => {
         };
 
         ws.onclose = (event) => {
+          stopHeartbeat();
           safePostMessage({ type: 'close', code: event.code, reason: event.reason, url: msg.url });
           ws = null;
         };
@@ -464,6 +532,7 @@ chrome.runtime.onConnect.addListener((port) => {
         console.warn('[Background] WebSocket not open, cannot send');
       }
     } else if (msg.action === 'disconnect') {
+      stopHeartbeat();
       if (ws) {
         try { ws.close(); } catch (e) {}
         ws = null;
@@ -475,6 +544,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     disconnected = true;
+    stopHeartbeat();
     console.log('[Background] WS bridge port disconnected from tab:', tabId);
     if (ws) {
       try { ws.close(); } catch (e) {}

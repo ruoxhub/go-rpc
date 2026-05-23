@@ -32,6 +32,9 @@
 class BackgroundWebSocket {
   constructor(url) {
     this.url = url;
+    // 每个实例独立 connId：bridge/background 据此为本实例维护独立的 chrome port 和真实 ws，
+    // 避免同一标签页内多个 group（如 browser + twitter）共享同一条物理 ws 互相挤掉。
+    this.connId = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     this.readyState = WebSocket.CONNECTING;
     this.onopen = null;
     this.onmessage = null;
@@ -46,6 +49,7 @@ class BackgroundWebSocket {
     window.postMessage({
       source: 'crawler_rpc_main',
       action: 'wsConnect',
+      connId: this.connId,
       url: this.url
     }, '*');
   }
@@ -54,6 +58,7 @@ class BackgroundWebSocket {
     window.postMessage({
       source: 'crawler_rpc_main',
       action: 'wsSend',
+      connId: this.connId,
       data: data
     }, '*');
   }
@@ -62,7 +67,8 @@ class BackgroundWebSocket {
     window.removeEventListener('message', this._messageHandler);
     window.postMessage({
       source: 'crawler_rpc_main',
-      action: 'wsDisconnect'
+      action: 'wsDisconnect',
+      connId: this.connId
     }, '*');
     this.readyState = WebSocket.CLOSING;
   }
@@ -71,7 +77,8 @@ class BackgroundWebSocket {
     if (event.source !== window) return;
     const msg = event.data;
     if (!msg || msg.source !== 'crawler_rpc_bridge' || msg.action !== 'wsEvent') return;
-    if (msg.url && msg.url !== this.url) return;
+    // 只处理本实例的事件，否则在共享 window 上多个实例会互相串回调
+    if (msg.connId !== this.connId) return;
 
     switch (msg.eventType) {
       case 'open':

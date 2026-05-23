@@ -164,26 +164,26 @@ window.addEventListener('message', async (event) => {
     let response = { source: MESSAGE_SOURCE, requestId: data.requestId };
 
     if (data.action === 'wsConnect') {
-      const port = ensureWsPort();
+      const port = ensureWsPort(data.connId);
       port.postMessage({ action: 'connect', url: data.url });
       response.success = true;
     } else if (data.action === 'wsSend') {
-      if (wsPort) {
-        wsPort.postMessage({ action: 'send', data: data.data });
+      const port = wsPorts.get(data.connId);
+      if (port) {
+        port.postMessage({ action: 'send', data: data.data });
         response.success = true;
       } else {
         response.success = false;
         response.error = 'WebSocket port not connected';
       }
     } else if (data.action === 'wsDisconnect') {
-      if (wsPort) {
-        wsPort.postMessage({ action: 'disconnect' });
-        wsPort.disconnect();
-        wsPort = null;
-        response.success = true;
-      } else {
-        response.success = true;
+      const port = wsPorts.get(data.connId);
+      if (port) {
+        try { port.postMessage({ action: 'disconnect' }); } catch (e) {}
+        try { port.disconnect(); } catch (e) {}
+        wsPorts.delete(data.connId);
       }
+      response.success = true;
     } else if (data.action === 'getConfig') {
       const config = await getConfig();
       response.success = true;
@@ -277,19 +277,28 @@ if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged 
   });
 }
 
-/** WebSocket Port 连接（转发到 Background Service Worker） */
-let wsPort = null;
+/** WebSocket Port 连接（转发到 Background Service Worker）
+ *  按 connId 维护独立 port：每个 BackgroundWebSocket 实例对应一条 chrome.runtime.Port，
+ *  从而让 background 给每个 connId 绑定独立的真实 ws，避免同一标签页内多 group 互踩。
+ */
+const wsPorts = new Map();
 
-function ensureWsPort() {
-  if (wsPort) return wsPort;
+function ensureWsPort(connId) {
+  if (!connId) {
+    console.warn('[Bridge] ensureWsPort called without connId; refusing to create port');
+    return null;
+  }
+  let port = wsPorts.get(connId);
+  if (port) return port;
 
-  wsPort = chrome.runtime.connect({ name: 'ws-bridge' });
+  port = chrome.runtime.connect({ name: 'ws-bridge' });
 
-  wsPort.onMessage.addListener((msg) => {
-    // 将 Background 的 WebSocket 事件转发给 MAIN 世界
+  port.onMessage.addListener((msg) => {
+    // 将 Background 的 WebSocket 事件转发给 MAIN 世界，必须带上 connId 以便实例侧过滤
     window.postMessage({
       source: MESSAGE_SOURCE,
       action: 'wsEvent',
+      connId: connId,
       eventType: msg.type,
       data: msg.data,
       code: msg.code,
@@ -298,20 +307,22 @@ function ensureWsPort() {
     }, '*');
   });
 
-  wsPort.onDisconnect.addListener(() => {
-    console.log('[Bridge] WS port disconnected');
+  port.onDisconnect.addListener(() => {
+    console.log('[Bridge] WS port disconnected, connId:', connId);
     // 广播 close 事件到 MAIN world，避免 BackgroundWebSocket 因收不到 close 事件而卡在假连接状态
     window.postMessage({
       source: MESSAGE_SOURCE,
       action: 'wsEvent',
+      connId: connId,
       eventType: 'close',
       code: 1001,
       reason: 'Bridge port disconnected'
     }, '*');
-    wsPort = null;
+    wsPorts.delete(connId);
   });
 
-  return wsPort;
+  wsPorts.set(connId, port);
+  return port;
 }
 
 // 通知 MAIN 世界桥接已准备就绪
