@@ -1,0 +1,1390 @@
+{
+  "manifest_version": 3,
+  "name": "Browser RPC",
+  "version": "3.1.0",
+  "description": "Extract data from social media platforms via WebSocket RPC",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting",
+    "webRequest",
+    "declarativeNetRequest",
+    "cookies"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "958722251@qq.com",
+      "strict_min_version": "128.0"
+    }
+  },
+  "content_scripts": [
+    {
+      "world": "ISOLATED",
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "bridge/bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "lib/utils.js",
+        "lib/http.js",
+        "lib/client.js",
+        "lib/anti-detect.js",
+        "content/browser/index.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.xiaohongshu.com/*"
+      ],
+      "js": [
+        "content/xiaohongshu/endpoints.js",
+        "content/xiaohongshu/crypto.js",
+        "content/xiaohongshu/utils.js",
+        "content/xiaohongshu/api.js",
+        "content/xiaohongshu/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://creator.xiaohongshu.com/*"
+      ],
+      "js": [
+        "content/creator-xhs/endpoints.js",
+        "content/creator-xhs/api.js",
+        "content/creator-xhs/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.douyin.com/*"
+      ],
+      "js": [
+        "content/douyin/endpoints.js",
+        "content/douyin/utils.js",
+        "content/douyin/api.js",
+        "content/douyin/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.facebook.com/*"
+      ],
+      "js": [
+        "content/facebook/endpoints.js",
+        "content/facebook/utils.js",
+        "content/facebook/api.js",
+        "content/facebook/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.instagram.com/*"
+      ],
+      "js": [
+        "content/instagram/endpoints.js",
+        "content/instagram/utils.js",
+        "content/instagram/api.js",
+        "content/instagram/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.tiktok.com/*"
+      ],
+      "js": [
+        "content/tiktok/endpoints.js",
+        "content/tiktok/utils.js",
+        "content/tiktok/api.js",
+        "content/tiktok/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.threads.net/*"
+      ],
+      "js": [
+        "content/threads/endpoints.js",
+        "content/threads/utils.js",
+        "content/threads/api.js",
+        "content/threads/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.qizhidao.com/*"
+      ],
+      "js": [
+        "content/qizhidao/endpoints.js",
+        "content/qizhidao/utils.js",
+        "content/qizhidao/api.js",
+        "content/qizhidao/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.zhihu.com/*"
+      ],
+      "js": [
+        "content/zhihu/endpoints.js",
+        "content/zhihu/crypto.js",
+        "content/zhihu/utils.js",
+        "content/zhihu/api.js",
+        "content/zhihu/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.x.com/*"
+      ],
+      "js": [
+        "content/twitter/endpoints.js",
+        "content/twitter/crypto.js",
+        "content/twitter/utils.js",
+        "content/twitter/api.js",
+        "content/twitter/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.bilibili.com/*"
+      ],
+      "js": [
+        "content/bilibili/endpoints.js",
+        "content/bilibili/crypto.js",
+        "content/bilibili/utils.js",
+        "content/bilibili/api.js",
+        "content/bilibili/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.zhipin.com/*"
+      ],
+      "js": [
+        "content/zhipin/endpoints.js",
+        "content/zhipin/data.js",
+        "content/zhipin/utils.js",
+        "content/zhipin/api.js",
+        "content/zhipin/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*"
+      ],
+      "js": [
+        "content/youtube/endpoints.js",
+        "content/youtube/utils.js",
+        "content/youtube/api.js",
+        "content/youtube/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.github.com/*"
+      ],
+      "js": [
+        "content/github/endpoints.js",
+        "content/github/utils.js",
+        "content/github/api.js",
+        "content/github/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.zhaopin.com/*"
+      ],
+      "js": [
+        "content/zhaopin/endpoints.js",
+        "content/zhaopin/utils.js",
+        "content/zhaopin/api.js",
+        "content/zhaopin/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.51job.com/*"
+      ],
+      "js": [
+        "content/51job/endpoints.js",
+        "content/51job/data.js",
+        "content/51job/utils.js",
+        "content/51job/api.js",
+        "content/51job/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://creator.douyin.com/*"
+      ],
+      "js": [
+        "content/dyindex/endpoints.js",
+        "content/dyindex/api.js",
+        "content/dyindex/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.lagou.com/*"
+      ],
+      "js": [
+        "content/lagou/endpoints.js",
+        "content/lagou/crypto.js",
+        "content/lagou/api.js",
+        "content/lagou/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://skillsmp.com/*"
+      ],
+      "js": [
+        "content/skillsmp/endpoints.js",
+        "content/skillsmp/api.js",
+        "content/skillsmp/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.bbs.kanxue.com/*",
+        "https://bbs.kanxue.com/*"
+      ],
+      "js": [
+        "content/kanxue/endpoints.js",
+        "content/kanxue/parser.js",
+        "content/kanxue/api.js",
+        "content/kanxue/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.csdn.net/*",
+        "https://*.blog.csdn.net/*",
+        "https://*.so.csdn.net/*"
+      ],
+      "js": [
+        "content/csdn/endpoints.js",
+        "content/csdn/utils.js",
+        "content/csdn/api.js",
+        "content/csdn/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.kuaishou.com/*"
+      ],
+      "js": [
+        "content/kuaishou/endpoints.js",
+        "content/kuaishou/utils.js",
+        "content/kuaishou/api.js",
+        "content/kuaishou/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.juejin.cn/*"
+      ],
+      "js": [
+        "content/juejin/endpoints.js",
+        "content/juejin/utils.js",
+        "content/juejin/api.js",
+        "content/juejin/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.modelscope.cn/*"
+      ],
+      "js": [
+        "content/modelscope/endpoints.js",
+        "content/modelscope/utils.js",
+        "content/modelscope/api.js",
+        "content/modelscope/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.jd.com/*",
+        "https://search.jd.com/*",
+        "https://item.jd.com/*",
+        "https://m.jd.com/*"
+      ],
+      "js": [
+        "content/jd/endpoints.js",
+        "content/jd/utils.js",
+        "content/jd/api.js",
+        "content/jd/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.goofish.com/*"
+      ],
+      "js": [
+        "content/goofish/endpoints.js",
+        "content/goofish/crypto.js",
+        "content/goofish/utils.js",
+        "content/goofish/api.js",
+        "content/goofish/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.52pojie.cn/*",
+        "https://www.52pojie.cn/*"
+      ],
+      "js": [
+        "content/52pojie/endpoints.js",
+        "content/52pojie/utils.js",
+        "content/52pojie/parser.js",
+        "content/52pojie/api.js",
+        "content/52pojie/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.liepin.com/*"
+      ],
+      "js": [
+        "content/liepin/endpoints.js",
+        "content/liepin/utils.js",
+        "content/liepin/api.js",
+        "content/liepin/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.upwork.com/*"
+      ],
+      "js": [
+        "content/upwork/endpoints.js",
+        "content/upwork/constants.js",
+        "content/upwork/utils.js",
+        "content/upwork/api.js",
+        "content/upwork/server.js",
+        "content/upwork/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://xueqiu.com/*",
+        "https://*.xueqiu.com/*"
+      ],
+      "js": [
+        "content/xueqiu/endpoints.js",
+        "content/xueqiu/api.js",
+        "content/xueqiu/server.js",
+        "content/xueqiu/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.qianwen.com/*"
+      ],
+      "js": [
+        "content/qwenai/endpoints.js",
+        "content/qwenai/constants.js",
+        "content/qwenai/utils.js",
+        "content/qwenai/api.js",
+        "content/qwenai/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.minimaxi.com/*"
+      ],
+      "js": [
+        "content/minimaxai/constants.js",
+        "content/minimaxai/endpoints.js",
+        "content/minimaxai/utils.js",
+        "content/minimaxai/api.js",
+        "content/minimaxai/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://22.do/*",
+        "https://*.22.do/*"
+      ],
+      "js": [
+        "content/do22/constants.js",
+        "content/do22/endpoints.js",
+        "content/do22/utils.js",
+        "content/do22/api.js",
+        "content/do22/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.gemini.google.com/*"
+      ],
+
+      "js": [
+        "content/geminiai/constants.js",
+        "content/geminiai/endpoints.js",
+        "content/geminiai/utils.js",
+        "content/geminiai/parse.js",
+        "content/geminiai/api.js",
+        "content/geminiai/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.reddit.com/*"
+      ],
+      "js": [
+        "content/reddit/constants.js",
+        "content/reddit/endpoints.js",
+        "content/reddit/api.js",
+        "content/reddit/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.weibo.com/*",
+        "https://weibo.com/*"
+      ],
+      "js": [
+        "content/weibo/endpoints.js",
+        "content/weibo/api.js",
+        "content/weibo/server.js",
+        "content/weibo/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chat.deepseek.com/*",
+        "https://*.deepseek.com/*"
+      ],
+      "js": [
+        "content/deepseek/preload.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://chat.deepseek.com/*",
+        "https://*.deepseek.com/*"
+      ],
+      "js": [
+        "content/deepseek/constants.js",
+        "content/deepseek/endpoints.js",
+        "content/deepseek/proofofwork.js",
+        "content/deepseek/utils.js",
+        "content/deepseek/api.js",
+        "content/deepseek/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "content/doubao/constants.js",
+        "content/doubao/endpoints.js",
+        "content/doubao/utils.js",
+        "content/doubao/api.js",
+        "content/doubao/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://dev.to/*",
+        "https://*.dev.to/*"
+      ],
+      "js": [
+        "content/devto/endpoints.js",
+        "content/devto/constants.js",
+        "content/devto/utils.js",
+        "content/devto/api.js",
+        "content/devto/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.36kr.com/*"
+      ],
+      "js": [
+        "content/36kr/endpoints.js",
+        "content/36kr/utils.js",
+        "content/36kr/api.js",
+        "content/36kr/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.1688.com/*"
+      ],
+      "js": [
+        "content/1688/endpoints.js",
+        "content/1688/utils.js",
+        "content/1688/api.js",
+        "content/1688/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.bsky.app/*"
+      ],
+      "js": [
+        "content/bluesky/endpoints.js",
+        "content/bluesky/constants.js",
+        "content/bluesky/api.js",
+        "content/bluesky/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.stackoverflow.com/*"
+      ],
+      "js": [
+        "content/stackoverflow/endpoints.js",
+        "content/stackoverflow/constants.js",
+        "content/stackoverflow/api.js",
+        "content/stackoverflow/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://news.ycombinator.com/*"
+      ],
+      "js": [
+        "content/hackernews/endpoints.js",
+        "content/hackernews/constants.js",
+        "content/hackernews/api.js",
+        "content/hackernews/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.arxiv.org/*"
+      ],
+      "js": [
+        "content/arxiv/endpoints.js",
+        "content/arxiv/constants.js",
+        "content/arxiv/api.js",
+        "content/arxiv/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.wikipedia.org/*"
+      ],
+      "js": [
+        "content/wikipedia/endpoints.js",
+        "content/wikipedia/constants.js",
+        "content/wikipedia/api.js",
+        "content/wikipedia/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.binance.com/*",
+        "https://*.binance.vision/*"
+      ],
+      "js": [
+        "content/binance/endpoints.js",
+        "content/binance/constants.js",
+        "content/binance/api.js",
+        "content/binance/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.bbc.com/*",
+        "https://*.bbc.co.uk/*"
+      ],
+      "js": [
+        "content/bbc/endpoints.js",
+        "content/bbc/constants.js",
+        "content/bbc/api.js",
+        "content/bbc/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.google.com/*"
+      ],
+      "js": [
+        "content/google/endpoints.js",
+        "content/google/api.js",
+        "content/google/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://xueshu.baidu.com/*"
+      ],
+      "js": [
+        "content/baidu-scholar/endpoints.js",
+        "content/baidu-scholar/api.js",
+        "content/baidu-scholar/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://index.baidu.com/*"
+      ],
+      "js": [
+        "content/baidutrend/endpoints.js",
+        "content/baidutrend/constants.js",
+        "content/baidutrend/utils.js",
+        "content/baidutrend/api.js",
+        "content/baidutrend/server.js",
+        "content/baidutrend/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://scholar.google.com/*"
+      ],
+      "js": [
+        "content/google-scholar/endpoints.js",
+        "content/google-scholar/api.js",
+        "content/google-scholar/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.gitee.com/*"
+      ],
+      "js": [
+        "content/gitee/endpoints.js",
+        "content/gitee/constants.js",
+        "content/gitee/api.js",
+        "content/gitee/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.douban.com/*"
+      ],
+      "js": [
+        "content/douban/endpoints.js",
+        "content/douban/api.js",
+        "content/douban/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.gov.cn/*"
+      ],
+      "js": [
+        "content/gov-policy/endpoints.js",
+        "content/gov-policy/api.js",
+        "content/gov-policy/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.jimeng.jianying.com/*"
+      ],
+      "js": [
+        "content/jimeng/constants.js",
+        "content/jimeng/endpoints.js",
+        "content/jimeng/utils.js",
+        "content/jimeng/api.js",
+        "content/jimeng/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.jike.com/*"
+      ],
+      "js": [
+        "content/jike/endpoints.js",
+        "content/jike/api.js",
+        "content/jike/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.medium.com/*"
+      ],
+      "js": [
+        "content/medium/endpoints.js",
+        "content/medium/api.js",
+        "content/medium/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.podcasts.apple.com/*",
+        "https://*.itunes.apple.com/*"
+      ],
+      "js": [
+        "content/apple-podcasts/endpoints.js",
+        "content/apple-podcasts/constants.js",
+        "content/apple-podcasts/api.js",
+        "content/apple-podcasts/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.sina.com.cn/*"
+      ],
+      "js": [
+        "content/sinablog/endpoints.js",
+        "content/sinablog/constants.js",
+        "content/sinablog/api.js",
+        "content/sinablog/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.cnki.net/*"
+      ],
+      "js": [
+        "content/cnki/endpoints.js",
+        "content/cnki/api.js",
+        "content/cnki/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.taobao.com/*"
+      ],
+      "js": [
+        "content/taobao/endpoints.js",
+        "content/taobao/utils.js",
+        "content/taobao/api.js",
+        "content/taobao/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.hupu.com/*"
+      ],
+      "js": [
+        "content/hupu/endpoints.js",
+        "content/hupu/api.js",
+        "content/hupu/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.reuters.com/*"
+      ],
+      "js": [
+        "content/reuters/endpoints.js",
+        "content/reuters/constants.js",
+        "content/reuters/api.js",
+        "content/reuters/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.steampowered.com/*"
+      ],
+      "js": [
+        "content/steam/endpoints.js",
+        "content/steam/constants.js",
+        "content/steam/api.js",
+        "content/steam/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.v2ex.com/*"
+      ],
+      "js": [
+        "content/v2ex/endpoints.js",
+        "content/v2ex/constants.js",
+        "content/v2ex/api.js",
+        "content/v2ex/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.sina.com.cn/*"
+      ],
+      "js": [
+        "content/sinafinance/endpoints.js",
+        "content/sinafinance/constants.js",
+        "content/sinafinance/api.js",
+        "content/sinafinance/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.finance.yahoo.com/*"
+      ],
+      "js": [
+        "content/yahoo-finance/endpoints.js",
+        "content/yahoo-finance/constants.js",
+        "content/yahoo-finance/api.js",
+        "content/yahoo-finance/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.polymarket.com/*"
+      ],
+      "js": [
+        "content/polymarket/constants.js",
+        "content/polymarket/endpoints.js",
+        "content/polymarket/api.js",
+        "content/polymarket/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.producthunt.com/*"
+      ],
+      "js": [
+        "content/producthunt/endpoints.js",
+        "content/producthunt/constants.js",
+        "content/producthunt/api.js",
+        "content/producthunt/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.wanfangdata.com.cn/*"
+      ],
+      "js": [
+        "content/wanfang/endpoints.js",
+        "content/wanfang/api.js",
+        "content/wanfang/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.toutiao.com/*"
+      ],
+      "js": [
+        "content/toutiao/endpoints.js",
+        "content/toutiao/api.js",
+        "content/toutiao/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.openai.com/*",
+        "https://*.chatgpt.com/*"
+      ],
+      "js": [
+        "content/openai/constants.js",
+        "content/openai/endpoints.js",
+        "content/openai/utils.js",
+        "content/openai/proofofwork.js",
+        "content/openai/api.js",
+        "content/openai/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://claude.ai/*"
+      ],
+      "js": [
+        "content/claude/utils.js",
+        "content/claude/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://yuanbao.tencent.com/*"
+      ],
+      "js": [
+        "content/yuanbao/utils.js",
+        "content/yuanbao/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.amazon.com/*",
+        "https://*.amazon.co.uk/*",
+        "https://*.amazon.de/*",
+        "https://*.amazon.fr/*",
+        "https://*.amazon.co.jp/*",
+        "https://*.amazon.ca/*",
+        "https://*.amazon.it/*",
+        "https://*.amazon.es/*",
+        "https://*.amazon.in/*",
+        "https://*.amazon.com.au/*",
+        "https://*.amazon.com.br/*",
+        "https://*.amazon.com.mx/*",
+        "https://*.amazon.nl/*",
+        "https://*.amazon.se/*",
+        "https://*.amazon.pl/*",
+        "https://*.amazon.sg/*",
+        "https://*.amazon.ae/*",
+        "https://*.amazon.sa/*",
+        "https://*.amazon.tr/*",
+        "https://*.amazon.cn/*"
+      ],
+      "js": [
+        "content/amazon/endpoints.js",
+        "content/amazon/utils.js",
+        "content/amazon/api.js",
+        "content/amazon/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.dblp.org/*"
+      ],
+      "js": [
+        "content/dblp/endpoints.js",
+        "content/dblp/constants.js",
+        "content/dblp/utils.js",
+        "content/dblp/api.js",
+        "content/dblp/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://tieba.baidu.com/*"
+      ],
+      "js": [
+        "content/tieba/endpoints.js",
+        "content/tieba/utils.js",
+        "content/tieba/api.js",
+        "content/tieba/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://search.brave.com/*"
+      ],
+      "js": [
+        "content/brave/endpoints.js",
+        "content/brave/api.js",
+        "content/brave/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.coingecko.com/*"
+      ],
+      "js": [
+        "content/coingecko/constants.js",
+        "content/coingecko/endpoints.js",
+        "content/coingecko/api.js",
+        "content/coingecko/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://crates.io/*",
+        "https://*.crates.io/*"
+      ],
+      "js": [
+        "content/crates/endpoints.js",
+        "content/crates/api.js",
+        "content/crates/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.ctrip.com/*"
+      ],
+      "js": [
+        "content/ctrip/endpoints.js",
+        "content/ctrip/utils.js",
+        "content/ctrip/api.js",
+        "content/ctrip/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.indeed.com/*"
+      ],
+      "js": [
+        "content/indeed/endpoints.js",
+        "content/indeed/utils.js",
+        "content/indeed/api.js",
+        "content/indeed/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://hub.docker.com/*"
+      ],
+      "js": [
+        "content/dockerhub/endpoints.js",
+        "content/dockerhub/api.js",
+        "content/dockerhub/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://huggingface.co/*"
+      ],
+      "js": [
+        "content/huggingface/endpoints.js",
+        "content/huggingface/utils.js",
+        "content/huggingface/api.js",
+        "content/huggingface/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://grok.com/*"
+      ],
+      "js": [
+        "content/grok/constants.js",
+        "content/grok/endpoints.js",
+        "content/grok/utils.js",
+        "content/grok/api.js",
+        "content/grok/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://linux.do/*",
+        "https://*.linux.do/*"
+      ],
+      "js": [
+        "content/linuxdo/constants.js",
+        "content/linuxdo/endpoints.js",
+        "content/linuxdo/utils.js",
+        "content/linuxdo/api.js",
+        "content/linuxdo/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://haokan.baidu.com/*"
+      ],
+      "js": [
+        "content/haokan/endpoints.js",
+        "content/haokan/utils.js",
+        "content/haokan/api.js",
+        "content/haokan/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.10jqka.com.cn/*",
+        "https://10jqka.com.cn/*"
+      ],
+      "js": [
+        "content/ths/endpoints.js",
+        "content/ths/api.js",
+        "content/ths/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.eastmoney.com/*",
+        "https://eastmoney.com/*"
+      ],
+      "js": [
+        "content/eastmoney/secid.js",
+        "content/eastmoney/endpoints.js",
+        "content/eastmoney/api.js",
+        "content/eastmoney/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://pypi.org/*",
+        "https://pypistats.org/*"
+      ],
+      "js": [
+        "content/pypi/endpoints.js",
+        "content/pypi/api.js",
+        "content/pypi/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://z-library.im/*",
+        "https://www.z-library.im/*"
+      ],
+      "js": [
+        "content/zlibrary/endpoints.js",
+        "content/zlibrary/constants.js",
+        "content/zlibrary/api.js",
+        "content/zlibrary/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://weread.qq.com/*",
+        "https://*.weread.qq.com/*"
+      ],
+      "js": [
+        "content/weread/endpoints.js",
+        "content/weread/api.js",
+        "content/weread/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://wx.zsxq.com/*",
+        "https://*.zsxq.com/*"
+      ],
+      "js": [
+        "content/zsxq/endpoints.js",
+        "content/zsxq/api.js",
+        "content/zsxq/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.npmjs.com/*"
+      ],
+      "js": [
+        "content/npm/endpoints.js",
+        "content/npm/api.js",
+        "content/npm/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://html.duckduckgo.com/*",
+        "https://*.duckduckgo.com/*"
+      ],
+      "js": [
+        "content/duckduckgo/endpoints.js",
+        "content/duckduckgo/api.js",
+        "content/duckduckgo/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://*.nowcoder.com/*"
+      ],
+      "js": [
+        "content/nowcoder/endpoints.js",
+        "content/nowcoder/api.js",
+        "content/nowcoder/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://notebooklm.google.com/*",
+        "https://notebooklm.cloud.google.com/*"
+      ],
+      "js": [
+        "content/notebooklm/constants.js",
+        "content/notebooklm/endpoints.js",
+        "content/notebooklm/utils.js",
+        "content/notebooklm/api.js",
+        "content/notebooklm/index.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
+    }
+  ],
+  "background": {
+    "service_worker": "background/background.js",
+    "scripts": ["background/background.js"]
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Social Media Crawler RPC"
+  },
+  "icons": {}
+}
