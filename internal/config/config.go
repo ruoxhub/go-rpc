@@ -29,6 +29,19 @@ type Config struct {
 	DisableDatabase bool         `yaml:"DisableDatabase"` // Disable PostgreSQL dependency (DB-less mode)
 	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
 	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
+	Provider       ProviderConfig `yaml:"Provider"`      // OpenAI-compatible provider configuration
+}
+
+// ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
+//
+// QwenTimeoutSeconds applies to qwen invocations only. Other providers reuse
+// the global DefaultTimeOut.
+//
+// QwenLogChunks toggles DEBUG logging of every ws chunk byte count and SSE
+// event type. Off by default to avoid log explosion under heavy traffic.
+type ProviderConfig struct {
+	QwenTimeoutSeconds int  `yaml:"QwenTimeoutSeconds"`
+	QwenLogChunks      bool `yaml:"QwenLogChunks"`
 }
 
 // HttpsConfig holds HTTPS related configuration
@@ -105,6 +118,10 @@ func DefaultConfig() *Config {
 				From:     "alert@sekiro.local",
 				UseTLS:   false,
 			},
+		},
+		Provider: ProviderConfig{
+			QwenTimeoutSeconds: 120,
+			QwenLogChunks:      false,
 		},
 	}
 }
