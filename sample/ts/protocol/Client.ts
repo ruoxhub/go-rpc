@@ -28,9 +28,11 @@ import type {
 /** 默认配置 */
 const DEFAULT_RECONNECT_BASE_DELAY = 2000;
 const DEFAULT_RECONNECT_MAX_DELAY = 30000;
-// 服务端 SetReadDeadline = HeartbeatTimeout/2 = 30s，必须 < 30s 才能避开服务端读超时关连接
-const DEFAULT_HEARTBEAT_INTERVAL = 25000;
-const DEFAULT_PONG_TIMEOUT = 10000;
+// 服务端 SetReadDeadline = HeartbeatTimeout/2 = 30s，必须 < 30s 才能避开服务端读超时关连接。
+// 选 15s（≈ 30s/2）留出充足余量，避免 Node 事件循环抖动/GC 导致心跳错过窗口。
+const DEFAULT_HEARTBEAT_INTERVAL = 15000;
+// pong 超时必须 ≥ 心跳间隔，否则一次 ack 慢就会触发本地重连，制造不必要抖动。
+const DEFAULT_PONG_TIMEOUT = 20000;
 
 export class RpcClient {
   private readonly config: RpcClientConfig;
@@ -151,10 +153,11 @@ export class RpcClient {
     this.config.rpcHost = newSekiroHost;
     const wsURL = this.buildWebSocketURL();
     this.log(`切换地址重连：${wsURL}`);
-    // 先断开，保持 isManualDisconnect=true 直到新连接发起，防止旧 onclose 触发重连
+    // 先断开，_internalDisconnect 会把 isManualDisconnect 置为 true 防止旧 onclose 触发重连
     this._internalDisconnect();
     this.wsURL = wsURL;
-    // 在 connect() 内部会将 isManualDisconnect 重置为 false
+    // 显式复位手动断开标记，防止后续 connect() 与旧 onclose 之间出现竞态
+    this.isManualDisconnect = false;
     this.connect();
     this.log(`连接新地址：${wsURL}`);
   }
@@ -255,6 +258,8 @@ export class RpcClient {
         this.setConnectionState('connected');
         this.reconnectAttempts = 0;
         this.startHeartbeat();
+        // 建连立刻发一发心跳，避免在首个 interval（默认 15s）到来前被服务端读超时关连接
+        this.sendHeartbeatNow();
       };
 
       this.socket.onmessage = (event: WebSocket.MessageEvent) => {
@@ -302,30 +307,38 @@ export class RpcClient {
     if (this.heartbeatInterval <= 0) return;
 
     this.heartbeatTimer = setInterval(() => {
-      if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-        return;
-      }
-      try {
-        this.socket.send(
-          JSON.stringify({
-            type: 'heartbeat',
-            group: this.config.group,
-            clientId: this.clientId,
-            timestamp: Date.now(),
-          }),
-        );
-        // pong 超时检测：若在 pongTimeout 内未收到任何消息（含心跳响应），主动断开重连
-        if (this.pongTimeoutTimer) clearTimeout(this.pongTimeoutTimer);
-        this.pongTimeoutTimer = setTimeout(() => {
-          this.log('心跳响应超时，主动断开重连', 'warn');
-          this._internalDisconnect();
-          this.isManualDisconnect = false;
-          this.scheduleReconnect();
-        }, this.pongTimeout);
-      } catch (e) {
-        this.log(`心跳发送失败：${e}`, 'warn');
-      }
+      this.sendHeartbeatNow();
     }, this.heartbeatInterval);
+  }
+
+  /**
+   * 立刻发送一次心跳，并启动 pong 超时检测。
+   * 用于 onopen 后立即续命，避免在第一个 interval 到来前被服务端读超时关连接。
+   */
+  private sendHeartbeatNow(): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    try {
+      this.socket.send(
+        JSON.stringify({
+          type: 'heartbeat',
+          group: this.config.group,
+          clientId: this.clientId,
+          timestamp: Date.now(),
+        }),
+      );
+      // pong 超时检测：若在 pongTimeout 内未收到任何消息（含心跳响应），主动断开重连
+      if (this.pongTimeoutTimer) clearTimeout(this.pongTimeoutTimer);
+      this.pongTimeoutTimer = setTimeout(() => {
+        this.log('心跳响应超时，主动断开重连', 'warn');
+        this._internalDisconnect();
+        this.isManualDisconnect = false;
+        this.scheduleReconnect();
+      }, this.pongTimeout);
+    } catch (e) {
+      this.log(`心跳发送失败：${e}`, 'warn');
+    }
   }
 
   /**

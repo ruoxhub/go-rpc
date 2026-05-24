@@ -5,21 +5,15 @@
 (function() {
     'use strict';
 
-    if (!window.location.hostname.includes('qianwen.com') && !window.location.hostname.includes('qwen.ai')) {
+    if (!window.location.hostname.includes('chat.qwen.ai')) {
         return;
     }
-
     var { Endpoints } = window.__qwenai;
     var {
         // V2 API
-        chatV2,
-        chatStreamV2,
-        generateImagesV2,
-        checkTokenLiveV2,
-        deleteSessionV2,
-        getSessionListV2,
-        getTicket,
+        chatCompletions,
         getModel,
+        createChat,
     } = window.__qwenai;
 
     console.log('Qwenai Extractor: Initializing...');
@@ -33,16 +27,10 @@
         // Action 配置 - 声明式定义，自动处理参数提取和错误处理
         actions: {
             // ===== V2 API Actions (使用 Baxia 签名) =====
-            chatV2: createAction(chatV2),
-            chatStreamV2: createAction(chatStreamV2),
-            imagesV2: createAction(generateImagesV2),
-            tokenCheckV2: createAction(checkTokenLiveV2),
-            sessionDeleteV2: createAction(deleteSessionV2),
-            sessionListV2: createAction(getSessionListV2),
-
-            // ===== 工具 Actions =====
-            getTicket: createAction(getTicket),
+            // chatCompletions 走流式：method 返回原始 Response，BaseClient 用 reader 逐 chunk 推送 invoke_stream 帧
+            chatCompletions: createStream(chatCompletions),
             getModel: createAction(getModel),
+            createChat: createAction(createChat),
         }
     });
 })();

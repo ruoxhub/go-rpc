@@ -5,7 +5,9 @@ import (
 	json "github.com/goccy/go-json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -52,6 +54,7 @@ type RequestBuilder interface {
 	GetClientID() string
 	GetConstantInvoke() string
 	GetAccessToken() string
+	IsStream() bool
 }
 
 // InvokeRequest represents the invoke request body
@@ -63,6 +66,7 @@ type InvokeRequest struct {
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
+	Stream         bool        `json:"stream,omitempty"`
 }
 
 // ExecJSRequest represents the execjs request body
@@ -145,6 +149,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			req.ConstantInvoke = c.Query("constantInvoke")
 			req.RpcToken = accessToken
 			req.Action = c.Query("action")
+			req.Stream = parseBoolQuery(c.Query("stream"))
 		}
 	} else {
 		// GET 方法从查询参数获取
@@ -153,9 +158,16 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		req.ConstantInvoke = c.Query("constantInvoke")
 		req.RpcToken = accessToken
 		req.Action = c.Query("action")
+		req.Stream = parseBoolQuery(c.Query("stream"))
 	}
 	if req.RpcToken == "" {
 		req.RpcToken = accessToken
+	}
+	// query 中的 stream 优先级更低，但 body 没显式设置时仍然让它生效
+	if !req.Stream {
+		if v := c.Query("stream"); v != "" {
+			req.Stream = parseBoolQuery(v)
+		}
 	}
 
 	// 参数验证
@@ -173,9 +185,19 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		Action:         req.Action,
 		Params:         req.Params,
 		Timeout:        time.Duration(req.Timeout) * time.Second,
+		Stream:         req.Stream,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
+}
+
+// parseBoolQuery 把 query 中的 stream 字符串转 bool（"1"/"true"/"yes"/"on"）
+func parseBoolQuery(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // marshalJSON is a helper function for JSON marshaling
@@ -366,6 +388,7 @@ type InvokeBuilder struct {
 	Action         string
 	Params         interface{}
 	Timeout        time.Duration
+	Stream         bool
 }
 
 func (b *InvokeBuilder) BuildRequestData() (string, interface{}, error) {
@@ -398,6 +421,7 @@ func (b *InvokeBuilder) GetGroup() string          { return b.Group }
 func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *InvokeBuilder) GetAccessToken() string    { return b.AccessToken }
+func (b *InvokeBuilder) IsStream() bool            { return b.Stream }
 
 // ExecJSBuilder handles execjs requests
 type ExecJSBuilder struct {
@@ -432,6 +456,7 @@ func (b *ExecJSBuilder) GetGroup() string          { return b.Group }
 func (b *ExecJSBuilder) GetClientID() string       { return b.ClientID }
 func (b *ExecJSBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *ExecJSBuilder) GetAccessToken() string    { return b.AccessToken }
+func (b *ExecJSBuilder) IsStream() bool            { return false }
 
 // GetCookieBuilder handles cookie requests
 type GetCookieBuilder struct {
@@ -465,6 +490,7 @@ func (b *GetCookieBuilder) GetGroup() string          { return b.Group }
 func (b *GetCookieBuilder) GetClientID() string       { return b.ClientID }
 func (b *GetCookieBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *GetCookieBuilder) GetAccessToken() string    { return b.AccessToken }
+func (b *GetCookieBuilder) IsStream() bool            { return false }
 
 // GetHTMLBuilder handles html requests
 type GetHTMLBuilder struct {
@@ -498,6 +524,7 @@ func (b *GetHTMLBuilder) GetGroup() string          { return b.Group }
 func (b *GetHTMLBuilder) GetClientID() string       { return b.ClientID }
 func (b *GetHTMLBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *GetHTMLBuilder) GetAccessToken() string    { return b.AccessToken }
+func (b *GetHTMLBuilder) IsStream() bool            { return false }
 
 // handleForwardRequest is the generic handler for forwarding requests to Rpc clients
 func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder, startTime time.Time) {
@@ -564,6 +591,28 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 
 	// 创建 invoke 记录
 	timeout := builder.GetTimeout()
+
+	// 流式分支：注册 StreamRecord，发送 invoke 请求，按 SSE 输出 chunked HTTP
+	if builder.IsStream() {
+		streamRec := h.timeoutManager.RegisterStream(sequence, group, targetClient.ClientID, timeout)
+
+		if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON); err != nil {
+			h.timeoutManager.RemoveStream(sequence)
+			targetClient.MarkFailure()
+			c.JSON(http.StatusOK, BusinessExtraResponse{
+				Status:   -1,
+				Message:  "Failed to send request: " + err.Error(),
+				Group:    group,
+				ClientID: targetClient.ClientID,
+			})
+			return
+		}
+
+		logger.Infof("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+		h.streamSSEResponse(c, streamRec, group, targetClient, builder, startTime, reqAction)
+		return
+	}
+
 	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
@@ -778,4 +827,118 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 
 func resolveAccessToken(c *gin.Context) string {
 	return middleware.ExtractAuthTokenFromRequest(c)
+}
+
+// streamSSEResponse 把 StreamRecord 的 chunk 通过 chunked HTTP 以 text/event-stream 输出。
+//
+// 与 unary 路径的区别：
+//   - 不再用 timeoutManager.Wait() 一次性拿响应；改成循环消费 ChunkChan
+//   - HTTP 200 头一旦发出去就无法回退到错误状态码，失败只能用 `event: error` 通知
+//   - 客户端断连（c.Request.Context().Done()）主动 RemoveStream，触发 ChunkChan close 让客户端读流终止
+func (h *APIHandler) streamSSEResponse(
+	c *gin.Context,
+	rec *forwarder.StreamRecord,
+	group string,
+	targetClient *client.RpcClient,
+	builder RequestBuilder,
+	startTime time.Time,
+	reqAction string,
+) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		// gin 的 ResponseWriter 实现了 Flusher，理论上不会到这里
+		h.timeoutManager.RemoveStream(rec.ID)
+		logger.Errorf("streamSSEResponse: ResponseWriter does not implement http.Flusher")
+		return
+	}
+	flusher.Flush() // 立即把 200 头送出去
+
+	timeoutTimer := time.NewTimer(rec.Timeout)
+	defer timeoutTimer.Stop()
+
+	var streamErr string
+	defer func() {
+		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
+			status := "success"
+			if streamErr != "" {
+				status = "failure"
+			}
+			metricAPI := builder.GetMetricAPI(reqAction)
+			h.metricsCollector.Incr("invoke.total", map[string]string{
+				"group": group, "api": metricAPI, "status": status,
+			}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{
+				"group": group, "api": metricAPI,
+			}, float64(time.Since(startTime).Milliseconds()))
+		}
+		if streamErr != "" {
+			targetClient.MarkFailure()
+		} else {
+			targetClient.MarkSuccess()
+		}
+	}()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			h.timeoutManager.RemoveStream(rec.ID)
+			streamErr = "client disconnected"
+			return
+		case <-timeoutTimer.C:
+			h.timeoutManager.RemoveStream(rec.ID)
+			streamErr = "timeout"
+			writeSSEErrorEvent(c.Writer, "timeout")
+			flusher.Flush()
+			return
+		case chunk, ok := <-rec.ChunkChan:
+			if !ok {
+				if errMsg := rec.TerminalError(); errMsg != "" {
+					streamErr = errMsg
+					writeSSEErrorEvent(c.Writer, errMsg)
+					flusher.Flush()
+				}
+				return
+			}
+			if chunk.Error != "" {
+				streamErr = chunk.Error
+				writeSSEErrorEvent(c.Writer, chunk.Error)
+				flusher.Flush()
+				continue // ChunkChan close 会从 ok=false 退出
+			}
+			// chunk.Data 是 json.RawMessage：
+			//   - 客户端发的 data 通常是 JSON 字符串字面量（带引号），需要 Unmarshal 成 string 再写
+			//   - 如果客户端发了非字符串（对象/数组），退化成原样字节透传
+			if len(chunk.Data) == 0 {
+				continue
+			}
+			var payload string
+			if err := json.Unmarshal(chunk.Data, &payload); err == nil {
+				if _, err := c.Writer.Write([]byte(payload)); err != nil {
+					h.timeoutManager.RemoveStream(rec.ID)
+					streamErr = "write failed: " + err.Error()
+					return
+				}
+			} else {
+				if _, err := c.Writer.Write(chunk.Data); err != nil {
+					h.timeoutManager.RemoveStream(rec.ID)
+					streamErr = "write failed: " + err.Error()
+					return
+				}
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// writeSSEErrorEvent 写一个 SSE 错误事件帧。msg 中的换行替换为空格，避免破坏 SSE 边界。
+func writeSSEErrorEvent(w io.Writer, msg string) {
+	safe := strings.ReplaceAll(msg, "\r", " ")
+	safe = strings.ReplaceAll(safe, "\n", " ")
+	fmt.Fprintf(w, "event: error\ndata: %s\n\n", safe)
 }

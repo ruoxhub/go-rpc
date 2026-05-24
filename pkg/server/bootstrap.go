@@ -299,11 +299,6 @@ func (s *Server) registerRoutes() {
 		business.GET("/groupList", s.apiHandler.HandleGroupList)
 		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
 		business.Any("/invoke", s.apiHandler.HandleInvoke)
-		business.GET("/execjs", s.apiHandler.HandleExecJS)
-		business.POST("/execjs", s.apiHandler.HandleExecJS)
-		business.GET("/cookie", s.apiHandler.HandleGetCookie)
-		business.POST("/cookie", s.apiHandler.HandleGetCookie)
-		business.GET("/html", s.apiHandler.HandleGetHtml)
 		business.GET("/register", s.handleRegister)
 	}
 
