@@ -299,11 +299,6 @@ func (s *Server) registerRoutes() {
 		business.GET("/groupList", s.apiHandler.HandleGroupList)
 		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
 		business.Any("/invoke", s.apiHandler.HandleInvoke)
-		business.GET("/execjs", s.apiHandler.HandleExecJS)
-		business.POST("/execjs", s.apiHandler.HandleExecJS)
-		business.GET("/cookie", s.apiHandler.HandleGetCookie)
-		business.POST("/cookie", s.apiHandler.HandleGetCookie)
-		business.GET("/html", s.apiHandler.HandleGetHtml)
 		business.GET("/register", s.handleRegister)
 	}
 
@@ -320,12 +315,6 @@ func (s *Server) registerRoutes() {
 			MetricRepo:     repository.NewMetricRepository(db),
 		}
 		handlers.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
-	}
-
-	v1 := s.httpServer.Group("/v1")
-	v1.Use(middleware.NewAuthMiddleware().OptionalAuth())
-	{
-		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
 	}
 
 	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase

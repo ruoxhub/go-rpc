@@ -2,11 +2,12 @@ package api
 
 import (
 	"context"
-	json "github.com/goccy/go-json"
 	"errors"
 	"fmt"
 	"net/http"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
@@ -186,135 +187,6 @@ func marshalJSON(v interface{}) ([]byte, error) {
 // unmarshalJSON is a helper function for JSON unmarshaling
 func unmarshalJSON(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
-}
-
-// HandleExecJS handles /business/execjs request
-// POST/GET /business/execjs
-func (h *APIHandler) HandleExecJS(c *gin.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Errorf("ExecJS handler panic recovered: %v", r)
-			BusinessServerError(c, "服务器内部错误")
-		}
-	}()
-
-	var req ExecJSRequest
-	accessToken := resolveAccessToken(c)
-	if c.Request.Method == http.MethodPost {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			req.Group = c.Query("group")
-			req.ClientID = c.Query("clientId")
-			req.ConstantInvoke = c.Query("constantInvoke")
-			req.RpcToken = accessToken
-			req.Code = c.Query("code")
-		}
-	} else {
-		req.Group = c.Query("group")
-		req.ClientID = c.Query("clientId")
-		req.ConstantInvoke = c.Query("constantInvoke")
-		req.RpcToken = accessToken
-		req.Code = c.Query("code")
-	}
-	if req.RpcToken == "" {
-		req.RpcToken = accessToken
-	}
-
-	// 参数验证
-	if req.Code == "" {
-		BusinessError(c, "code parameter required")
-		return
-	}
-
-	startTime := time.Now()
-	builder := &ExecJSBuilder{
-		Group:          req.Group,
-		ClientID:       req.ClientID,
-		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.RpcToken,
-		Code:           req.Code,
-	}
-
-	h.handleForwardRequest(c, builder, startTime)
-}
-
-// HandleGetCookie handles /business/cookie request
-// GET /business/cookie
-func (h *APIHandler) HandleGetCookie(c *gin.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Errorf("GetCookie handler panic recovered: %v", r)
-			BusinessServerError(c, "服务器内部错误")
-		}
-	}()
-
-	var req GetCookieRequest
-	accessToken := resolveAccessToken(c)
-	if c.Request.Method == http.MethodPost {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			req.Group = c.Query("group")
-			req.ClientID = c.Query("clientId")
-			req.ConstantInvoke = c.Query("constantInvoke")
-			req.RpcToken = accessToken
-		}
-	} else {
-		req.Group = c.Query("group")
-		req.ClientID = c.Query("clientId")
-		req.ConstantInvoke = c.Query("constantInvoke")
-		req.RpcToken = accessToken
-	}
-	if req.RpcToken == "" {
-		req.RpcToken = accessToken
-	}
-
-	startTime := time.Now()
-	builder := &GetCookieBuilder{
-		Group:          req.Group,
-		ClientID:       req.ClientID,
-		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.RpcToken,
-	}
-
-	h.handleForwardRequest(c, builder, startTime)
-}
-
-// HandleGetHtml handles /business/html request
-// GET /business/html
-func (h *APIHandler) HandleGetHtml(c *gin.Context) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Errorf("GetHtml handler panic recovered: %v", r)
-			BusinessServerError(c, "服务器内部错误")
-		}
-	}()
-
-	var req GetCookieRequest
-	accessToken := resolveAccessToken(c)
-	if c.Request.Method == http.MethodPost {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			req.Group = c.Query("group")
-			req.ClientID = c.Query("clientId")
-			req.ConstantInvoke = c.Query("constantInvoke")
-			req.RpcToken = accessToken
-		}
-	} else {
-		req.Group = c.Query("group")
-		req.ClientID = c.Query("clientId")
-		req.ConstantInvoke = c.Query("constantInvoke")
-		req.RpcToken = accessToken
-	}
-	if req.RpcToken == "" {
-		req.RpcToken = accessToken
-	}
-
-	startTime := time.Now()
-	builder := &GetHTMLBuilder{
-		Group:          req.Group,
-		ClientID:       req.ClientID,
-		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.RpcToken,
-	}
-
-	h.handleForwardRequest(c, builder, startTime)
 }
 
 func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
@@ -531,7 +403,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	// 构建请求数据
 	reqAction, reqParams, err := builder.BuildRequestData()
 	if err != nil {
-		BusinessError(c, "Failed to build request data: " + err.Error())
+		BusinessError(c, "Failed to build request data: "+err.Error())
 		return
 	}
 
@@ -555,7 +427,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 
 	reqDataJSON, err := marshalJSON(reqData)
 	if err != nil {
-		BusinessError(c, "Failed to marshal request data: " + err.Error())
+		BusinessError(c, "Failed to marshal request data: "+err.Error())
 		return
 	}
 

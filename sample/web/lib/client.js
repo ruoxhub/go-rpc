@@ -199,7 +199,10 @@ class BaseClient {
     this.clientId = null;
 
     // 注册默认的 _execjs handler
-    this.handlers.set('_execjs', this._execjsHandler.bind(this));
+    // this.handlers.set('_execjs', this._execjsHandler.bind(this));
+
+    // 绑定后保存引用，destroy 时才能从 window 上 removeEventListener
+    this._configChangeHandler = this._handleConfigChange.bind(this);
 
     if (!this.isCorrectDomain()) {
       return;
@@ -294,24 +297,30 @@ class BaseClient {
    * 设置配置变更监听器
    */
   setupConfigChangeListener() {
-    window.addEventListener('message', (event) => {
-      if (event.source !== window) return;
+    window.addEventListener('message', this._configChangeHandler);
+  }
 
-      const data = event.data;
-      if (!data || data.source !== 'crawler_rpc_bridge') return;
+  /**
+   * 处理来自 bridge 的配置变更消息（提为成员函数，便于在销毁时移除监听）
+   * @param {MessageEvent} event
+   */
+  _handleConfigChange(event) {
+    if (event.source !== window) return;
 
-      if (data.action === 'configUpdated' && data.config) {
-        this.log('收到配置更新通知');
-        if (data.config.wsHost && data.config.wsHost !== this.config.rpcHost) {
-          this.log(`WebSocket 地址已变更：${this.config.rpcHost} -> ${data.config.wsHost}`);
-          this.reconnect(data.config.wsHost);
-        }
-        if (typeof data.config.actionDelay === 'number') {
-          this.actionDelay = data.config.actionDelay;
-          this.log(`Action 延迟已更新：${this.actionDelay}ms`);
-        }
+    const data = event.data;
+    if (!data || data.source !== 'crawler_rpc_bridge') return;
+
+    if (data.action === 'configUpdated' && data.config) {
+      this.log('收到配置更新通知');
+      if (data.config.wsHost && data.config.wsHost !== this.config.rpcHost) {
+        this.log(`WebSocket 地址已变更：${this.config.rpcHost} -> ${data.config.wsHost}`);
+        this.reconnect(data.config.wsHost);
       }
-    });
+      if (typeof data.config.actionDelay === 'number') {
+        this.actionDelay = data.config.actionDelay;
+        this.log(`Action 延迟已更新：${this.actionDelay}ms`);
+      }
+    }
   }
 
   /**
@@ -454,7 +463,7 @@ class BaseClient {
 
     if (typeof actionConfig === 'function') {
       handler = this.wrapHandler(actionConfig);
-    } else if (typeof actionConfig === 'object') {
+    } else if (actionConfig && typeof actionConfig === 'object') {
       const { method, transform } = actionConfig;
 
       if (typeof method !== 'function') {
@@ -526,6 +535,32 @@ class BaseClient {
       isConnected: this._isConnected(),
       platform: this.platform
     };
+  }
+
+  /**
+   * 销毁实例：断开 socket、清心跳与重连定时器、移除 message listener、清空 handlers。
+   * 调用后实例即视为废弃，重复调用安全（幂等）。
+   */
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+
+    this.log('正在销毁客户端实例...');
+
+    // 1. 断开 WebSocket 并阻止后续重连
+    //    _disconnect 内部会置 isManualDisconnect=true、清 reconnectTimer、清心跳、关 socket
+    this._disconnect();
+
+    // 2. 摘除 bridge 配置变更监听
+    if (this._configChangeHandler) {
+      window.removeEventListener('message', this._configChangeHandler);
+      this._configChangeHandler = null;
+    }
+
+    // 3. 清空 action handler 表，避免遗留闭包持引用
+    this.handlers.clear();
+
+    this.isInitialized = false;
   }
 
   // ==================== 以下为融合进来的 RpcClient 核心逻辑 ====================
@@ -672,6 +707,9 @@ class BaseClient {
       this.reconnectTimer = null;
     }
 
+    // 主动断开后，重连退避计数归零，避免下次连接复用历史失败次数继续放大延迟
+    this.reconnectAttempts = 0;
+
     this._cleanupSocket();
   }
 
@@ -804,8 +842,17 @@ class BaseClient {
    * @param {Function} reject - 失败回调
    */
   _execjsHandler(request, resolve, reject) {
-    // Rpc 旧版本兼容：支持 param 和 code 字段
-    const param = request.param || request.params || request.code || '';
+    // Rpc 旧版本兼容：支持 param / params / code 字段，但只接受字符串。
+    // 注意：其它 action 的 params 通常是对象，对象会被 String() 拼成 "[object Object]"
+    // 导致 new Function 抛语法错误，这里必须做类型守卫。
+    let param = '';
+    if (typeof request.param === 'string' && request.param) {
+      param = request.param;
+    } else if (typeof request.code === 'string' && request.code) {
+      param = request.code;
+    } else if (typeof request.params === 'string' && request.params) {
+      param = request.params;
+    }
     if (!param) {
       reject('缺少执行参数 param');
       return;
