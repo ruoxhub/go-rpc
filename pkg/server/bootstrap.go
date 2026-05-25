@@ -323,6 +323,14 @@ func (s *Server) registerRoutes() {
 		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
 	}
 
+	// /api/* OpenAI-compatible surface for provider-specific routing.
+	// Currently routes /api/chat/completions to the qwenai browser-extension provider.
+	apiGroup := s.httpServer.Group("/api")
+	apiGroup.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	{
+		apiGroup.POST("/chat/completions", s.apiHandler.HandleQwenChatCompletions)
+	}
+
 	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 
 	rpcAPI := s.httpServer.Group("/rpc-api")

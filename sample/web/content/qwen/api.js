@@ -88,15 +88,33 @@
      * 由 BaseClient 的 createStream handler 用 response.body.getReader() 逐 chunk
      * 透传到服务端 invoke_stream 帧，最终走 SSE 输出给调用方。
      *
+     * 当未传入 chatId 时会自动调用 createChat 申请一个，方便服务端只发起一次 RPC 调用。
+     *
      * @param {Object} params
      * @param {string} params.messages - 用户输入文本
-     * @param {string} [params.model='Qwen3.5-Plus']
-     * @param {string} params.chatId - 由 createChat 创建的 chat_id
+     * @param {string} [params.model='qwen3.7-max']
+     * @param {string} [params.chatId] - 由 createChat 创建的 chat_id；不传时自动创建
      * @returns {Promise<Response>}
      */
     window.__qwenai.chatCompletions = async function(params) {
         var { messages, model, chatId} = params || {};
         var model = model || 'qwen3.7-max';
+
+        if (!chatId) {
+            try {
+                var created = await window.__qwenai.createChat({ modelId: model });
+                chatId = (created && (created.id ||
+                                      (created.chat && created.chat.id) ||
+                                      (created.data && (created.data.id || (created.data.chat && created.data.chat.id))))) || '';
+            } catch (e) {
+                console.error('[qwenai] chatCompletions auto-createChat failed:', e);
+                throw e;
+            }
+            if (!chatId) {
+                throw new Error('createChat did not return a chat id');
+            }
+        }
+
         var headers = await buildHeadersV2();
 
         var body = {

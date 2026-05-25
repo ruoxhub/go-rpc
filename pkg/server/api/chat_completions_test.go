@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
@@ -122,7 +123,7 @@ func TestChatCompletionStreamInvalidConnectionCleansStream(t *testing.T) {
 }
 
 func TestNormalizeChatCompletionChunkPreservesStructuredDelta(t *testing.T) {
-	req := &ChatCompletionRequest{Model: "sekiro-chat"}
+	req := &ChatCompletionRequest{ChatCompletionRequest: model.ChatCompletionRequest{Model: "sekiro-chat"}}
 	chunk := normalizeChatCompletionChunk(
 		req,
 		[]byte(`{"delta":{"role":"assistant","tool_calls":[{"id":"call-1"}]},"finish_reason":null}`),
