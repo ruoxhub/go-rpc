@@ -1,17 +1,15 @@
 # Rpc RPC - Go 语言实现
 
-[![Go Version](https://img.shields.io/badge/go-1.25.0-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.25-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-Apache2.0-green.svg)](LICENSE)
 
-SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台。
-
-这是 Rpc 的 Go 语言实现，支持 WebSocket 通信、HTTP API、前端管理界面、路由负载均衡、监控告警、调用追踪等核心功能。
+SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台。本仓库是 Go 语言实现，相比 Java 版本额外内置了监控指标、告警规则、调用链路追踪和 Web 管理后台。
 
 ## 目录
 
-- [项目结构](#项目结构)
 - [快速开始](#快速开始)
 - [配置说明](#配置说明)
+- [项目结构](#项目结构)
 - [核心功能](#核心功能)
 - [SDK 使用](#sdk-使用)
 - [API 接口](#api-接口)
@@ -19,210 +17,119 @@ SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台�
 - [协议说明](#协议说明)
 - [路由策略](#路由策略)
 - [测试](#测试)
+- [开发指南](#开发指南)
 - [与 Java 版本对比](#与-java-版本对比)
 - [常见问题](#常见问题)
 
-## 项目结构
-
-```
-sekiro-go/
-├── cmd/                      # 可执行程序入口
-│   ├── server/               # 服务器端启动程序
-│   │   └── main.go
-│   ├── client/               # 客户端示例
-│   │   └── main.go
-│   └── invoker/              # 调用端示例
-│       └── main.go
-├── pkg/                      # 核心包
-│   ├── client/               # 客户端 SDK (RpcClient, RpcInvoker)
-│   │   ├── client.go
-│   │   └── invoker.go
-│   ├── compress/             # 压缩算法 (Gzip, Snappy, None)
-│   │   ├── gzip.go
-│   │   ├── snappy.go
-│   │   ├── none.go
-│   │   └── manager.go
-│   ├── database/             # PostgreSQL 数据库连接与迁移
-│   ├── eventbus/             # 事件总线
-│   ├── model/                # GORM 数据模型
-│   ├── protocol/             # 通信协议层 (数据包编解码)
-│   │   ├── packet.go
-│   │   └── packet_type.go
-│   └── server/               # 服务器端核心
-│       ├── api/              # HTTP API 处理器 (Gin 框架)
-│       ├── client/           # 客户端管理 (分组、轮询)
-│       ├── config/           # 运行时配置服务
-│       ├── detector/         # 协议检测器
-│       ├── flow/             # 流量控制 (延迟退避、限流)
-│       ├── forwarder/        # 请求转发和超时管理
-│       ├── handlers/         # Web 管理后台 API 处理器
-│       ├── metrics/          # 监控指标采集与聚合
-│       ├── middleware/       # Gin 中间件 (认证、CORS、日志、限流、追踪)
-│       ├── router/           # 路由策略 (轮询、一致性 Hash)
-│       ├── alert/            # 告警规则评估与通知
-│       └── websocket/        # WebSocket 消息处理
-├── internal/                 # 内部包
-│   ├── config/               # YAML 配置管理
-│   └── utils/
-│       └── logger/           # zap 日志工具
-├── web/                      # React 前端管理界面
-│   ├── src/
-│   ├── dist/                 # 构建产物 (go:embed 嵌入)
-│   └── package.json
-├── deploy/                   # 部署脚本
-│   └── postgres/             # 数据库迁移脚本
-├── sample/                   # 示例代码
-│   ├── demo-go/              # Go SDK 示例
-│   ├── frida/                # Frida 脚本示例
-│   └── go/sekio/             # 旧版 SDK 示例
-├── config.yaml               # 配置文件模板
-└── go.mod                    # Go 模块定义
-```
-
 ## 快速开始
 
-### 环境要求
+### 路径 A：Docker Compose（推荐）
 
-- Go 1.25.0 或更高版本
-- PostgreSQL 12+（服务器端必需）
-- Node.js 18+（前端开发必需）
-
-### 1. 安装依赖
+适合快速验证或部署。
 
 ```bash
+# 1. 准备 PostgreSQL（仓库中的 docker-compose.yaml 默认未启用内置 postgres，
+#    取消注释或自行准备 PostgreSQL 实例后填写连接信息到 config.yaml）
+
+# 2. 准备配置文件
+cp config.yaml.example config.yaml
+# 编辑 Database 段指向可用的 PostgreSQL
+
+# 3. 启动
+docker compose up -d
+
+# 4. 访问 Web 管理后台
+# http://localhost:5612  默认账号：admin / admin123
+```
+
+### 路径 B：源码运行
+
+适合本地开发。
+
+```bash
+# 1. 安装依赖
 go mod tidy
+
+# 2. 准备数据库
+psql -U postgres -f deploy/postgres/migration.sql
+
+# 3. 构建前端（go build 需要 web/dist 存在）
+cd web && npm install && npm run build && cd ..
+
+# 4. 配置文件
+cp config.yaml.example config.yaml   # 修改 Database 段
+
+# 5. 启动服务器（默认端口 5612）
+go run main.go
+# 或
+go build -o rpcserver . && ./rpcserver
+
+# 6. 访问 http://localhost:5612  账号 admin / admin123
 ```
 
-### 2. 配置数据库
+### 启动参数
 
-创建 PostgreSQL 数据库并修改 `config.yaml`：
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `-port` | 服务器端口（覆盖 config.yaml） | 0（用配置文件） |
+| `-host` | 服务器主机 | 空（用配置文件） |
+| `-debug` | 启用调试日志 | false |
+| `-local-debug` | 启用本地调试模式 | false |
+| `-c` | 配置文件路径 | `config.yaml` |
 
-```yaml
-Database:
-  Host: "localhost"
-  Port: 5432
-  User: "postgres"
-  Password: "postgres"
-  DBName: "sekiro"
-  SSLMode: "disable"
-```
-
-或使用 `deploy/postgres/migration.sql` 手动初始化。
-
-### 3. 构建前端（可选，但 `go build` 需要 `web/dist` 存在）
+### 验证服务
 
 ```bash
-cd web && npm install && npm run build
-```
+# 健康检查
+curl http://localhost:5612/health
 
-### 4. 启动服务器
-
-```bash
-# 方式 1：使用默认配置 (端口 5612)
-go run cmd/server/main.go
-
-# 方式 2：指定端口和主机
-go run cmd/server/main.go -port 5612 -host 0.0.0.0
-
-# 方式 3：启用调试日志
-go run cmd/server/main.go -debug
-
-# 方式 4：使用配置文件
-go run cmd/server/main.go -c config.yaml
-```
-
-### 5. 启动客户端
-
-```bash
-# 启动客户端 (连接到服务器)
-go run cmd/client/main.go -server localhost:5612 -group test-group -client-id test-1
-```
-
-### 6. 调用服务
-
-```bash
-# 使用调用端发起 RPC 调用
-go run cmd/invoker/main.go -server localhost:5612 -group test-group -api test
-```
-
-### 7. HTTP API 调用示例
-
-```bash
 # 获取分组列表
 curl http://localhost:5612/business/groupList
 
-# 获取客户端队列
-curl http://localhost:5612/business/clientQueue?group=test-group
-
-# 发起 RPC 调用
+# 发起一次 RPC 调用
 curl -X POST http://localhost:5612/business/invoke \
   -H "Content-Type: application/json" \
-  -d '{
-    "group": "test-group",
-    "action": "test",
-    "params": {"key": "value"}
-  }'
-
-# 执行 JS 代码
-curl http://localhost:5612/business/execjs?group=test-group&code=document.title
-
-# 获取 Cookie
-curl http://localhost:5612/business/cookie?group=test-group
-
-# 获取 HTML
-curl http://localhost:5612/business/html?group=test-group
+  -d '{"group":"test-group","action":"test","params":{"key":"value"}}'
 ```
+
+> 默认管理员密码 `admin123` 仅用于开发环境，生产环境请第一时间通过 `/api/current/password` 修改。
 
 ## 配置说明
 
-### 配置文件 (config.yaml)
+完整示例见 `config.yaml.example`，关键字段如下：
 
 ```yaml
-# 基础监听配置
-BasicListen: ":5612"
-
-# 主机和端口 (可选，与 BasicListen 二选一)
+# 监听
+BasicListen: ":5612"        # 监听地址（与 Host/Port 二选一）
 Host: "0.0.0.0"
 Port: 5612
+DefaultTimeOut: 30          # RPC 默认超时（秒）
 
-# RPC 调用默认超时时间（秒）
-DefaultTimeOut: 30
+# 运行模式
+Mode: release               # debug | release
+Cors: true                  # 启用 CORS
+CloseLog: false
+CloseWebLog: false
 
-# 日志配置
-CloseLog: false        # 关闭日志
-CloseWebLog: false     # 关闭 Web 访问日志
+# 模块开关（DB-less 部署时实用）
+DisableWebAdmin: false      # 关闭 /api 路由和 Web 后台
+DisableMetrics:  false      # 关闭指标采集
+DisableAlert:    false      # 关闭告警引擎
+DisableDatabase: false      # 跳过 DB 初始化（同时关闭依赖 DB 的路由）
 
-# 运行模式：debug 或 release
-Mode: release
-
-# 启用 CORS 跨域
-Cors: true
-
-# 禁用 Web 管理面板和 /api 路由（仅 RPC 模式）
-DisableWebAdmin: false
-
-# 禁用指标采集（不再写入 metric 相关表）
-DisableMetrics: false
-
-# 禁用告警引擎
-DisableAlert: false
-
-# 禁用 PostgreSQL（无数据库模式，跳过迁移和依赖 DB 的路由）
-DisableDatabase: false
-
-# HTTPS 配置（可选）
+# HTTPS（可选）
 HttpsServices:
   IsEnable: false
   HttpsListen: ":5643"
   PemPath: "certs/server.pem"
   KeyPath: "certs/server.key"
 
-# 路由前缀替换（反向代理场景）
+# 反向代理前缀剥离
 RouterReplace:
   IsEnable: false
   ReplaceRoute: "/sekiro"
 
-# 数据库配置（必需，当 DisableDatabase 为 false 时）
+# 数据库（DisableDatabase=false 时必填）
 Database:
   Host: "localhost"
   Port: 5432
@@ -231,50 +138,79 @@ Database:
   DBName: "sekiro"
   SSLMode: "disable"
 
-# 告警 SMTP 配置（可选，当 DisableAlert 为 false 时生效）
+# 告警 SMTP（DisableAlert=false 时生效）
 Alert:
   SMTP:
     Host: "smtp.example.com"
     Port: 587
     Username: "alert@example.com"
     Password: "password"
-    From: "alert@example.com"
-    UseTLS: true
+    From:     "alert@example.com"
+    UseTLS:   true
 ```
 
-### 命令行参数
+字段定义见 `internal/config/config.go`。
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `-port` | 服务器端口 | 5612 |
-| `-host` | 服务器主机 | 0.0.0.0 |
-| `-debug` | 启用调试日志 | false |
-| `-local-debug` | 启用本地调试模式 | false |
-| `-c` | 配置文件路径 | config.yaml |
+## 项目结构
+
+```
+go-rpc/
+├── main.go                     # 服务器入口
+├── config.yaml.example         # 配置模板
+├── docker-compose.yaml         # Docker 编排
+├── Dockerfile
+├── deploy/postgres/migration.sql
+├── docs/                       # 设计文档（PRD、改进计划等）
+├── internal/
+│   ├── config/                 # YAML 配置加载
+│   └── utils/logger/           # zap 日志封装
+├── pkg/
+│   ├── client/                 # 客户端 SDK（RpcClient + RpcInvoker）
+│   ├── compress/               # Gzip / Snappy / None
+│   ├── database/               # GORM 连接、迁移、repository
+│   ├── eventbus/               # 进程内事件总线
+│   ├── model/                  # GORM 数据模型
+│   ├── protocol/               # 二进制包编解码
+│   ├── server/
+│   │   ├── bootstrap.go        # 启动入口、路由注册
+│   │   ├── alert/              # 告警评估引擎
+│   │   ├── api/                # /business、/v1 处理器
+│   │   ├── client/             # 客户端管理、健康检查
+│   │   ├── config/             # 运行时配置服务
+│   │   ├── detector/           # 协议自动识别
+│   │   ├── flow/               # 流量控制、限流退避
+│   │   ├── forwarder/          # 调用超时管理
+│   │   ├── handlers/           # /api、/rpc-api 处理器
+│   │   ├── metrics/            # 指标采集
+│   │   ├── middleware/         # 认证、CORS、限流、追踪
+│   │   ├── router/             # 路由策略
+│   │   ├── transport/          # 传输层抽象
+│   │   └── websocket/          # WebSocket 消息处理
+│   └── utils/
+├── web/                        # React 管理后台（//go:embed dist）
+└── sample/                     # 多语言示例（go、java、python、frida、xposed 等）
+```
 
 ## 核心功能
 
-### 服务器端
-
-| 功能 | 说明 |
+| 类别 | 功能 |
 |------|------|
-| **协议检测** | 自动识别 Rpc 二进制协议和 HTTP/WebSocket 协议 |
-| **客户端管理** | 客户端注册、注销、状态管理、分组管理 |
-| **负载均衡** | 支持轮询、指定客户端、一致性 Hash 三种路由策略 |
-| **压缩支持** | Gzip、Snappy、None 三种压缩方式 |
-| **超时管理** | 可配置的 RPC 调用超时和追踪机制 |
-| **心跳检测** | WebSocket 心跳保活和超时断开 |
-| **用户认证** | Bearer Token 认证，支持管理员与普通用户权限 |
-| **分组权限** | 分组可绑定用户，未授权用户无法访问 |
-| **QPS 限流** | 基于用户和 IP 的速率限制，支持配置调整 |
-| **监控指标** | 分钟/小时/天维度的调用次数与延迟统计 |
-| **调用追踪** | 完整的请求链路追踪与详情查询 |
-| **告警系统** | 基于规则的告警评估，支持 SMTP/Webhook 通知 |
-| **前端界面** | React + Ant Design 管理后台，嵌入 Go 二进制 |
-| **CORS 支持** | 跨域请求支持 |
-| **HTTPS** | 可选的 HTTPS 加密传输 |
+| 通信 | 二进制协议 + WebSocket 双协议；自动识别；Gzip/Snappy 压缩 |
+| 客户端 | 注册、注销、心跳保活、连续 3 次失败标记不健康 |
+| 路由 | 轮询、指定客户端、一致性 Hash 三种策略 |
+| 安全 | Bearer Token 认证；管理员/普通用户分级；分组绑定用户 |
+| 限流 | 用户与 IP 维度的 QPS 限流（运行时可调） |
+| 监控 | 分钟/小时/天三档指标聚合（可选关闭） |
+| 追踪 | 完整的调用链路记录与详情查询 |
+| 告警 | 规则评估引擎，支持 SMTP/Webhook 通知 |
+| 部署 | 支持反向代理前缀剥离、HTTPS、DB-less 模式 |
+| 管理 | React + Ant Design 后台，`//go:embed` 进二进制 |
 
-### 客户端 SDK
+## SDK 使用
+
+> 本仓库只发布 server 可执行文件。客户端/调用端以 SDK 形式提供（`pkg/client`），完整示例见 `sample/go/sekio/`。
+
+### 客户端：注册并处理请求
 
 ```go
 package main
@@ -285,26 +221,20 @@ import (
 )
 
 func main() {
-    // 创建客户端
     c := client.NewRpcClient("my-group", "my-client-id", "localhost", 5612)
-
-    // 启动客户端
     if err := c.Start(); err != nil {
         log.Fatal(err)
     }
 
-    // 注册处理器
     c.Register(func(request []byte) ([]byte, error) {
-        // 处理请求逻辑
-        return []byte(`{"result": "success"}`), nil
+        return []byte(`{"result":"success"}`), nil
     })
 
-    // 保持运行
     select {}
 }
 ```
 
-### 调用端 SDK
+### 调用端：发起 RPC 调用
 
 ```go
 package main
@@ -316,190 +246,152 @@ import (
 )
 
 func main() {
-    // 创建调用端
     invoker := client.NewRpcInvoker([]string{"localhost:5612"})
     defer invoker.Destroy()
 
-    // 发起调用
     resp, err := invoker.Invoke(&client.InvokeRequest{
         Group:   "my-group",
         Api:     "my-api",
         Params:  map[string]interface{}{"key": "value"},
-        Timeout: 30, // 超时时间（秒）
+        Timeout: 30,
     })
-
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Printf("Response: code=%d, message=%s, data=%v\n",
-        resp.Code, resp.Message, resp.Data)
+    fmt.Printf("code=%d message=%s data=%v\n", resp.Code, resp.Message, resp.Data)
 }
 ```
 
-## SDK 使用
+### 主要 API
 
-### RpcClient API
+**RpcClient**
 
 | 方法 | 说明 |
 |------|------|
-| `NewRpcClient(group, clientID, serverHost string, serverPort int)` | 创建客户端实例 |
-| `Start() error` | 连接到服务器并启动消息处理 |
-| `Register(handler func([]byte) ([]byte, error))` | 注册请求处理器 |
-| `Destroy(waitSeconds int64)` | 销毁客户端连接 |
+| `NewRpcClient(group, clientID, host, port)` | 创建客户端 |
+| `Start() error` | 连接并启动消息循环 |
+| `Register(handler)` | 注册请求处理器 |
+| `Destroy(waitSeconds)` | 优雅关闭 |
 
-### RpcInvoker API
+**RpcInvoker**
 
 | 方法 | 说明 |
 |------|------|
-| `NewRpcInvoker(serverList []string)` | 创建调用端实例 |
-| `NewRpcInvokerWithToken(apiToken string, serverList []string)` | 创建带 API Token 的调用端 |
-| `Invoke(req *InvokeRequest) (*InvokeResponse, error)` | 发起 RPC 调用 |
-| `Destroy()` | 销毁调用端 |
-
-### InvokeRequest 结构
-
-```go
-type InvokeRequest struct {
-    Group   string                 // 目标分组
-    Api     string                 // API 名称
-    Params  map[string]interface{} // 请求参数
-    Timeout time.Duration          // 超时时间
-}
-```
-
-### InvokeResponse 结构
-
-```go
-type InvokeResponse struct {
-    Code    int         `json:"code"`    // 响应码
-    Message string      `json:"message"` // 响应消息
-    Data    interface{} `json:"data"`    // 响应数据
-}
-```
+| `NewRpcInvoker(serverList)` | 创建调用端 |
+| `NewRpcInvokerWithToken(token, serverList)` | 带 API Token 的调用端 |
+| `Invoke(req) (*InvokeResponse, error)` | 发起调用 |
+| `Destroy()` | 释放连接 |
 
 ## API 接口
 
-### 公开 HTTP API 端点
+### 公开接口
 
-| 路径 | 方法 | 说明 | 参数 |
-|------|------|------|------|
-| `/health` | GET | 健康检查 | - |
-| `/business/groupList` | GET | 获取分组列表 | - |
-| `/business/clientQueue` | GET | 获取客户端队列 | `group` |
-| `/business/invoke` | POST/GET | RPC 调用 | `group`, `clientId`, `action`, `params`, `timeout` |
-| `/business/register` | WebSocket | 客户端注册 | `group`, `clientId` |
-| `/business/execjs` | POST/GET | 执行 JS 代码 | `group`, `clientId`, `code` |
-| `/business/cookie` | POST/GET | 获取 Cookie | `group`, `clientId` |
-| `/business/html` | POST/GET | 获取 HTML | `group`, `clientId` |
-| `/v1/chat/completions` | POST | OpenAI 兼容接口 | - |
+| 路径 | 方法 | 说明 |
+|------|------|------|
+| `/health` | GET | 健康检查 |
+| `/business/groupList` | GET | 分组列表 |
+| `/business/clientQueue` | GET | 分组下客户端队列 |
+| `/business/invoke` | GET/POST/Any | RPC 调用 |
+| `/business/register` | GET → WebSocket | 客户端注册并升级到 WebSocket |
+| `/business/execjs` | GET/POST | 执行 JS 代码 |
+| `/business/cookie` | GET/POST | 获取 Cookie |
+| `/business/html` | GET | 获取 HTML |
+| `/v1/chat/completions` | POST | OpenAI 兼容接口 |
 
-### 认证相关接口
+### 用户与前端兼容接口（`/rpc-api`）
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/rpc-api/user-info/login` | POST | 用户登录 |
 | `/rpc-api/user-info/register` | POST | 用户注册 |
-| `/rpc-api/user-info/userInfo` | GET | 获取当前用户信息 |
+| `/rpc-api/user-info/userInfo` | GET | 当前用户信息 |
 | `/rpc-api/system/systemNotice` | GET | 系统公告 |
 | `/rpc-api/system/systemInfo` | GET | 系统信息 |
 | `/rpc-api/frontend/listGroup` | GET | 前端分组列表 |
 | `/rpc-api/frontend/anonymousGroupList` | GET | 匿名分组列表 |
 | `/rpc-api/frontend/groupDetail` | GET | 分组详情 |
 
-### 管理后台 API（需要认证）
+### 管理后台接口（`/api`，需认证）
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
-| `/api/users` | GET/POST/DELETE | 用户管理 |
-| `/api/users/qps` | PUT | 更新用户 QPS |
-| `/api/current` | GET | 当前用户信息 |
+| `/api/users` | GET/POST/DELETE | 用户管理（仅管理员） |
+| `/api/users/qps` | PUT | 调整用户 QPS |
+| `/api/current` | GET | 当前用户 |
 | `/api/current/password` | POST | 修改密码 |
 | `/api/current/token/refresh` | POST | 刷新 Token |
 | `/api/groups` | GET/POST/DELETE | 分组管理 |
+| `/api/groups/qps` | PUT | 调整分组 QPS |
 | `/api/groups/:groupName` | GET | 分组详情 |
 | `/api/groups/:groupName/devices` | GET | 设备列表 |
-| `/api/groups/devices` | DELETE/PUT | 删除/禁用设备 |
+| `/api/groups/devices` | DELETE | 删除设备 |
+| `/api/groups/devices/disable` | PUT | 禁用设备 |
 | `/api/groups/:groupName/actions` | GET | 动作列表 |
 | `/api/groups/actions` | POST/DELETE | 添加/删除动作 |
-| `/api/anonymous-groups` | GET/DELETE/POST | 匿名分组管理 |
-| `/api/sysconfig` | GET/PUT | 系统配置 |
+| `/api/anonymous-groups` | GET/DELETE | 匿名分组 |
+| `/api/anonymous-groups/convert` | POST | 转为正式分组 |
+| `/api/sysconfig` | GET/PUT | 系统配置（仅管理员） |
 | `/api/sysconfig/nodes` | GET | 服务节点 |
 | `/api/sysconfig/logs` | GET | 系统日志 |
 | `/api/sysconfig/app-logs` | GET | 应用日志 |
 | `/api/metrics` | GET | 监控指标 |
-| `/api/metrics/dashboard` | GET | 仪表盘数据 |
+| `/api/metrics/list` | GET | 指标列表 |
+| `/api/metrics/dashboard` | GET | 仪表盘 |
+| `/api/metrics/latency/percentiles` | GET | 延迟分位 |
 | `/api/traces` | GET | 追踪列表 |
+| `/api/traces/stats` | GET | 追踪统计 |
+| `/api/traces/timeline` | GET | 追踪时间线 |
 | `/api/traces/:traceId` | GET | 追踪详情 |
-| `/api/alerts/rules` | GET/POST/PUT/DELETE | 告警规则 |
+| `/api/traces/:traceId/extra` | GET | 追踪额外数据 |
+| `/api/alerts/rules` | GET/POST | 告警规则（仅管理员） |
+| `/api/alerts/rules/:id` | GET/PUT/DELETE | 规则详情 |
 | `/api/alerts/history` | GET | 告警历史 |
 
-### API 响应格式
+### 响应格式
 
-**成功响应：**
 ```json
-{
-    "status": 0,
-    "message": "success",
-    "data": {...}
-}
-```
+// 成功
+{ "status": 0, "message": "success", "data": { ... } }
 
-**失败响应：**
-```json
-{
-    "status": -1,
-    "message": "error message"
-}
-```
-
-### 调用示例
-
-```bash
-# 获取分组列表
-curl http://localhost:5612/business/groupList
-# 响应：{"status":0,"message":"success","data":["group1","group2"]}
-
-# 获取某分组的客户端列表
-curl "http://localhost:5612/business/clientQueue?group=my-group"
-# 响应：{"status":0,"message":"success","data":["client1","client2"]}
-
-# RPC 调用 (GET)
-curl "http://localhost:5612/business/invoke?group=my-group&action=myApi&params=%7B%22key%22%3A%22value%22%7D"
-
-# RPC 调用 (POST)
-curl -X POST http://localhost:5612/business/invoke \
-  -H "Content-Type: application/json" \
-  -d '{"group":"my-group","action":"myApi","params":{"key":"value"}}'
+// 失败
+{ "status": -1, "message": "error message" }
 ```
 
 ## 前端管理界面
 
-项目包含基于 React + Ant Design 的 Web 管理后台，通过 `//go:embed dist` 嵌入 Go 二进制。
+基于 React 18 + Vite 5 + Ant Design 5，构建产物 `web/dist/` 通过 `//go:embed dist` 嵌入二进制。
+
+### 功能模块
+
+| 模块 | 说明 |
+|------|------|
+| 我的 | API Token、修改密码 |
+| 分组列表 | 创建/删除分组、配置 QPS |
+| 匿名分组 | 查看与管理匿名分组 |
+| 监控指标 | 业务大盘、调用趋势、延迟分位、MQL 编辑器 |
+| 调用追踪 | 链路列表、时间线、单次详情 |
+| 告警管理 | 规则配置与告警历史 |
+| 账号列表 | 用户管理、QPS 配额（仅管理员） |
+| 系统面板 | 系统配置、节点、日志（仅管理员） |
 
 ### 前端开发
 
 ```bash
 cd web
 npm install
-npm run dev    # 端口 3000，代理 /business、/api、/rpc-api → localhost:5613
+npm run dev    # 端口 3000
 ```
 
-> **注意**：Vite 开发代理目标为 `localhost:5613`，但服务器默认监听 `5612`。请修改 `web/vite.config.js` 中的代理目标，或启动服务器时指定 `-port 5613`。
+> Vite 代理目标为 `localhost:5613`（见 `web/vite.config.js`），但服务器默认监听 `5612`。开发时启动服务器加 `-port 5613`，或修改代理配置。
 
 ### 前端构建
 
 ```bash
-cd web && npm run build   # 输出到 web/dist/
+cd web && npm run build      # 输出到 web/dist/
 ```
 
-构建完成后，`go build` 会将 `web/dist/` 嵌入二进制。
-
-### 默认管理员账号
-
-数据库迁移完成后自动创建：
-- 用户名：`admin`
-- 密码：`admin123`
+构建完成后，下次执行 `go build` 会自动嵌入。
 
 ## 协议说明
 
@@ -511,222 +403,153 @@ cd web && npm run build   # 输出到 web/dist/
 
 | 字段 | 大小 | 说明 |
 |------|------|------|
-| Magic | 8 字节 | 魔数 (0x73656b69726f0000) |
-| Length | 4 字节 | 包体长度 |
-| Type | 1 字节 | 包类型 |
-| SerialNumber | 4 字节 | 序列号 |
+| Magic | 8B | 魔数 |
+| Length | 4B | 包体长度 |
+| Type | 1B | 包类型 |
+| SerialNumber | 4B | 序列号 |
 | Headers | 可变 | 头部键值对 |
 | Data | 可变 | 数据载荷 |
 
-### 包类型定义
+### 包类型（`pkg/protocol/packet_type.go`）
 
 | 类型 | 值 | 方向 | 说明 |
-|------|-----|------|------|
-| HEARTBEAT | 0 | 双向 | 心跳包 |
+|------|----|------|------|
+| HEARTBEAT | 0 | 双向 | 心跳 |
 | C_REGISTER | 16 | C→S | 客户端注册 |
 | C_INVOKE_RESPONSE | 17 | C→S | 调用响应 |
 | C_OFFLINE | 18 | C→S | 客户端下线 |
-| S_INVOKE | 32 | S→C | 服务器调用 |
+| C_CMD_RESPONSE | 19 | C→S | 命令响应 |
+| C_INVOKE_STREAM_CLOSE | 20 | C→S | 流式调用关闭 |
+| S_INVOKE | 32 | S→C | 服务端调用 |
+| S_CMD | 33 | S→C | 服务端命令 |
+| S_OFFLINE_RESPONSE | 34 | S→C | 下线响应 |
+| S_INVOKE_RESPONSE | 35 | S→C | 调用应答 |
+| S_INVOKE_CONNECTED | 36 | S→C | 调用建立 |
+| I_CONNECT | 48 | I→S | 调用端接入 |
 | I_INVOKE | 49 | I→S | 调用端请求 |
 
-### WebSocket 消息格式
+### WebSocket 消息
 
-**请求消息：**
-```json
-{
-    "type": "invoke",
-    "group": "my-group",
-    "clientId": "client-1",
-    "action": "my-api",
-    "params": {"key": "value"},
-    "__sekiro_seq__": "sequence-id"
-}
-```
+```jsonc
+// 请求
+{ "type":"invoke","group":"my-group","clientId":"client-1",
+  "action":"my-api","params":{"key":"value"},"__sekiro_seq__":"seq-id" }
 
-**响应消息：**
-```json
-{
-    "type": "invoke_response",
-    "status": 0,
-    "data": {"result": "success"},
-    "__sekiro_seq__": "sequence-id"
-}
-```
+// 响应
+{ "type":"invoke_response","status":0,
+  "data":{"result":"success"},"__sekiro_seq__":"seq-id" }
 
-**心跳消息：**
-```json
-{
-    "type": "heartbeat",
-    "timestamp": 1234567890
-}
+// 心跳
+{ "type":"heartbeat","timestamp":1234567890 }
 ```
 
 ## 路由策略
 
-服务器支持三种客户端路由策略：
-
-### 1. 轮询策略 (Round Robin)
-
-默认策略，按顺序分配请求到分组内的客户端。
+服务器对同一分组下的多个客户端支持三种路由策略：
 
 ```go
-// 不指定 clientId 时自动使用轮询
-invoker.Invoke(&InvokeRequest{
-    Group: "my-group",
-    Api:   "my-api",
-})
+// 1. 轮询（默认）：不指定 ClientID
+invoker.Invoke(&client.InvokeRequest{Group: "g", Api: "a"})
+
+// 2. 指定客户端
+invoker.Invoke(&client.InvokeRequest{Group: "g", ClientID: "node-1", Api: "a"})
+
+// 3. 一致性 Hash：URL 加 constantInvoke=true
+// curl "http://localhost:5612/business/invoke?group=g&action=a&constantInvoke=true"
 ```
 
-### 2. 指定客户端
-
-直接路由到特定客户端。
-
-```go
-invoker.Invoke(&InvokeRequest{
-    Group:    "my-group",
-    ClientID: "specific-client",
-    Api:      "my-api",
-})
-```
-
-### 3. 一致性 Hash 策略
-
-根据请求参数的一致性 Hash 值路由，保证相同参数的请求总是到达同一客户端。
-
-```go
-// 通过 constantInvoke 参数启用
-curl "http://localhost:5612/business/invoke?group=my-group&action=myApi&constantInvoke=true"
-```
+健康检查会优先把请求路由到健康客户端（连续 3 次失败标记不健康）。
 
 ## 测试
 
-### 运行所有测试
-
 ```bash
-go test ./... -v
-```
+# 全量测试
+go test ./...
 
-### 运行单个包的测试
+# 带竞态检测
+go test -race ./...
 
-```bash
-# 协议层测试
-go test ./pkg/protocol/... -v
+# 单包测试
+go test ./pkg/protocol/...
+go test ./pkg/server/...
 
-# 压缩模块测试
-go test ./pkg/compress/... -v
-
-# 客户端 SDK 测试
-go test ./pkg/client/... -v
-
-# 服务器端测试
-go test ./pkg/server/... -v
-```
-
-### 运行单个测试
-
-```bash
+# 单测试
 go test -run TestRpcPacket ./pkg/protocol/...
-go test -run TestGzipCompress ./pkg/compress/...
 ```
 
-### 测试状态
+## 开发指南
 
-| 模块 | 测试状态 |
-|------|---------|
-| pkg/protocol | 通过 |
-| pkg/compress | 通过 |
-| pkg/eventbus | 通过 |
-| pkg/client | 通过 |
-| pkg/server/client | 通过 |
-| pkg/server/detector | 通过 |
-| pkg/server/flow | 通过 |
-| pkg/server/forwarder | 通过 |
-| pkg/server/router | 通过 |
-| pkg/server/websocket | 通过 |
+### 添加新的 `/api` 处理器
+
+1. 在 `pkg/server/handlers/` 新建处理器文件
+2. 在 `pkg/server/handlers/routes.go` 的 `SetupWebRoutes` 内注册路由
+3. 如需新仓储，扩展 `Deps` 与 `bootstrap.go` 的注入
+
+### 添加 `/business` 端点
+
+直接在 `pkg/server/bootstrap.go::registerRoutes` 的 `business` 分组中追加，并在 `pkg/server/api/` 实现 handler。
+
+### 添加新前端页面
+
+1. `web/src/pages/` 添加页面组件
+2. `web/src/App.jsx` 注册路由
+3. `web/src/layouts/Layout.jsx` 添加菜单项
+
+### 编码约定
+
+- 模块路径：`github.com/mrh30000/go-rpc`
+- 错误处理：`fmt.Errorf("...: %w", err)`
+- 日志：`logger.Infof / Errorf / Warningf`
+- GORM 标签：`gorm:"column:xxx"`，JSON 标签 `json:"field"`
 
 ## 与 Java 版本对比
 
-| 功能 | Java 版本 | Go 版本 |
-|------|----------|--------|
-| 网络框架 | Netty | gorilla/websocket + Gin |
-| JSON 序列化 | FastJSON | encoding/json |
+| 维度 | Java 版本 | Go 版本 |
+|------|-----------|---------|
+| 网络 | Netty | gorilla/websocket + Gin |
+| JSON | FastJSON | encoding/json |
 | 压缩 | Java Gzip/Snappy | compress/gzip + golang/snappy |
 | 日志 | Logback | uber-go/zap |
 | 并发 | 线程池 | goroutine + channel |
 | 配置 | properties | yaml.v3 |
-| HTTP 框架 | 原生 Servlet | Gin |
 | 数据库 | MySQL/自建 | PostgreSQL + GORM |
-| 管理界面 | JSP/Vue | React + Ant Design |
+| 后台 | JSP/Vue | React + Ant Design（嵌入二进制） |
 | 监控告警 | 无 | 内置指标 + 告警规则 |
 | 调用追踪 | 无 | 内置链路追踪 |
 
 ## 常见问题
 
-### Q: 端口已经被占用怎么办？
+**Q：`go build` 报 `pattern dist: no matching files found`？**
+先构建前端：`cd web && npm install && npm run build`。`web/embed.go` 通过 `//go:embed dist` 嵌入构建产物。
 
-A: 使用 `-port` 参数指定其他端口：
-```bash
-go run cmd/server/main.go -port 8080
-```
+**Q：能否不依赖 PostgreSQL 运行？**
+可以。`config.yaml` 设 `DisableDatabase: true`，依赖数据库的路由（用户/分组/告警/追踪等）会自动关闭，仅保留 `/business/*` 等核心 RPC 路径。
 
-### Q: 如何启用调试模式？
+**Q：仅当作 RPC 引擎，不要 Web 后台怎么办？**
+设 `DisableWebAdmin: true`，所有 `/api` 路由和静态文件都不会注册。
 
-A: 使用 `-debug` 参数或设置配置文件中的 `Mode: debug`：
-```bash
-go run cmd/server/main.go -debug
-```
+**Q：前端开发代理不通？**
+`web/vite.config.js` 默认代理目标为 `localhost:5613`，与服务器默认 `5612` 不一致。要么改 vite 配置，要么用 `go run main.go -port 5613` 启动后端。
 
-### Q: 客户端断线后如何处理？
+**Q：客户端断线怎么处理？**
+服务器自动从队列移除离线客户端。客户端连续 3 次心跳失败标记为不健康，路由会优先选择健康节点。重连后自动重新注册。
 
-A: 服务器会自动检测客户端离线并从未分配列表中移除，客户端重连后会自动重新注册。连续 3 次心跳失败后客户端会被标记为不健康。
+**Q：如何修改默认管理员密码？**
+登录后调用 `POST /api/current/password`，或在 Web 后台「我的」页面修改。
 
-### Q: 如何部署到生产环境？
-
-A: 建议配置：
-1. 设置 `Mode: release`
-2. 启用 HTTPS
-3. 配置合适的超时时间
-4. 使用反向代理（Nginx）处理路由前缀
-5. 配置 PostgreSQL 并定期备份
-6. 设置告警 SMTP 以接收系统告警
-
-### Q: 支持哪些压缩算法？
-
-A: 当前支持 Gzip 和 Snappy 两种压缩算法，可通过配置选择。
-
-### Q: `go build` 报错 `pattern dist: no matching files found`？
-
-A: 必须先构建前端生成 `web/dist/`：
-```bash
-cd web && npm install && npm run build
-```
-
-### Q: 前端开发时代理报错？
-
-A: Vite 代理默认目标为 `localhost:5613`，而服务器默认端口是 `5612`。请修改 `web/vite.config.js` 中的代理目标，或启动服务器时指定 `-port 5613`。
-
-## 构建
-
-```bash
-# 构建前端（必须先执行）
-cd web && npm run build
-
-# 构建服务器
-go build -o sekiro-server ./cmd/server
-
-# 构建客户端
-go build -o sekiro-client ./cmd/client
-
-# 构建调用端
-go build -o sekiro-invoker ./cmd/invoker
-```
+**Q：生产部署清单？**
+- `Mode: release`
+- 启用 HTTPS（`HttpsServices.IsEnable: true`）
+- 反向代理前缀使用 `RouterReplace`
+- 配置 `Alert.SMTP` 接收告警
+- PostgreSQL 定期备份；首次启动后立即修改 admin 密码
 
 ## 相关资源
 
-- [Java 版本 Rpc](https://github.com/yuaotian/Rpc)
-- [Gin 框架文档](https://gin-gonic.com/)
-- [gorilla/websocket](https://github.com/gorilla/websocket)
+- [SEKIRO Java 原版](https://github.com/yint-tech/sekiro)
+- [Gin](https://gin-gonic.com/) · [GORM](https://gorm.io/) · [gorilla/websocket](https://github.com/gorilla/websocket)
+- 设计文档：`docs/`
 
 ## 许可证
 
-与原 Rpc 项目保持一致（Apache 2.0）。
+Apache 2.0，与原 SEKIRO 项目保持一致。
