@@ -12,6 +12,8 @@ import (
 	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
+	internalconfig "github.com/mrh30000/go-rpc/internal/config"
+	"github.com/mrh30000/go-rpc/internal/promptcompat"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
@@ -41,6 +43,21 @@ type ChatCompletionRequest struct {
 	RpcToken       string                 `json:"sekiro_token,omitempty"`
 	Raw            map[string]interface{} `json:"-"`
 	Params         map[string]interface{} `json:"-"`
+}
+
+type configReader struct {
+	requestedModel string
+}
+
+func (c configReader) ModelAliases() map[string]string {
+	aliases := internalconfig.DefaultModelAliases()
+	reqModel := strings.ToLower(strings.TrimSpace(c.requestedModel))
+	if reqModel != "" {
+		if _, ok := aliases[reqModel]; !ok && !internalconfig.IsSupportedDeepSeekModel(reqModel) {
+			aliases[reqModel] = "deepseek-v4-flash"
+		}
+	}
+	return aliases
 }
 
 // HandleChatCompletions 接收标准 OpenAI Chat Completions 请求体（不含 group/action/params），
@@ -77,12 +94,12 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	messagesRaw, _ := rawMap["messages"].([]interface{})
-	prompt, err := flattenMessagesToPrompt(messagesRaw)
+	normalizedReq, err := promptcompat.NormalizeOpenAIChatRequest(configReader{requestedModel: openAiReq.Model}, rawMap, "")
 	if err != nil {
 		writeChatError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	prompt := normalizedReq.FinalPrompt
 	if prompt == "" {
 		writeChatError(c, http.StatusBadRequest, "messages produced empty prompt")
 		return
