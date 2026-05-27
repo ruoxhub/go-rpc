@@ -173,6 +173,10 @@ func (h *APIHandler) qwenCreateChat(ctx context.Context, target *client.RpcClien
 //   - {"chat":{"id":"<uuid>"}, ...}
 //   - {"data":{"id":"<uuid>"}, ...}
 //   - {"id":"<uuid>", ...}
+//   - 服务端聚合后的 invoke 包络:
+//     {"clientId":"...", "group":"...", "data":{"id":"<uuid>"},
+//      "message":"success", "request_id":"...", "status":0, "success":true}
+//     当 success=false 时，把 message 作为错误返回。
 func extractQwenChatID(data []byte) (string, error) {
 	if len(data) == 0 {
 		return "", errors.New("empty createChat response")
@@ -180,6 +184,15 @@ func extractQwenChatID(data []byte) (string, error) {
 	var raw map[string]interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return "", fmt.Errorf("createChat response not JSON: %w", err)
+	}
+
+	// 包络层错误：success=false 时直接把 message 透出，避免被
+	// 后续 "missing chat id" 兜底信息掩盖真实失败原因。
+	if success, ok := raw["success"].(bool); ok && !success {
+		if msg := pickString(raw, "message"); msg != "" {
+			return "", fmt.Errorf("createChat failed: %s", msg)
+		}
+		return "", fmt.Errorf("createChat failed: %s", string(data))
 	}
 
 	if id := pickString(raw, "id"); id != "" {

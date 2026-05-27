@@ -11,8 +11,12 @@ import (
 // DefaultTimeout is the default timeout in seconds
 var DefaultTimeout = 30
 
-// Config holds server configuration
-type Config struct {
+// ServerConfig holds server configuration loaded from config.yaml.
+//
+// NOTE: this type was previously named Config but conflicts with the
+// credentials-oriented Config defined in config_v2.go (used by the AI provider
+// stack). Renamed to ServerConfig to keep both alive in the same package.
+type ServerConfig struct {
 	BasicListen    string        `yaml:"BasicListen"`    // Listen address, e.g., ":5612"
 	Host           string        `yaml:"Host"`           // Listen host, e.g., "0.0.0.0"
 	Port           int           `yaml:"Port"`           // Listen port
@@ -83,9 +87,9 @@ type SMTPConfig struct {
 	UseTLS   bool   `yaml:"UseTLS"`   // Enable TLS
 }
 
-// DefaultConfig returns default configuration
-func DefaultConfig() *Config {
-	return &Config{
+// DefaultServerConfig returns default server configuration
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
 		BasicListen: ":5612",
 		Host:        "0.0.0.0",
 		Port:        5612,
@@ -126,9 +130,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads and parses configuration from a YAML file
-func Load(path string) (*Config, error) {
-	defaultConf := DefaultConfig()
+// LoadServerConfig reads and parses server configuration from a YAML file
+func LoadServerConfig(path string) (*ServerConfig, error) {
+	defaultConf := DefaultServerConfig()
 
 	if !fileExists(path) {
 		logger.Warningf("Config file not found: %s, using default configuration", path)
@@ -142,7 +146,7 @@ func Load(path string) (*Config, error) {
 	}
 	defer file.Close()
 
-	conf := &Config{}
+	conf := &ServerConfig{}
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(conf); err != nil {
 		logger.Errorf("Failed to parse config file: %v", err)
@@ -171,12 +175,12 @@ func Load(path string) (*Config, error) {
 	return conf, nil
 }
 
-// LoadWithFallback loads configuration from a YAML file with fallback to defaults
-func LoadWithFallback(path string) *Config {
-	conf, err := Load(path)
+// LoadServerConfigWithFallback loads server configuration from a YAML file with fallback to defaults
+func LoadServerConfigWithFallback(path string) *ServerConfig {
+	conf, err := LoadServerConfig(path)
 	if err != nil {
 		logger.Warningf("Using default configuration due to error: %v", err)
-		return DefaultConfig()
+		return DefaultServerConfig()
 	}
 	return conf
 }
@@ -188,7 +192,7 @@ func fileExists(path string) bool {
 }
 
 // ToYAML converts config to YAML string
-func (c *Config) ToYAML() (string, error) {
+func (c *ServerConfig) ToYAML() (string, error) {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return "", err
@@ -196,8 +200,8 @@ func (c *Config) ToYAML() (string, error) {
 	return string(data), nil
 }
 
-// Save saves configuration to a YAML file
-func (c *Config) Save(path string) error {
+// Save saves server configuration to a YAML file
+func (c *ServerConfig) Save(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err

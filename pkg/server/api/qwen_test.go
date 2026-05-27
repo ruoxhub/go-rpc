@@ -137,6 +137,11 @@ func TestExtractQwenChatID_Shapes(t *testing.T) {
 		{"chat_object", `{"chat":{"id":"chat-456"},"success":true}`, "chat-456"},
 		{"data_id", `{"data":{"id":"chat-789"}}`, "chat-789"},
 		{"data_chat_id", `{"data":{"chat":{"id":"chat-aaa"}}}`, "chat-aaa"},
+		{
+			"server_envelope_success",
+			`{"clientId":"g9wwwonwe","data":{"id":"584279d0-e7ad-4dc4-a6d6-49da4720bf73"},"group":"qwenai","message":"success","request_id":"f19832d5-e47d-4459-85c2-4b0ac2686e83","status":0,"success":true}`,
+			"584279d0-e7ad-4dc4-a6d6-49da4720bf73",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -155,6 +160,17 @@ func TestExtractQwenChatID_Shapes(t *testing.T) {
 	}
 	if _, err := extractQwenChatID(nil); err == nil {
 		t.Fatalf("expected error for empty body")
+	}
+
+	// success=false envelope must surface the upstream message rather than
+	// a generic "missing chat id" error.
+	failBody := `{"success":false,"message":"rate limited","data":null}`
+	_, err := extractQwenChatID([]byte(failBody))
+	if err == nil {
+		t.Fatalf("expected error for success=false envelope")
+	}
+	if !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("expected error to surface upstream message, got %q", err.Error())
 	}
 }
 

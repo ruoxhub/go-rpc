@@ -3,8 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,27 +14,35 @@ import (
 
 func TestChatCompletionContract(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+	handler.timeoutManager = forwarder.NewTimeoutManager(nil)
+	defer handler.timeoutManager.Shutdown()
+
+	router := gin.New()
+	router.POST("/v1/chat/completions", handler.HandleChatCompletions)
+
 	body := `{"model":"sekiro-chat","messages":[{"role":"user","content":"hello"}],"tools":[{"type":"function"}],"metadata":{"trace":"1"}}`
+	w := performRequest(router, http.MethodPost, "/v1/chat/completions?group=g1", json.RawMessage(body))
 
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions?group=g1", strings.NewReader(body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
 
-	req, err := parseChatCompletionRequest(c)
-	if err != nil {
-		t.Fatalf("parseChatCompletionRequest() error = %v", err)
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response error = %v", err)
 	}
-	if req.Stream {
-		t.Fatal("stream should default to false")
+
+	errMap, ok := resp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected error wrapper in response: %v", resp)
 	}
-	if req.Group != "g1" {
-		t.Fatalf("group = %q, want g1", req.Group)
-	}
-	if _, ok := req.Params["tools"]; !ok {
-		t.Fatal("unknown OpenAI fields should be preserved")
-	}
-	if _, ok := req.Params["metadata"]; !ok {
-		t.Fatal("metadata should be preserved")
+	if errMap["message"] != "no client available" {
+		t.Fatalf("expected 'no client available', got %q", errMap["message"])
 	}
 }
 
@@ -49,22 +55,31 @@ func TestChatCompletionContractRejectsInvalidRequests(t *testing.T) {
 		{name: "invalid json", body: `{`, path: "/v1/chat/completions?group=g1"},
 		{name: "missing model", body: `{"messages":[{"role":"user","content":"hello"}]}`, path: "/v1/chat/completions?group=g1"},
 		{name: "missing messages", body: `{"model":"sekiro-chat"}`, path: "/v1/chat/completions?group=g1"},
-		{name: "missing group", body: `{"model":"sekiro-chat","messages":[{"role":"user","content":"hello"}]}`, path: "/v1/chat/completions"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gin.SetMode(gin.TestMode)
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request = httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			mockManager := newMockClientManager()
+			defer mockManager.Close()
 
-			if _, err := parseChatCompletionRequest(c); err == nil {
-				t.Fatal("expected validation error")
+			handler := newTestAPIHandler(mockManager)
+			handler.router = newDefaultTestRouter()
+			handler.timeoutManager = forwarder.NewTimeoutManager(nil)
+			defer handler.timeoutManager.Shutdown()
+
+			router := gin.New()
+			router.POST("/v1/chat/completions", handler.HandleChatCompletions)
+
+			w := performRequest(router, http.MethodPost, tt.path, json.RawMessage(tt.body))
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400", w.Code)
 			}
 		})
 	}
 }
+
 
 func TestChatCompletionNonStreamInvalidConnectionCleansRecord(t *testing.T) {
 	gin.SetMode(gin.TestMode)

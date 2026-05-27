@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mrh30000/go-rpc/internal/util"
+	"github.com/mrh30000/go-rpc/internal/prompt"
 )
 
 func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsAndToolResult(t *testing.T) {
@@ -48,9 +48,9 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsAndToolResult(t *tes
 		t.Fatalf("tool result should be transparently forwarded, got %#v", normalized[3]["content"])
 	}
 
-	prompt := util.MessagesPrepare(normalized)
-	if !strings.Contains(prompt, "<|DSML|tool_calls>") {
-		t.Fatalf("expected preserved assistant tool history in prompt: %q", prompt)
+	promptText := prompt.MessagesPrepareWithThinking(normalized, false)
+	if !strings.Contains(promptText, "<|DSML|tool_calls>") {
+		t.Fatalf("expected preserved assistant tool history in prompt: %q", promptText)
 	}
 }
 
