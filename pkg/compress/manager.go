@@ -78,6 +78,11 @@ func (m *CompressorManager) DoCompress(packet *protocol.RpcPacket) error {
 		return nil
 	}
 
+	if len(packet.Data) < 1024 {
+		delete(packet.Headers, "compress_method")
+		return nil
+	}
+
 	compressed, err := compressor.Compress(packet.Data)
 	if err != nil {
 		return err

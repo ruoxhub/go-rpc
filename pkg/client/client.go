@@ -195,6 +195,7 @@ func (c *clientConnection) receive(compressManager *compress.CompressorManager) 
 	if compressManager != nil {
 		if err := compressManager.HandleDecompress(packet); err != nil {
 			logger.Errorf("Decompression failed: %v", err)
+			return nil, err
 		}
 	}
 
