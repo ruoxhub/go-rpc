@@ -281,6 +281,21 @@ func (r *DefaultMetricsReader) QueryMetrics(name string, tags map[string]string,
 		return nil, fmt.Errorf("database not initialized")
 	}
 
+	// 1. 查询 metric_tag 找到当前指标的映射关系
+	var mapping struct {
+		Tag1Name string `gorm:"column:tag1_name"`
+		Tag2Name string `gorm:"column:tag2_name"`
+		Tag3Name string `gorm:"column:tag3_name"`
+		Tag4Name string `gorm:"column:tag4_name"`
+		Tag5Name string `gorm:"column:tag5_name"`
+	}
+
+	hasMapping := false
+	if err := db.Table("metric_tag").Select("tag1_name, tag2_name, tag3_name, tag4_name, tag5_name").
+		Where("name = ?", name).Scan(&mapping).Error; err == nil && mapping.Tag1Name != "" {
+		hasMapping = true
+	}
+
 	// 构建查询
 	query := db.Table("metric_minute").
 		Select("time_key, value").
@@ -288,12 +303,29 @@ func (r *DefaultMetricsReader) QueryMetrics(name string, tags map[string]string,
 		Order("time_key DESC").
 		Limit(windowMinutes)
 
-	// 添加标签过滤
-	if group, ok := tags["group"]; ok {
-		query = query.Where("tag1 = ?", group)
-	}
-	if api, ok := tags["api"]; ok {
-		query = query.Where("tag2 = ?", api)
+	// 2. 添加标签过滤
+	if hasMapping {
+		tagColumns := map[string]string{
+			mapping.Tag1Name: "tag1",
+			mapping.Tag2Name: "tag2",
+			mapping.Tag3Name: "tag3",
+			mapping.Tag4Name: "tag4",
+			mapping.Tag5Name: "tag5",
+		}
+
+		for tKey, tVal := range tags {
+			if col, ok := tagColumns[tKey]; ok && col != "" {
+				query = query.Where(fmt.Sprintf("%s = ?", col), tVal)
+			}
+		}
+	} else {
+		// 向下兼容默认推测
+		if group, ok := tags["group"]; ok {
+			query = query.Where("tag1 = ?", group)
+		}
+		if api, ok := tags["api"]; ok {
+			query = query.Where("tag2 = ?", api)
+		}
 	}
 
 	var results []MetricPoint

@@ -67,9 +67,10 @@ func NewCollector(interval time.Duration) MetricCollector {
 		interval: interval,
 		stopChan: make(chan struct{}),
 	}
-	// 启动定期聚合协程
-	c.wg.Add(1)
+	// 启动定期刷新和聚合协程
+	c.wg.Add(2)
 	go c.flushLoop()
+	go c.rollupLoop()
 	return c
 }
 
@@ -216,6 +217,33 @@ func (c *collector) flush() {
 		return
 	}
 
+	// 动态注册标签映射关系到 metric_tag 表
+	for _, bucket := range buckets {
+		if len(bucket.Tags) > 0 {
+			db.Exec(`
+				INSERT INTO metric_tag (name, tag1_name, tag2_name, tag3_name)
+				VALUES (?, 'group', 'device_id', 'api')
+				ON CONFLICT (name) DO NOTHING
+			`, bucket.Name)
+
+			db.Exec(`
+				INSERT INTO metric_tag (name, tag1_name, tag2_name)
+				VALUES (?, 'group', 'api')
+				ON CONFLICT (name) DO NOTHING
+			`, bucket.Name+".p50")
+			db.Exec(`
+				INSERT INTO metric_tag (name, tag1_name, tag2_name)
+				VALUES (?, 'group', 'api')
+				ON CONFLICT (name) DO NOTHING
+			`, bucket.Name+".p90")
+			db.Exec(`
+				INSERT INTO metric_tag (name, tag1_name, tag2_name)
+				VALUES (?, 'group', 'api')
+				ON CONFLICT (name) DO NOTHING
+			`, bucket.Name+".p99")
+		}
+	}
+
 	if err := db.CreateInBatches(metrics, 100).Error; err != nil {
 		logger.Error("metric collector flush failed", zap.Error(err), zap.Int("count", len(metrics)))
 	}
@@ -284,4 +312,123 @@ func (c *collector) Shutdown() {
 		c.wg.Wait()
 		c.flush()
 	})
+}
+
+// rollupLoop 定期聚合小时和天级指标协程
+func (c *collector) rollupLoop() {
+	defer c.wg.Done()
+	// 每小时检查并触发一次聚合
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	// 启动时延迟 5 秒后首次尝试，检查并补全此前数据
+	select {
+	case <-time.After(5 * time.Second):
+		c.runRollupAndRetention()
+	case <-c.stopChan:
+		return
+	}
+
+	for {
+		select {
+		case <-ticker.C:
+			c.runRollupAndRetention()
+		case <-c.stopChan:
+			return
+		}
+	}
+}
+
+// runRollupAndRetention 执行小时/天级 Rollup 以及过期数据清理
+func (c *collector) runRollupAndRetention() {
+	db := database.GetDB()
+	if db == nil {
+		return
+	}
+
+	now := time.Now()
+	// 聚合前一小时的数据
+	prevHour := now.Add(-1 * time.Hour)
+	timeKeyMinPrefix := prevHour.Format("2006010215") // yyyyMMddHH
+	timeKeyHour := prevHour.Format("2006010215")     // yyyyMMddHH
+
+	logger.Infof("Starting metrics hourly rollup for time_keyPrefix: %s", timeKeyMinPrefix)
+
+	// 1. 小时级 Rollup (counter 累加)
+	err := db.Exec(`
+		INSERT INTO metric_hour (name, time_key, tags_md5, tag1, tag2, tag3, tag4, tag5, type, value, create_time)
+		SELECT name, ?, tags_md5, tag1, tag2, tag3, tag4, tag5, type, SUM(value), MIN(create_time)
+		FROM metric_minute
+		WHERE time_key LIKE ? AND type = 'counter'
+		GROUP BY name, tags_md5, tag1, tag2, tag3, tag4, tag5, type
+		ON CONFLICT (name, tags_md5, time_key) 
+		DO UPDATE SET value = EXCLUDED.value
+	`, timeKeyHour, timeKeyMinPrefix+"%").Error
+	if err != nil {
+		logger.Errorf("Failed to rollup counter metrics to hour: %v", err)
+	}
+
+	// 2. 小时级 Rollup (gauge / latency 均值)
+	err = db.Exec(`
+		INSERT INTO metric_hour (name, time_key, tags_md5, tag1, tag2, tag3, tag4, tag5, type, value, create_time)
+		SELECT name, ?, tags_md5, tag1, tag2, tag3, tag4, tag5, type, AVG(value), MIN(create_time)
+		FROM metric_minute
+		WHERE time_key LIKE ? AND (type = 'gauge' OR type = 'latency')
+		GROUP BY name, tags_md5, tag1, tag2, tag3, tag4, tag5, type
+		ON CONFLICT (name, tags_md5, time_key) 
+		DO UPDATE SET value = EXCLUDED.value
+	`, timeKeyHour, timeKeyMinPrefix+"%").Error
+	if err != nil {
+		logger.Errorf("Failed to rollup gauge/latency metrics to hour: %v", err)
+	}
+
+	// 3. 天级 Rollup (每天 0 点至 1 点之间触发，聚合前一天 24 小时的数据)
+	if now.Hour() == 0 {
+		prevDay := now.AddDate(0, 0, -1)
+		timeKeyHourPrefix := prevDay.Format("20060102") // yyyyMMdd
+		timeKeyDay := prevDay.Format("20060102")        // yyyyMMdd
+
+		logger.Infof("Starting metrics daily rollup for time_keyPrefix: %s", timeKeyHourPrefix)
+
+		// 天级 Rollup (counter 累加)
+		err = db.Exec(`
+			INSERT INTO metric_day (name, time_key, tags_md5, tag1, tag2, tag3, tag4, tag5, type, value, create_time)
+			SELECT name, ?, tags_md5, tag1, tag2, tag3, tag4, tag5, type, SUM(value), MIN(create_time)
+			FROM metric_hour
+			WHERE time_key LIKE ? AND type = 'counter'
+			GROUP BY name, tags_md5, tag1, tag2, tag3, tag4, tag5, type
+			ON CONFLICT (name, tags_md5, time_key) 
+			DO UPDATE SET value = EXCLUDED.value
+		`, timeKeyDay, timeKeyHourPrefix+"%").Error
+		if err != nil {
+			logger.Errorf("Failed to rollup counter metrics to day: %v", err)
+		}
+
+		// 天级 Rollup (gauge / latency 均值)
+		err = db.Exec(`
+			INSERT INTO metric_day (name, time_key, tags_md5, tag1, tag2, tag3, tag4, tag5, type, value, create_time)
+			SELECT name, ?, tags_md5, tag1, tag2, tag3, tag4, tag5, type, AVG(value), MIN(create_time)
+			FROM metric_hour
+			WHERE time_key LIKE ? AND (type = 'gauge' OR type = 'latency')
+			GROUP BY name, tags_md5, tag1, tag2, tag3, tag4, tag5, type
+			ON CONFLICT (name, tags_md5, time_key) 
+			DO UPDATE SET value = EXCLUDED.value
+		`, timeKeyDay, timeKeyHourPrefix+"%").Error
+		if err != nil {
+			logger.Errorf("Failed to rollup gauge/latency metrics to day: %v", err)
+		}
+
+		// 4. 数据过期清理 (分钟数据保留 7 天，小时数据保留 30 天)
+		sevenDaysAgo := now.AddDate(0, 0, -7)
+		thirtyDaysAgo := now.AddDate(0, 0, -30)
+
+		logger.Info("Cleaning expired metrics data...")
+
+		if err := db.Exec(`DELETE FROM metric_minute WHERE create_time < ?`, sevenDaysAgo).Error; err != nil {
+			logger.Errorf("Failed to clean metric_minute: %v", err)
+		}
+		if err := db.Exec(`DELETE FROM metric_hour WHERE create_time < ?`, thirtyDaysAgo).Error; err != nil {
+			logger.Errorf("Failed to clean metric_hour: %v", err)
+		}
+	}
 }
