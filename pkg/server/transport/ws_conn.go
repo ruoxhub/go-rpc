@@ -25,11 +25,6 @@ func (w *WSConnection) Send(data []byte) error {
 	return w.conn.WriteMessage(websocket.TextMessage, data)
 }
 
-func (w *WSConnection) Receive() ([]byte, error) {
-	_, msg, err := w.conn.ReadMessage()
-	return msg, err
-}
-
 func (w *WSConnection) Close() error {
 	return w.conn.Close()
 }

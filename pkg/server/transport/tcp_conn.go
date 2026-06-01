@@ -121,5 +121,3 @@ func (t *TCPConnection) RemoteAddr() string {
 func (t *TCPConnection) Conn() net.Conn {
 	return t.conn
 }
-
-var _ Connection = (*TCPConnection)(nil)
