@@ -32,6 +32,7 @@ type ServerConfig struct {
 	DisableAlert    bool         `yaml:"DisableAlert"`    // Disable alert evaluation engine
 	DisableDatabase bool         `yaml:"DisableDatabase"` // Disable PostgreSQL dependency (DB-less mode)
 	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
+	Log            LogConfig      `yaml:"Log"`           // File log configuration
 	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
 	Provider       ProviderConfig `yaml:"Provider"`      // OpenAI-compatible provider configuration
 }
@@ -70,6 +71,16 @@ type DatabaseConfig struct {
 	Password string `yaml:"Password"` // Database password
 	DBName   string `yaml:"DBName"`   // Database name
 	SSLMode  string `yaml:"SSLMode"`  // SSL mode
+}
+
+// LogConfig holds file log configuration
+type LogConfig struct {
+	Dir        string `yaml:"Dir"`        // Log directory, default "logs"
+	Filename   string `yaml:"Filename"`   // Log filename, default "sekiro.log"
+	MaxSize    int    `yaml:"MaxSize"`    // Max megabytes per file before rotation, default 100
+	MaxBackups int    `yaml:"MaxBackups"` // Max old files to retain, default 7
+	MaxAge     int    `yaml:"MaxAge"`     // Max days to retain old files, default 30
+	Compress   bool   `yaml:"Compress"`   // Gzip old log files, default true
 }
 
 // AlertConfig holds alert notification configuration
@@ -113,6 +124,14 @@ func DefaultServerConfig() *ServerConfig {
 		Cors:     true,
 		Mode:     "release",
 		CloseLog: false,
+		Log: LogConfig{
+			Dir:        "logs",
+			Filename:   "sekiro.log",
+			MaxSize:    100,
+			MaxBackups: 7,
+			MaxAge:     30,
+			Compress:   true,
+		},
 		Alert: AlertConfig{
 			SMTP: SMTPConfig{
 				Host:     "localhost",
@@ -170,6 +189,35 @@ func LoadServerConfig(path string) (*ServerConfig, error) {
 	// Configure logging
 	if conf.CloseLog {
 		logger.SetEnabled(false)
+	}
+
+	// Merge log config defaults for unset fields.
+	// Detect whether the Log block was explicitly configured in yaml.
+	// If none of the fields carry a non-zero value, the entire block
+	// was absent and we should use all defaults (including Compress).
+	logBlockConfigured := conf.Log.Dir != "" ||
+		conf.Log.Filename != "" ||
+		conf.Log.MaxSize > 0 ||
+		conf.Log.MaxBackups > 0 ||
+		conf.Log.MaxAge > 0
+
+	if conf.Log.Dir == "" {
+		conf.Log.Dir = defaultConf.Log.Dir
+	}
+	if conf.Log.Filename == "" {
+		conf.Log.Filename = defaultConf.Log.Filename
+	}
+	if conf.Log.MaxSize <= 0 {
+		conf.Log.MaxSize = defaultConf.Log.MaxSize
+	}
+	if conf.Log.MaxBackups <= 0 {
+		conf.Log.MaxBackups = defaultConf.Log.MaxBackups
+	}
+	if conf.Log.MaxAge <= 0 {
+		conf.Log.MaxAge = defaultConf.Log.MaxAge
+	}
+	if !logBlockConfigured {
+		conf.Log.Compress = defaultConf.Log.Compress
 	}
 
 	return conf, nil

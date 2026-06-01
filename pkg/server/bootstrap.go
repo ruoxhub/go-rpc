@@ -123,11 +123,30 @@ func (s *Server) applyYAMLConfig() {
 	}
 }
 
+// logFileOptions maps config.LogConfig to logger.FileOptions.
+// Returns nil when yamlConfig is nil so that InitLogger falls back
+// to console-only output.
+func logFileOptions(yc *config.ServerConfig) *logger.FileOptions {
+	if yc == nil {
+		return nil
+	}
+	lc := yc.Log
+	return &logger.FileOptions{
+		Enabled:    lc.Dir != "" && lc.Filename != "",
+		Dir:        lc.Dir,
+		Filename:   lc.Filename,
+		MaxSize:    lc.MaxSize,
+		MaxBackups: lc.MaxBackups,
+		MaxAge:     lc.MaxAge,
+		Compress:   lc.Compress,
+	}
+}
+
 func (s *Server) Start() error {
 	s.loadYAMLConfig()
 	s.applyYAMLConfig()
 
-	logger.InitLogger(s.config.Debug)
+	logger.InitLogger(s.config.Debug, logFileOptions(s.yamlConfig))
 
 	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 	disableMetrics := s.yamlConfig != nil && s.yamlConfig.DisableMetrics

@@ -2,47 +2,106 @@
 package logger
 
 import (
+	"os"
+	"path/filepath"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 var globalLogger *zap.SugaredLogger
 
 func init() {
-	InitLogger(false)
+	InitLogger(false, nil)
 }
 
-// InitLogger initializes the global logger
-func InitLogger(debug bool) {
-	config := zap.NewProductionConfig()
+// FileOptions configures file-based log output with rotation.
+type FileOptions struct {
+	Enabled    bool   // Enable file logging
+	Dir        string // Log directory, e.g. "logs"
+	Filename   string // Log filename, e.g. "sekiro.log"
+	MaxSize    int    // Max megabytes per file before rotation
+	MaxBackups int    // Max old files to retain
+	MaxAge     int    // Max days to retain old files
+	Compress   bool   // Gzip old log files
+}
 
+// InitLogger initializes the global logger.
+//
+// Output behavior:
+//   - debug=true:  console + file (Tee), level=Debug
+//   - debug=false: file only (if fileOpts.Enabled), level=Info
+//   - fileOpts==nil or !fileOpts.Enabled: console only (backward compatible)
+func InitLogger(debug bool, fileOpts *FileOptions) {
+	level := zapcore.InfoLevel
 	if debug {
-		config.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
-	} else {
-		config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
+		level = zapcore.DebugLevel
 	}
 
-	// 使用 JSON 编码以支持结构化日志
-	config.Encoding = "json"
-	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
-	config.EncoderConfig.LevelKey = "level"
-	config.EncoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
-	config.EncoderConfig.MessageKey = "message"
-	config.EncoderConfig.NameKey = "logger"
-	config.EncoderConfig.CallerKey = "caller"
-	config.EncoderConfig.FunctionKey = zapcore.OmitKey
-	config.EncoderConfig.StacktraceKey = "stacktrace"
-
-	// 输出到 stdout 和 stderr
-	config.OutputPaths = []string{"stdout"}
-	config.ErrorOutputPaths = []string{"stderr"}
-
-	logger, err := config.Build(zap.AddCaller(), zap.AddCallerSkip(1))
-	if err != nil {
-		panic(err)
+	encoderConfig := zapcore.EncoderConfig{
+		TimeKey:        "timestamp",
+		LevelKey:       "level",
+		NameKey:        "logger",
+		CallerKey:      "caller",
+		FunctionKey:    zapcore.OmitKey,
+		MessageKey:     "message",
+		StacktraceKey:  "stacktrace",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.LowercaseLevelEncoder,
+		EncodeTime:     zapcore.ISO8601TimeEncoder,
+		EncodeDuration: zapcore.SecondsDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
+	var cores []zapcore.Core
+
+	if fileOpts != nil && fileOpts.Enabled {
+		if err := os.MkdirAll(fileOpts.Dir, 0o755); err != nil {
+			// If directory creation fails, fall back to console-only
+			// to avoid crashing the application.
+			consoleWriter := zapcore.AddSync(os.Stderr)
+			consoleCore := zapcore.NewCore(
+				zapcore.NewJSONEncoder(encoderConfig),
+				consoleWriter,
+				level,
+			)
+			logger := zap.New(consoleCore, zap.AddCaller(), zap.AddCallerSkip(1))
+			globalLogger = logger.Sugar()
+			globalLogger.Errorf("Failed to create log directory %s: %v", fileOpts.Dir, err)
+			return
+		}
+
+		logPath := filepath.Join(fileOpts.Dir, fileOpts.Filename)
+		lj := &lumberjack.Logger{
+			Filename:   logPath,
+			MaxSize:    fileOpts.MaxSize,
+			MaxBackups: fileOpts.MaxBackups,
+			MaxAge:     fileOpts.MaxAge,
+			Compress:   fileOpts.Compress,
+		}
+		fileWriter := zapcore.AddSync(lj)
+		fileCore := zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			fileWriter,
+			level,
+		)
+		cores = append(cores, fileCore)
+	}
+
+	useConsole := debug || fileOpts == nil || !fileOpts.Enabled
+	if useConsole {
+		consoleWriter := zapcore.AddSync(os.Stdout)
+		consoleCore := zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			consoleWriter,
+			level,
+		)
+		cores = append(cores, consoleCore)
+	}
+
+	core := zapcore.NewTee(cores...)
+	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
 	globalLogger = logger.Sugar()
 }
 
