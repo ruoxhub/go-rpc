@@ -71,8 +71,8 @@ type InvokeRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service) *APIHandler {
-	return &APIHandler{
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus) *APIHandler {
+	h := &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(),
 		wsHandler:        wsHandler,
@@ -80,6 +80,21 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 		metricsCollector: metricsCollector,
 		configService:    cfgSvc,
 	}
+
+	if eventBus != nil {
+		eventBus.Subscribe(eventbus.EventClientConnect, func(event interface{}) {
+			if e, ok := event.(*eventbus.ClientConnectEvent); ok {
+				h.router.InvalidateRingCache(e.Group)
+			}
+		})
+		eventBus.Subscribe(eventbus.EventClientDisconnect, func(event interface{}) {
+			if e, ok := event.(*eventbus.ClientDisconnectEvent); ok {
+				h.router.InvalidateRingCache(e.Group)
+			}
+		})
+	}
+
+	return h
 }
 
 // HandleGroupList handles /business/groupList request

@@ -186,7 +186,7 @@ func (s *Server) Start() error {
 	if !disableMetrics {
 		s.metricsCollector = metrics.NewCollector(1 * time.Minute)
 	}
-	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService)
+	s.apiHandler = api.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus)
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
 	if s.metricsCollector != nil {

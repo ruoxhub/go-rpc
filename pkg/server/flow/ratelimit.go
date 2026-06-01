@@ -2,13 +2,16 @@ package flow
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"golang.org/x/time/rate"
 )
 
 type limiterEntry struct {
-	limiter *rate.Limiter
-	qps     float64
+	limiter        *rate.Limiter
+	qps            float64
+	lastActiveUnix int64
 }
 
 // RateLimiter QPS 限流器
@@ -21,9 +24,30 @@ type RateLimiter struct {
 
 // NewRateLimiter 创建限流器实例
 func NewRateLimiter(defaultQps float64) *RateLimiter {
-	return &RateLimiter{
+	rl := &RateLimiter{
 		limiters:   make(map[string]*limiterEntry),
 		defaultQps: defaultQps,
+	}
+
+	// 启动后台清理协程：每隔 1 分钟扫描，清除 10 分钟未活跃的限流器
+	go rl.startCleanupLoop(1*time.Minute, 10*time.Minute)
+
+	return rl
+}
+
+func (rl *RateLimiter) startCleanupLoop(interval, ttl time.Duration) {
+	ticker := time.NewTicker(interval)
+	for range ticker.C {
+		rl.mu.Lock()
+		nowUnix := time.Now().Unix()
+		ttlSec := int64(ttl.Seconds())
+		for key, entry := range rl.limiters {
+			lastActive := atomic.LoadInt64(&entry.lastActiveUnix)
+			if nowUnix-lastActive > ttlSec {
+				delete(rl.limiters, key)
+			}
+		}
+		rl.mu.Unlock()
 	}
 }
 
@@ -34,6 +58,7 @@ func (rl *RateLimiter) getLimiter(key string, qps float64) *rate.Limiter {
 	rl.mu.RUnlock()
 
 	if ok && sameQPS(entry.qps, qps) {
+		atomic.StoreInt64(&entry.lastActiveUnix, time.Now().Unix())
 		return entry.limiter
 	}
 
@@ -41,7 +66,8 @@ func (rl *RateLimiter) getLimiter(key string, qps float64) *rate.Limiter {
 	defer rl.mu.Unlock()
 
 	// 双重检查
-	if entry, ok := rl.limiters[key]; ok && sameQPS(entry.qps, qps) {
+	if entry, ok = rl.limiters[key]; ok && sameQPS(entry.qps, qps) {
+		atomic.StoreInt64(&entry.lastActiveUnix, time.Now().Unix())
 		return entry.limiter
 	}
 
@@ -50,8 +76,9 @@ func (rl *RateLimiter) getLimiter(key string, qps float64) *rate.Limiter {
 	// Burst 设置为 qps 的 2 倍，允许短时突发
 	limiter := rate.NewLimiter(rate.Limit(qps), int(qps*2)+1)
 	rl.limiters[key] = &limiterEntry{
-		limiter: limiter,
-		qps:     qps,
+		limiter:        limiter,
+		qps:            qps,
+		lastActiveUnix: time.Now().Unix(),
 	}
 
 	return limiter
