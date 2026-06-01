@@ -247,8 +247,13 @@ func (s *Server) Start() error {
 		routePrefix = s.yamlConfig.RouterReplace.ReplaceRoute
 	}
 
+	var corsOrigins []string
+	if s.yamlConfig != nil {
+		corsOrigins = s.yamlConfig.CorsOrigins
+	}
+
 	s.httpServer.Use(
-		ginCorsMiddleware(corsEnabled),
+		ginCorsMiddleware(corsEnabled, corsOrigins),
 		ginRouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
 		middleware.LoggingMiddleware(),
 		middleware.TraceMiddleware(),
@@ -523,7 +528,7 @@ func (s *Server) GetMetricsCollector() metrics.MetricCollector {
 	return s.metricsCollector
 }
 
-func ginCorsMiddleware(enabled bool) gin.HandlerFunc {
+func ginCorsMiddleware(enabled bool, whitelist []string) gin.HandlerFunc {
 	if !enabled {
 		return func(c *gin.Context) {
 			c.Next()
@@ -533,10 +538,25 @@ func ginCorsMiddleware(enabled bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin != "" {
-			c.Header("Access-Control-Allow-Origin", "*")
-			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
-			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
+			allow := false
+			if len(whitelist) == 0 {
+				allow = true
+			} else {
+				for _, w := range whitelist {
+					if w == origin {
+						allow = true
+						break
+					}
+				}
+			}
+
+			if allow {
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Access-Control-Allow-Credentials", "true")
+				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
+				c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
+				c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
+			}
 		}
 
 		if c.Request.Method == "OPTIONS" {

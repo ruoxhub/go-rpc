@@ -35,6 +35,7 @@ type ServerConfig struct {
 	Log            LogConfig      `yaml:"Log"`           // File log configuration
 	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
 	Provider       ProviderConfig `yaml:"Provider"`      // OpenAI-compatible provider configuration
+	CorsOrigins    []string       `yaml:"CorsOrigins"`    // CORS origin whitelist
 }
 
 // ProviderConfig holds settings for `/v1/chat/completions` provider adapters.

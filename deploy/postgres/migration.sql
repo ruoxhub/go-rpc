@@ -191,6 +191,7 @@ INSERT INTO sys_config (config_comment, config_key, config_value) VALUES
 ('匿名访问 qps 限制', 'sekiro.anonymousAccessRateLimit', '10'),
 ('注册用户默认 qps 限制', 'sekiro.defaultRegisterQuotaUser', '10'),
 ('注册 group 默认 qps 限制', 'sekiro.defaultRegisterQuotaGroup', '100'),
+('设备默认 qps 限制', 'sekiro.defaultRegisterQuotaPerDevice', '10'),
 ('使用自定义 ssl 证书', 'sekiro.useCustomSSLCertificate', 'false'),
 ('为配置的 host 自动生成 ssl 证书', 'sekiro.autoGenSSLCertificateHostList', ''),
 ('开启 443 服务端口', 'sekiro.open443Website', 'false'),
