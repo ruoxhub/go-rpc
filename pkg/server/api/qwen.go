@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	json "github.com/goccy/go-json"
+	"github.com/mrh30000/go-rpc/internal/toolcall"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
@@ -76,6 +77,9 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 	accessToken := firstNonEmpty(c.Query("sekiro_token"), stringFromRaw(body["sekiro_token"]), resolveAccessToken(c))
 	streamWanted := boolFromRaw(body["stream"]) || parseBoolQuery(c.Query("stream"))
 
+	toolsRaw := body["tools"]
+	toolNames := extractToolNames(toolsRaw)
+
 	if !h.authorizeRegisteredGroupAccess(c, qwenGroup, accessToken) {
 		return
 	}
@@ -114,10 +118,32 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 	}
 
 	if streamWanted {
-		h.qwenStreamToOpenAI(c, targetClient, chatSeq, chatReqJSON, model, startTime)
+		h.qwenStreamToOpenAI(c, targetClient, chatSeq, chatReqJSON, model, startTime, toolNames, toolsRaw)
 	} else {
-		h.qwenAggregateToOpenAI(c, targetClient, chatSeq, chatReqJSON, model, startTime)
+		h.qwenAggregateToOpenAI(c, targetClient, chatSeq, chatReqJSON, model, startTime, toolNames, toolsRaw)
 	}
+}
+
+// extractToolNames 从 OpenAI 风格 tools 数组里抽出工具名称。
+// tools 形如 [{"type":"function","function":{"name":"webfetch", ...}}, ...]
+func extractToolNames(toolsRaw any) []string {
+	arr, ok := toolsRaw.([]any)
+	if !ok {
+		return nil
+	}
+	names := make([]string, 0, len(arr))
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if fn, ok := m["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok && name != "" {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }
 
 // qwenCreateChat invokes the qwenai client's createChat action and returns the
@@ -243,6 +269,8 @@ func (h *APIHandler) qwenStreamToOpenAI(
 	reqJSON []byte,
 	model string,
 	startTime time.Time,
+	toolNames []string,
+	toolsRaw any,
 ) {
 	stream := h.timeoutManager.RegisterStream(seq, qwenGroup, target.ClientID, qwenStreamTimeout)
 	defer h.timeoutManager.RemoveStream(seq)
@@ -268,10 +296,17 @@ func (h *APIHandler) qwenStreamToOpenAI(
 	ctx, cancel := context.WithTimeout(c.Request.Context(), qwenStreamTimeout)
 	defer cancel()
 
+	// chunkID 优先用上游 response_id，找到前先用本地 sequence 兜底。
 	chunkID := "chatcmpl-" + seq
+	idAdopted := false
 	parser := newQwenSSEParser()
 	roleEmitted := false
 	finished := false
+
+	// holdback 缓冲：累积 answer 阶段全部 content，
+	// 流结束时统一解析工具调用 DSML 块。
+	var fullText strings.Builder
+	emittedLen := 0
 
 	emitOpenAIChunk := func(delta map[string]interface{}, finishReason interface{}) {
 		payload := map[string]interface{}{
@@ -290,13 +325,84 @@ func (h *APIHandler) qwenStreamToOpenAI(
 		writeSSEData(c, payload)
 	}
 
-	emitFinish := func(reason string) {
-		if finished {
+	adoptResponseID := func(id string) {
+		if id == "" || idAdopted {
 			return
 		}
-		finished = true
-		emitOpenAIChunk(map[string]interface{}{}, reason)
-		writeSSEDone(c)
+		chunkID = id
+		idAdopted = true
+	}
+
+	flushSafeContent := func() {
+		full := fullText.String()
+		safeEnd := len(full) - len(dsmlOpener)
+		if safeEnd < 0 {
+			safeEnd = 0
+		}
+		if idx := strings.Index(full, dsmlOpener); idx >= 0 && idx < safeEnd {
+			safeEnd = idx
+		}
+		if safeEnd <= emittedLen {
+			return
+		}
+		delta := map[string]interface{}{}
+		if !roleEmitted {
+			delta["role"] = "assistant"
+			roleEmitted = true
+		}
+		delta["content"] = full[emittedLen:safeEnd]
+		emitOpenAIChunk(delta, nil)
+		emittedLen = safeEnd
+	}
+
+	finalizeAndEmit := func() {
+		full := fullText.String()
+		parsed := toolcall.ParseToolCallsDetailed(full, toolNames)
+		if len(parsed.Calls) > 0 {
+			head := strings.Index(full, dsmlOpener)
+			if head < 0 {
+				head = len(full)
+			}
+			if head > emittedLen {
+				delta := map[string]interface{}{}
+				if !roleEmitted {
+					delta["role"] = "assistant"
+					roleEmitted = true
+				}
+				delta["content"] = full[emittedLen:head]
+				emitOpenAIChunk(delta, nil)
+				emittedLen = head
+			}
+			tcs := toolcall.FormatOpenAIStreamToolCalls(parsed.Calls, toolsRaw)
+			tcDelta := map[string]interface{}{}
+			if !roleEmitted {
+				tcDelta["role"] = "assistant"
+				roleEmitted = true
+			}
+			tcDelta["tool_calls"] = tcs
+			emitOpenAIChunk(tcDelta, nil)
+			if !finished {
+				finished = true
+				emitOpenAIChunk(map[string]interface{}{}, "tool_calls")
+				writeSSEDone(c)
+			}
+			return
+		}
+		if len(full) > emittedLen {
+			delta := map[string]interface{}{}
+			if !roleEmitted {
+				delta["role"] = "assistant"
+				roleEmitted = true
+			}
+			delta["content"] = full[emittedLen:]
+			emitOpenAIChunk(delta, nil)
+			emittedLen = len(full)
+		}
+		if !finished {
+			finished = true
+			emitOpenAIChunk(map[string]interface{}{}, "stop")
+			writeSSEDone(c)
+		}
 	}
 
 	for {
@@ -311,12 +417,13 @@ func (h *APIHandler) qwenStreamToOpenAI(
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					target.MarkFailure()
 					writeSSEData(c, openAIErrorChunk(chunkID, model, startTime, errMsg))
-				} else {
-					target.MarkSuccess()
+					if !finished {
+						writeSSEDone(c)
+					}
+					return
 				}
-				if !finished {
-					writeSSEDone(c)
-				}
+				finalizeAndEmit()
+				target.MarkSuccess()
 				return
 			}
 			if chunk.Error != "" {
@@ -335,8 +442,9 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			}
 			events := parser.Feed(text)
 			for _, ev := range events {
+				adoptResponseID(ev.ResponseID)
 				if ev.Done {
-					emitFinish("stop")
+					finalizeAndEmit()
 					target.MarkSuccess()
 					return
 				}
@@ -347,37 +455,40 @@ func (h *APIHandler) qwenStreamToOpenAI(
 					return
 				}
 				if ev.Finished {
-					emitFinish("stop")
+					finalizeAndEmit()
 					target.MarkSuccess()
 					return
 				}
-				delta := map[string]interface{}{}
-				if !roleEmitted && ev.Role != "" {
-					delta["role"] = ev.Role
-					roleEmitted = true
-				} else if !roleEmitted {
-					delta["role"] = "assistant"
-					roleEmitted = true
-				}
-				if ev.Content != "" {
-					// qwen reasoning models emit Chain-of-Thought under
-					// phase="thinking". Surface it on reasoning_content so
-					// downstream OpenAI clients (e.g. deepseek-style UIs) can
-					// render it separately and never leak it as the final
-					// answer text.
-					if ev.Phase == "thinking" {
-						delta["reasoning_content"] = ev.Content
-					} else {
-						delta["content"] = ev.Content
-					}
-				}
-				if len(delta) == 0 {
+				if ev.Content == "" && ev.Role == "" {
 					continue
 				}
-				emitOpenAIChunk(delta, nil)
+				if ev.Phase == "thinking" {
+					// reasoning_content 不参与工具调用解析，立即透传。
+					delta := map[string]interface{}{}
+					if !roleEmitted {
+						if ev.Role != "" {
+							delta["role"] = ev.Role
+						} else {
+							delta["role"] = "assistant"
+						}
+						roleEmitted = true
+					}
+					if ev.Content != "" {
+						delta["reasoning_content"] = ev.Content
+					}
+					if len(delta) == 0 {
+						continue
+					}
+					emitOpenAIChunk(delta, nil)
+					continue
+				}
+				if ev.Content != "" {
+					fullText.WriteString(ev.Content)
+				}
+				flushSafeContent()
 			}
 			if chunk.Done {
-				emitFinish("stop")
+				finalizeAndEmit()
 				target.MarkSuccess()
 				return
 			}
@@ -395,6 +506,8 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 	reqJSON []byte,
 	model string,
 	startTime time.Time,
+	toolNames []string,
+	toolsRaw any,
 ) {
 	stream := h.timeoutManager.RegisterStream(seq, qwenGroup, target.ClientID, qwenStreamTimeout)
 	defer h.timeoutManager.RemoveStream(seq)
@@ -410,6 +523,25 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 
 	parser := newQwenSSEParser()
 	var builder strings.Builder
+	// chatID 优先用上游 response_id，找到前先用本地 sequence 兜底。
+	chatID := "chatcmpl-" + seq
+	idAdopted := false
+	adoptResponseID := func(id string) {
+		if id == "" || idAdopted {
+			return
+		}
+		chatID = id
+		idAdopted = true
+	}
+
+	emitFinal := func() {
+		full := builder.String()
+		if resp, hit := buildQwenToolCallResponse(chatID, model, full, startTime, toolNames, toolsRaw); hit {
+			c.JSON(http.StatusOK, resp)
+			return
+		}
+		c.JSON(http.StatusOK, openAIChatResponse(chatID, model, startTime, full))
+	}
 
 	for {
 		select {
@@ -425,7 +557,7 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 					return
 				}
 				target.MarkSuccess()
-				c.JSON(http.StatusOK, openAIChatResponse("chatcmpl-"+seq, model, startTime, builder.String()))
+				emitFinal()
 				return
 			}
 			if chunk.Error != "" {
@@ -440,27 +572,59 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 			}
 			events := parser.Feed(text)
 			for _, ev := range events {
+				adoptResponseID(ev.ResponseID)
 				if ev.Error != "" {
 					target.MarkFailure()
 					writeChatError(c, http.StatusOK, ev.Error)
 					return
 				}
-				if ev.Content != "" {
+				if ev.Content != "" && ev.Phase != "thinking" {
 					builder.WriteString(ev.Content)
 				}
 				if ev.Done || ev.Finished {
 					target.MarkSuccess()
-					c.JSON(http.StatusOK, openAIChatResponse("chatcmpl-"+seq, model, startTime, builder.String()))
+					emitFinal()
 					return
 				}
 			}
 			if chunk.Done {
 				target.MarkSuccess()
-				c.JSON(http.StatusOK, openAIChatResponse("chatcmpl-"+seq, model, startTime, builder.String()))
+				emitFinal()
 				return
 			}
 		}
 	}
+}
+
+// buildQwenToolCallResponse 检查累积的 content 是否含 DSML 工具调用块，
+// 命中则返回带 tool_calls 的 chat.completion 包装；否则返回 (nil, false)。
+func buildQwenToolCallResponse(id, model, content string, startTime time.Time, toolNames []string, toolsRaw any) (map[string]interface{}, bool) {
+	parsed := toolcall.ParseToolCallsDetailed(content, toolNames)
+	if len(parsed.Calls) == 0 {
+		return nil, false
+	}
+	head := strings.Index(content, dsmlOpener)
+	if head < 0 {
+		head = len(content)
+	}
+	tcs := toolcall.FormatOpenAIToolCalls(parsed.Calls, toolsRaw)
+	return map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion",
+		"created": startTime.Unix(),
+		"model":   model,
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":       "assistant",
+					"content":    content[:head],
+					"tool_calls": tcs,
+				},
+				"finish_reason": "tool_calls",
+			},
+		},
+	}, true
 }
 
 func openAIChatResponse(id, model string, startTime time.Time, content string) map[string]interface{} {
@@ -607,12 +771,13 @@ func messageContentText(v interface{}) string {
 // We surface it so reasoning models can route Chain-of-Thought output to the
 // OpenAI `reasoning_content` field instead of leaking it as user-visible text.
 type qwenSSEEvent struct {
-	Role     string
-	Content  string
-	Phase    string // qwen phase: "answer" / "thinking" / ""
-	Finished bool   // upstream signaled status="finished"
-	Done     bool   // upstream sent "data: [DONE]"
-	Error    string // upstream-level error
+	Role       string
+	Content    string
+	Phase      string // qwen phase: "answer" / "thinking" / ""
+	Finished   bool   // upstream signaled status="finished"
+	Done       bool   // upstream sent "data: [DONE]"
+	Error      string // upstream-level error
+	ResponseID string // upstream "response_id"，存在时用作 chat.completion id
 }
 
 // qwenSSEParser accumulates partial SSE text across invoke_stream chunks and
@@ -694,21 +859,35 @@ func parseQwenSSEBlock(block string) (qwenSSEEvent, bool) {
 		}
 	}
 
+	// 顶层 response_id 在多种帧（response.created / delta / finished）里都可能出现，
+	// 任意非空值都先收下，调用方按"首次见到即采纳"处理。
+	respID, _ := raw["response_id"].(string)
+
 	choices, _ := raw["choices"].([]interface{})
 	if len(choices) == 0 {
-		// 非 choices 帧（response.created / response.in_progress 等）跳过即可。
+		// 非 choices 帧（response.created / response.in_progress 等）跳过即可，
+		// 但 response_id 仍要透出。
+		if respID != "" {
+			return qwenSSEEvent{ResponseID: respID}, true
+		}
 		return qwenSSEEvent{}, false
 	}
 	first, _ := choices[0].(map[string]interface{})
 	if first == nil {
+		if respID != "" {
+			return qwenSSEEvent{ResponseID: respID}, true
+		}
 		return qwenSSEEvent{}, false
 	}
 	delta, _ := first["delta"].(map[string]interface{})
 	if delta == nil {
+		if respID != "" {
+			return qwenSSEEvent{ResponseID: respID}, true
+		}
 		return qwenSSEEvent{}, false
 	}
 
-	ev := qwenSSEEvent{}
+	ev := qwenSSEEvent{ResponseID: respID}
 	if r, ok := delta["role"].(string); ok {
 		ev.Role = r
 	}

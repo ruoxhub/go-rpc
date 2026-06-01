@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,15 +15,21 @@ import (
 	"github.com/gin-gonic/gin"
 	internalconfig "github.com/mrh30000/go-rpc/internal/config"
 	"github.com/mrh30000/go-rpc/internal/promptcompat"
+	"github.com/mrh30000/go-rpc/internal/toolcall"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
 )
 
+// dsmlOpener 是 promptcompat 强制约定的工具调用块起手标记。
+// 流式输出在尾部至少扣住这么长再 emit，避免把工具调用前缀当成普通文本吐出去。
+const dsmlOpener = "<|DSML|"
+
 const (
 	chatCompletionGroup        = "qwenai"
 	chatCompletionAction       = "chatCompletions"
+	createChatAction           = "createChat"
 	maxChatCompletionBodyBytes = 1 << 20
 )
 
@@ -43,6 +50,10 @@ type ChatCompletionRequest struct {
 	RpcToken       string                 `json:"sekiro_token,omitempty"`
 	Raw            map[string]interface{} `json:"-"`
 	Params         map[string]interface{} `json:"-"`
+	// ToolNames 由 promptcompat 规范化阶段产出，用于 toolcall 解析时识别合法工具。
+	ToolNames []string `json:"-"`
+	// ToolsRaw 是 OpenAI 请求里原始的 tools 数组，传给 toolcall.FormatOpenAI* 用于参数 schema 归一化。
+	ToolsRaw any `json:"-"`
 }
 
 type configReader struct {
@@ -58,6 +69,51 @@ func (c configReader) ModelAliases() map[string]string {
 		}
 	}
 	return aliases
+}
+
+// upstream chat_id. The returned id is used as chatId for the subsequent
+// streaming chatCompletions invocation.
+func (h *APIHandler) CreateChat(ctx context.Context, target *client.RpcClient, model string) (string, error) {
+	seq := fmt.Sprintf("%s-%s-%d", qwenGroup, createChatAction, time.Now().UnixNano())
+	reqJSON, err := marshalJSON(map[string]interface{}{
+		"action": createChatAction,
+		"params": map[string]interface{}{"modelId": model},
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal createChat request: %w", err)
+	}
+
+	rec := h.timeoutManager.Add(seq, qwenGroup, target.ClientID, reqJSON)
+	rec.Timeout = qwenUnaryTimeout
+
+	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON); err != nil {
+		h.timeoutManager.Remove(seq)
+		return "", fmt.Errorf("send createChat: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, qwenUnaryTimeout)
+	defer cancel()
+
+	respCh := make(chan *forwarder.InvokeResponse, 1)
+	go func() {
+		resp, err := h.timeoutManager.Wait(seq)
+		if err != nil {
+			respCh <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
+			return
+		}
+		respCh <- resp
+	}()
+
+	select {
+	case <-waitCtx.Done():
+		h.timeoutManager.Remove(seq)
+		return "", errors.New("createChat timeout")
+	case resp := <-respCh:
+		if resp.Error != "" {
+			return "", errors.New(resp.Error)
+		}
+		return extractQwenChatID(resp.Data)
+	}
 }
 
 // HandleChatCompletions 接收标准 OpenAI Chat Completions 请求体（不含 group/action/params），
@@ -151,6 +207,8 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		RpcToken:              rpcToken,
 		Raw:                   rawMap,
 		Params:                chatReqParams,
+		ToolNames:             normalizedReq.ToolNames,
+		ToolsRaw:              normalizedReq.ToolsRaw,
 	}
 
 	if openAiReq.Stream {
@@ -227,21 +285,106 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
+	// chunkID 优先用上游 response_id，找到前先用本地 sequence 兜底。
 	chunkID := "chatcmpl-" + sequence
+	idAdopted := false
 	parser := newQwenSSEParser()
 	roleEmitted := false
 	finished := false
 
+	// holdback 缓冲：累积 answer 阶段全部 content，
+	// 工具调用 DSML 块永远在末尾，结束时统一解析。
+	var fullText strings.Builder
+	emittedLen := 0
+
 	emit := func(delta map[string]interface{}, finishReason interface{}) {
 		writeSSEData(c, chatCompletionStreamFrame(chunkID, req.Model, startTime, delta, finishReason))
 	}
-	emitFinish := func(reason string) {
-		if finished {
+
+	adoptResponseID := func(id string) {
+		if id == "" || idAdopted {
 			return
 		}
-		finished = true
-		emit(map[string]interface{}{}, reason)
-		writeSSEDone(c)
+		chunkID = id
+		idAdopted = true
+	}
+
+	// flushSafeContent emit 已确认安全的纯文本前缀。
+	// 末尾扣住 len(dsmlOpener) 字节防止 DSML 起手被先吐出去；
+	// 一旦定位到 dsmlOpener，则截断到该位置之前。
+	flushSafeContent := func() {
+		full := fullText.String()
+		safeEnd := len(full) - len(dsmlOpener)
+		if safeEnd < 0 {
+			safeEnd = 0
+		}
+		if idx := strings.Index(full, dsmlOpener); idx >= 0 && idx < safeEnd {
+			safeEnd = idx
+		}
+		if safeEnd <= emittedLen {
+			return
+		}
+		delta := map[string]interface{}{}
+		if !roleEmitted {
+			delta["role"] = "assistant"
+			roleEmitted = true
+		}
+		delta["content"] = full[emittedLen:safeEnd]
+		emit(delta, nil)
+		emittedLen = safeEnd
+	}
+
+	// finalizeAndEmit 在流结束时跑工具调用解析。
+	// 如果命中工具调用：补完 DSML 之前的纯文本 → emit tool_calls → finish="tool_calls"。
+	// 否则：把 holdback 扣住的尾巴吐完 → finish="stop"。
+	finalizeAndEmit := func() {
+		full := fullText.String()
+		parsed := toolcall.ParseToolCallsDetailed(full, req.ToolNames)
+		if len(parsed.Calls) > 0 {
+			head := strings.Index(full, dsmlOpener)
+			if head < 0 {
+				head = len(full)
+			}
+			if head > emittedLen {
+				delta := map[string]interface{}{}
+				if !roleEmitted {
+					delta["role"] = "assistant"
+					roleEmitted = true
+				}
+				delta["content"] = full[emittedLen:head]
+				emit(delta, nil)
+				emittedLen = head
+			}
+			tcs := toolcall.FormatOpenAIStreamToolCalls(parsed.Calls, req.ToolsRaw)
+			tcDelta := map[string]interface{}{}
+			if !roleEmitted {
+				tcDelta["role"] = "assistant"
+				roleEmitted = true
+			}
+			tcDelta["tool_calls"] = tcs
+			emit(tcDelta, nil)
+			if !finished {
+				finished = true
+				emit(map[string]interface{}{}, "tool_calls")
+				writeSSEDone(c)
+			}
+			return
+		}
+		if len(full) > emittedLen {
+			delta := map[string]interface{}{}
+			if !roleEmitted {
+				delta["role"] = "assistant"
+				roleEmitted = true
+			}
+			delta["content"] = full[emittedLen:]
+			emit(delta, nil)
+			emittedLen = len(full)
+		}
+		if !finished {
+			finished = true
+			emit(map[string]interface{}{}, "stop")
+			writeSSEDone(c)
+		}
 	}
 
 	for {
@@ -261,9 +404,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 					}
 					return
 				}
-				if !finished {
-					emitFinish("stop")
-				}
+				finalizeAndEmit()
 				targetClient.MarkSuccess()
 				return
 			}
@@ -282,8 +423,9 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				continue
 			}
 			for _, ev := range parser.Feed(text) {
+				adoptResponseID(ev.ResponseID)
 				if ev.Done {
-					emitFinish("stop")
+					finalizeAndEmit()
 					targetClient.MarkSuccess()
 					return
 				}
@@ -294,33 +436,40 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 					return
 				}
 				if ev.Finished {
-					emitFinish("stop")
+					finalizeAndEmit()
 					targetClient.MarkSuccess()
 					return
 				}
-				delta := map[string]interface{}{}
-				if !roleEmitted {
-					if ev.Role != "" {
-						delta["role"] = ev.Role
-					} else {
-						delta["role"] = "assistant"
-					}
-					roleEmitted = true
-				}
-				if ev.Content != "" {
-					if ev.Phase == "thinking" {
-						delta["reasoning_content"] = ev.Content
-					} else {
-						delta["content"] = ev.Content
-					}
-				}
-				if len(delta) == 0 {
+				if ev.Content == "" && ev.Role == "" {
 					continue
 				}
-				emit(delta, nil)
+				if ev.Phase == "thinking" {
+					// Chain-of-Thought 段不参与工具调用解析，立即透传。
+					delta := map[string]interface{}{}
+					if !roleEmitted {
+						if ev.Role != "" {
+							delta["role"] = ev.Role
+						} else {
+							delta["role"] = "assistant"
+						}
+						roleEmitted = true
+					}
+					if ev.Content != "" {
+						delta["reasoning_content"] = ev.Content
+					}
+					if len(delta) == 0 {
+						continue
+					}
+					emit(delta, nil)
+					continue
+				}
+				if ev.Content != "" {
+					fullText.WriteString(ev.Content)
+				}
+				flushSafeContent()
 			}
 			if chunk.Done {
-				emitFinish("stop")
+				finalizeAndEmit()
 				targetClient.MarkSuccess()
 				return
 			}
@@ -373,19 +522,64 @@ func chatCompletionStreamFrame(id, model string, startTime time.Time, delta map[
 }
 
 func normalizeChatCompletionResponse(req *ChatCompletionRequest, data []byte, sequence string, startTime time.Time) interface{} {
+	fallbackID := "chatcmpl-" + sequence
 	var raw interface{}
 	if err := json.Unmarshal(data, &raw); err == nil {
 		if rawMap, ok := raw.(map[string]interface{}); ok {
 			if object, _ := rawMap["object"].(string); object == "chat.completion" {
 				return rawMap
 			}
+			respID, _ := rawMap["response_id"].(string)
+			id := fallbackID
+			if respID != "" {
+				id = respID
+			}
 			if content, ok := rawMap["content"]; ok {
-				return chatCompletionResponse(req, sequence, content, startTime)
+				if s, isStr := content.(string); isStr {
+					if resp, hit := buildToolCallChatResponse(req, id, s, startTime); hit {
+						return resp
+					}
+				}
+				return chatCompletionResponse(req, id, content, startTime)
 			}
 		}
 		return raw
 	}
-	return chatCompletionResponse(req, sequence, string(data), startTime)
+	if resp, hit := buildToolCallChatResponse(req, fallbackID, string(data), startTime); hit {
+		return resp
+	}
+	return chatCompletionResponse(req, fallbackID, string(data), startTime)
+}
+
+// buildToolCallChatResponse 检查 content 里是否含 DSML 工具调用块，
+// 命中则返回带 tool_calls 的 chat.completion 包装；否则返回 (nil, false)。
+func buildToolCallChatResponse(req *ChatCompletionRequest, id, content string, startTime time.Time) (map[string]interface{}, bool) {
+	parsed := toolcall.ParseToolCallsDetailed(content, req.ToolNames)
+	if len(parsed.Calls) == 0 {
+		return nil, false
+	}
+	head := strings.Index(content, dsmlOpener)
+	if head < 0 {
+		head = len(content)
+	}
+	tcs := toolcall.FormatOpenAIToolCalls(parsed.Calls, req.ToolsRaw)
+	return map[string]interface{}{
+		"id":      id,
+		"object":  "chat.completion",
+		"created": startTime.Unix(),
+		"model":   req.Model,
+		"choices": []map[string]interface{}{
+			{
+				"index": 0,
+				"message": map[string]interface{}{
+					"role":       "assistant",
+					"content":    content[:head],
+					"tool_calls": tcs,
+				},
+				"finish_reason": "tool_calls",
+			},
+		},
+	}, true
 }
 
 func normalizeChatCompletionChunk(req *ChatCompletionRequest, data []byte, sequence string, startTime time.Time) interface{} {
