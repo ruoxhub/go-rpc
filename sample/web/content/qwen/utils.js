@@ -206,19 +206,8 @@
         }
 
         try {
-            var results = await Promise.all([
-                baxia.etModule && baxia.etModule.getETToken && baxia.etModule.getETToken(),
-                Promise.resolve(
-                    (baxia.getFYModule && baxia.getFYModule.fyObj && baxia.getFYModule.fyObj.getFYToken && baxia.getFYModule.fyObj.getFYToken()) ||
-                    (baxia.getFYModule && baxia.getFYModule.getFYToken && baxia.getFYModule.getFYToken())
-                ),
-                Promise.resolve(
-                    (baxia.getFYModule && baxia.getFYModule.fyObj && baxia.getFYModule.fyObj.getUidToken && baxia.getFYModule.fyObj.getUidToken()) ||
-                    (baxia.getFYModule && baxia.getFYModule.getUidToken && baxia.getFYModule.getUidToken())
-                ),
-            ]);
-
-            return { etToken: results[0], fyToken: results[1], uidToken: results[2] };
+            var bxua = (baxia.getFYModule && baxia.getFYModule.fyObj && baxia.getFYModule.fyObj.getFYToken && baxia.getFYModule.fyObj.getFYToken()) || (baxia.getFYModule && baxia.getFYModule.getFYToken && baxia.getFYModule.getFYToken())
+            return bxua;
         } catch (error) {
             console.error('[qwenai] Failed to get Baxia tokens:', error);
             return { error: error.message };
@@ -301,122 +290,24 @@
 
     /**
      * 构建 API v2 请求 Headers（使用 Baxia 签名）
-     * @param {string} ticket
-     * @param {string} chatId
-     * @param {boolean} [useBaxia=true]
      * @returns {Promise<Object>}
      */
-    window.__qwenai.buildHeadersV2 = async function(ticket, chatId, useBaxia) {
-        if (useBaxia === undefined) useBaxia = true;
-
-        var deviceId = window.__qwenai.getDeviceId();
-        var timestamp = Date.now();
-        var nonce = window.__qwenai.generateNonce(8);
+    window.__qwenai.buildHeadersV2 = async function() {
 
         var headers = {
             'Accept': 'application/json, text/event-stream, text/plain, */*',
             'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6',
             'Content-Type': 'application/json',
-            'Origin': 'https://www.qianwen.com',
-            'Referer': 'https://www.qianwen.com/',
-            'X-Platform': 'pc_tongyi',
-            'X-DeviceId': deviceId,
-            'X-Chat-Id': chatId,
+            'Origin': 'https://chat.qwen.ai',
+            'Referer': 'https://chat.qwen.ai/',
         };
-
-        if (useBaxia) {
-            var baxiaTokens = await window.__qwenai.getBaxiaTokens();
-            var clientTokens = window.__qwenai.getClientTokens();
-
-            if (baxiaTokens.etToken) {
-                headers['Bx-Et'] = baxiaTokens.etToken;
-            }
-            if (baxiaTokens.fyToken) {
-                headers['Bx-Ua'] = baxiaTokens.fyToken;
-            }
-            if (baxiaTokens.uidToken) {
-                headers['Bx-Umidtoken'] = baxiaTokens.uidToken;
-            }
-
-            if (clientTokens) {
-                if (clientTokens.dvidn) {
-                    headers['Eo-Clt-Dvidn'] = clientTokens.dvidn;
-                }
-                if (clientTokens.actkn) {
-                    headers['Eo-Clt-Actkn'] = clientTokens.actkn;
-                }
-                if (clientTokens.snver) {
-                    headers['Eo-Clt-Snver'] = clientTokens.snver;
-                }
-            }
-        }
-
+        headers['Bx-Ua'] = await window.__qwenai.getBaxiaTokens();
+        headers['Bx-Umidtoken'] = "default_not_value";
+        headers['bx-v'] = "2.5.36";
         return headers;
     };
 
-    /**
-     * 构建请求 Headers（旧版本兼容）
-     * @param {string} ticket
-     * @param {string} requestId
-     * @param {string} [deviceId]
-     * @returns {Object}
-     */
-    window.__qwenai.buildHeaders = function(ticket, requestId, deviceId) {
-        var fp = generateFullFingerprint();
-        var actualDeviceId = deviceId || fp.deviceId;
 
-        return {
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Content-Type': 'application/json',
-            'Origin': 'https://www.qianwen.com',
-            'Pragma': 'no-cache',
-            'Referer': 'https://www.qianwen.com/',
-            'Sec-Ch-Ua': '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            'Sec-Ch-Ua-Mobile': '?0',
-            'Sec-Ch-Ua-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-site',
-            // 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'X-Platform': 'pc_tongyi',
-            'X-Xsrf-Token': fp.xsrfToken,
-            'X-DeviceId': actualDeviceId,
-            'X-Chat-Id': requestId,
-        };
-    };
-
-    /**
-     * 构建 URL Query 参数
-     * @param {Object} [extraParams]
-     * @returns {string}
-     */
-    window.__qwenai.buildQueryParams = function(extraParams) {
-        var params = {
-            biz_id: 'ai_qwen',
-            chat_client: 'h5',
-            device: 'pc',
-            fr: 'pc',
-            pr: 'qwen',
-            ut: window.__qwenai.getDeviceId(),
-            la: 'zh-CN',
-            tz: 'Asia/Shanghai',
-            nonce: window.__qwenai.generateNonce(8),
-            timestamp: Date.now(),
-        };
-
-        if (extraParams) {
-            for (var key in extraParams) {
-                if (extraParams.hasOwnProperty(key)) {
-                    params[key] = extraParams[key];
-                }
-            }
-        }
-
-        return new URLSearchParams(params).toString();
-    };
 
     /**
      * 从 Cookie 中获取 ticket

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -53,6 +55,7 @@ type RequestBuilder interface {
 	GetClientID() string
 	GetConstantInvoke() string
 	GetAccessToken() string
+	IsStream() bool
 }
 
 // InvokeRequest represents the invoke request body
@@ -64,23 +67,7 @@ type InvokeRequest struct {
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
-}
-
-// ExecJSRequest represents the execjs request body
-type ExecJSRequest struct {
-	Group          string `json:"group" form:"group"`
-	ClientID       string `json:"clientId,omitempty" form:"clientId"`
-	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	RpcToken       string `json:"sekiro_token,omitempty" form:"sekiro_token"`
-	Code           string `json:"code" form:"code"`
-}
-
-// GetCookieRequest represents the getCookie request body
-type GetCookieRequest struct {
-	Group          string `json:"group" form:"group"`
-	ClientID       string `json:"clientId,omitempty" form:"clientId"`
-	ConstantInvoke string `json:"constantInvoke,omitempty" form:"constantInvoke"`
-	RpcToken       string `json:"sekiro_token,omitempty" form:"sekiro_token"`
+	Stream         bool        `json:"stream,omitempty"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -146,6 +133,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 			req.ConstantInvoke = c.Query("constantInvoke")
 			req.RpcToken = accessToken
 			req.Action = c.Query("action")
+			req.Stream = parseBoolQuery(c.Query("stream"))
 		}
 	} else {
 		// GET 方法从查询参数获取
@@ -154,9 +142,16 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		req.ConstantInvoke = c.Query("constantInvoke")
 		req.RpcToken = accessToken
 		req.Action = c.Query("action")
+		req.Stream = parseBoolQuery(c.Query("stream"))
 	}
 	if req.RpcToken == "" {
 		req.RpcToken = accessToken
+	}
+	// query 中的 stream 优先级更低，但 body 没显式设置时仍然让它生效
+	if !req.Stream {
+		if v := c.Query("stream"); v != "" {
+			req.Stream = parseBoolQuery(v)
+		}
 	}
 
 	// 参数验证
@@ -174,9 +169,19 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		Action:         req.Action,
 		Params:         req.Params,
 		Timeout:        time.Duration(req.Timeout) * time.Second,
+		Stream:         req.Stream,
 	}
 
 	h.handleForwardRequest(c, builder, startTime)
+}
+
+// parseBoolQuery 把 query 中的 stream 字符串转 bool（"1"/"true"/"yes"/"on"）
+func parseBoolQuery(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // marshalJSON is a helper function for JSON marshaling
@@ -190,37 +195,37 @@ func unmarshalJSON(data []byte, v interface{}) error {
 }
 
 func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
-	if clientID != "" {
-		group := h.clientManager.GetGroup(groupName)
-		selected := h.router.Route(group, router.RouteParams{
-			GroupName: groupName,
-			ClientID:  clientID,
-		})
-		if selected == nil {
-			return nil, fmt.Errorf("client %s not found in group %s", clientID, groupName)
-		}
-		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s", groupName, selected.ClientID)
-		return selected, nil
-	}
-
 	group := h.clientManager.GetGroup(groupName)
 	if group == nil {
+		if clientID != "" {
+			return nil, fmt.Errorf("group %s not found", groupName)
+		}
 		return nil, nil
 	}
 
-	// Delegate strategy selection (consistent hash vs round-robin) to the Router.
-	// The Router will auto-detect ConstantInvoke and build the hash key from Action + Payload.
-	selected := h.router.Route(group, router.RouteParams{
-		GroupName:      groupName,
-		ConstantInvoke: constantInvoke,
-		Action:         action,
-		Payload:        payload,
-	})
+	// Delegate strategy selection (specified / consistent hash / round-robin) to the Router.
+	// When ClientID is set, Router routes to that specific client; otherwise it auto-detects
+	// ConstantInvoke and builds the hash key from Action + Payload, falling back to round-robin.
+	params := router.RouteParams{GroupName: groupName, ClientID: clientID}
+	if clientID == "" {
+		params.ConstantInvoke = constantInvoke
+		params.Action = action
+		params.Payload = payload
+	}
+
+	selected := h.router.Route(group, params)
 	if selected == nil {
+		if clientID != "" {
+			return nil, fmt.Errorf("client %s not found in group %s", clientID, groupName)
+		}
 		return nil, nil
 	}
 
-	logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
+	if clientID != "" {
+		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s", groupName, selected.ClientID)
+	} else {
+		logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
+	}
 	return selected, nil
 }
 
@@ -238,6 +243,7 @@ type InvokeBuilder struct {
 	Action         string
 	Params         interface{}
 	Timeout        time.Duration
+	Stream         bool
 }
 
 func (b *InvokeBuilder) BuildRequestData() (string, interface{}, error) {
@@ -270,119 +276,20 @@ func (b *InvokeBuilder) GetGroup() string          { return b.Group }
 func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *InvokeBuilder) GetAccessToken() string    { return b.AccessToken }
+func (b *InvokeBuilder) IsStream() bool            { return b.Stream }
 
-// ExecJSBuilder handles execjs requests
-type ExecJSBuilder struct {
-	Group          string
-	ClientID       string
-	ConstantInvoke string
-	AccessToken    string
-	Code           string
-}
-
-func (b *ExecJSBuilder) BuildRequestData() (string, interface{}, error) {
-	return "_execjs", b.Code, nil
-}
-
-func (b *ExecJSBuilder) GetTimeout() time.Duration {
-	return 30 * time.Second
-}
-
-func (b *ExecJSBuilder) GetSequence(group string) string {
-	return fmt.Sprintf("%s-_execjs-%d", group, time.Now().UnixNano())
-}
-
-func (b *ExecJSBuilder) ShouldRecordMetrics() bool {
-	return false
-}
-
-func (b *ExecJSBuilder) GetMetricAPI(action string) string {
-	return action
-}
-
-func (b *ExecJSBuilder) GetGroup() string          { return b.Group }
-func (b *ExecJSBuilder) GetClientID() string       { return b.ClientID }
-func (b *ExecJSBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
-func (b *ExecJSBuilder) GetAccessToken() string    { return b.AccessToken }
-
-// GetCookieBuilder handles cookie requests
-type GetCookieBuilder struct {
-	Group          string
-	ClientID       string
-	ConstantInvoke string
-	AccessToken    string
-}
-
-func (b *GetCookieBuilder) BuildRequestData() (string, interface{}, error) {
-	return "_execjs", "document.cookie", nil
-}
-
-func (b *GetCookieBuilder) GetTimeout() time.Duration {
-	return 30 * time.Second
-}
-
-func (b *GetCookieBuilder) GetSequence(group string) string {
-	return fmt.Sprintf("%s-_cookie-%d", group, time.Now().UnixNano())
-}
-
-func (b *GetCookieBuilder) ShouldRecordMetrics() bool {
-	return false
-}
-
-func (b *GetCookieBuilder) GetMetricAPI(action string) string {
-	return action
-}
-
-func (b *GetCookieBuilder) GetGroup() string          { return b.Group }
-func (b *GetCookieBuilder) GetClientID() string       { return b.ClientID }
-func (b *GetCookieBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
-func (b *GetCookieBuilder) GetAccessToken() string    { return b.AccessToken }
-
-// GetHTMLBuilder handles html requests
-type GetHTMLBuilder struct {
-	Group          string
-	ClientID       string
-	ConstantInvoke string
-	AccessToken    string
-}
-
-func (b *GetHTMLBuilder) BuildRequestData() (string, interface{}, error) {
-	return "_execjs", "document.documentElement.outerHTML", nil
-}
-
-func (b *GetHTMLBuilder) GetTimeout() time.Duration {
-	return 30 * time.Second
-}
-
-func (b *GetHTMLBuilder) GetSequence(group string) string {
-	return fmt.Sprintf("%s-_html-%d", group, time.Now().UnixNano())
-}
-
-func (b *GetHTMLBuilder) ShouldRecordMetrics() bool {
-	return false
-}
-
-func (b *GetHTMLBuilder) GetMetricAPI(action string) string {
-	return action
-}
-
-func (b *GetHTMLBuilder) GetGroup() string          { return b.Group }
-func (b *GetHTMLBuilder) GetClientID() string       { return b.ClientID }
-func (b *GetHTMLBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
-func (b *GetHTMLBuilder) GetAccessToken() string    { return b.AccessToken }
-
-// handleForwardRequest is the generic handler for forwarding requests to Rpc clients
+// handleForwardRequest 把 RequestBuilder 描述的请求转发到 Rpc 客户端。
+//
+// 流程: 校验 -> 鉴权 -> 空转保护 -> 选客户端 -> 构包 -> 分发到 stream / unary 子流程。
+// 每段拆出独立 helper, 让本函数只承担"编排"职责。
 func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder, startTime time.Time) {
-	// 从 builder 获取参数（已由具体 handler 绑定）
 	group := builder.GetGroup()
 	clientID := builder.GetClientID()
 	constantInvoke := builder.GetConstantInvoke()
 
-	// 获取 action 用于日志
-	action, _, _ := builder.BuildRequestData()
-	logger.Infof("Request: group=%s, clientId=%s, action=%s", group, clientID, action)
+	reqAction, reqParams, buildErr := builder.BuildRequestData()
+	logger.Infof("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
 
-	// 参数验证
 	if group == "" {
 		BusinessError(c, "group parameter required")
 		return
@@ -390,72 +297,93 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	if !h.authorizeRegisteredGroupAccess(c, group, builder.GetAccessToken()) {
 		return
 	}
-
-	// 空转调用保护检查（仅 Invoke 需要）
-	if builder.ShouldRecordMetrics() && h.configService != nil && h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
-		if constantInvoke == "true" || constantInvoke == "1" {
-			logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", group, action)
-			BusinessError(c, "空转调用被拒绝，请联系管理员配置实际处理逻辑")
-			return
-		}
+	if h.rejectIdleInvoke(builder, constantInvoke) {
+		logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", group, reqAction)
+		BusinessError(c, "空转调用被拒绝，请联系管理员配置实际处理逻辑")
+		return
 	}
-
-	// 构建请求数据
-	reqAction, reqParams, err := builder.BuildRequestData()
-	if err != nil {
-		BusinessError(c, "Failed to build request data: "+err.Error())
+	// BuildRequestData 的错误延迟到鉴权 / 空转保护之后再返回, 与重构前的语义保持一致
+	// (老代码原本就是先 idle-defense 再 BuildRequestData)。
+	if buildErr != nil {
+		BusinessError(c, "Failed to build request data: "+buildErr.Error())
 		return
 	}
 
-	// 分配客户端
 	targetClient, err := h.selectTargetClient(group, clientID, constantInvoke, reqAction, reqParams)
 	if err != nil {
 		BusinessError(c, err.Error())
 		return
 	}
-
 	if targetClient == nil {
 		BusinessError(c, "no client available")
 		return
 	}
 
-	// 构建 Rpc 请求数据
-	reqData := map[string]interface{}{
+	reqDataJSON, err := marshalJSON(map[string]interface{}{
 		"action": reqAction,
 		"params": reqParams,
-	}
-
-	reqDataJSON, err := marshalJSON(reqData)
+	})
 	if err != nil {
 		BusinessError(c, "Failed to marshal request data: "+err.Error())
 		return
 	}
 
-	// 生成唯一的 sequence ID
 	sequence := builder.GetSequence(group)
-
-	// 创建 invoke 记录
 	timeout := builder.GetTimeout()
+
+	if builder.IsStream() {
+		h.forwardStream(c, builder, group, targetClient, sequence, reqDataJSON, timeout, startTime, reqAction)
+		return
+	}
+	h.forwardUnary(c, builder, group, targetClient, sequence, reqDataJSON, timeout, startTime, reqAction)
+}
+
+// rejectIdleInvoke 是 invoke 端的"空转调用保护": 仅 invoke 类 builder 启用,
+// 当 ConfigKeyDefendIdleInvoke 开启 + 请求显式打了 constantInvoke=true/1 时拒绝放行。
+func (h *APIHandler) rejectIdleInvoke(builder RequestBuilder, constantInvoke string) bool {
+	if !builder.ShouldRecordMetrics() {
+		return false
+	}
+	if h.configService == nil || !h.configService.GetConfigBool(config.ConfigKeyDefendIdleInvoke, true) {
+		return false
+	}
+	return constantInvoke == "true" || constantInvoke == "1"
+}
+
+// forwardStream 走流式分支: 注册 StreamRecord -> 发起 invoke -> SSE chunked 输出。
+// 发送失败时 RemoveStream 并以 -1 错误响应回包 (HTTP 头还没发出, 安全)。
+func (h *APIHandler) forwardStream(c *gin.Context, builder RequestBuilder, group string,
+	targetClient *client.RpcClient, sequence string, reqDataJSON []byte,
+	timeout time.Duration, startTime time.Time, reqAction string) {
+
+	streamRec := h.timeoutManager.RegisterStream(sequence, group, targetClient.ClientID, timeout)
+
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON); err != nil {
+		h.timeoutManager.RemoveStream(sequence)
+		targetClient.MarkFailure()
+		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
+		return
+	}
+	logger.Infof("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+	h.streamSSEResponse(c, streamRec, group, targetClient, builder, startTime, reqAction)
+}
+
+// forwardUnary 走 unary 分支: Add 记录 -> 发起 invoke -> 阻塞等响应 / 超时, 然后渲染。
+func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group string,
+	targetClient *client.RpcClient, sequence string, reqDataJSON []byte,
+	timeout time.Duration, startTime time.Time, reqAction string) {
+
 	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
-	// 获取 WebSocket 连接并发送请求
-	err = h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON)
-	if err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON); err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
-		c.JSON(http.StatusOK, BusinessExtraResponse{
-			Status:   -1,
-			Message:  "Failed to send request: " + err.Error(),
-			Group:    group,
-			ClientID: targetClient.ClientID,
-		})
+		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
 		return
 	}
-
 	logger.Infof("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 
-	// 等待响应
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
@@ -463,97 +391,109 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	go func() {
 		resp, err := h.timeoutManager.Wait(sequence)
 		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{
-				Error:  err.Error(),
-				Status: -1,
-			}
-		} else {
-			responseChan <- resp
+			responseChan <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
+			return
 		}
+		responseChan <- resp
 	}()
 
 	select {
 	case <-ctx.Done():
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
-		// 记录超时指标
-		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
-			metricAPI := builder.GetMetricAPI(reqAction)
-			h.metricsCollector.Incr("invoke.total", map[string]string{"group": group, "api": metricAPI, "status": "timeout"}, 1)
-			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": group, "api": metricAPI}, float64(time.Since(startTime).Milliseconds()))
+		h.recordInvokeMetric(builder, group, reqAction, "timeout", startTime)
+		h.writeForwardError(c, group, targetClient.ClientID, "Request timeout")
+	case resp := <-responseChan:
+		h.renderUnaryResponse(c, builder, group, targetClient, resp, reqAction, startTime)
+	}
+}
+
+// renderUnaryResponse 把 InvokeResponse 渲染成 BusinessExtraResponse。
+//
+// 兼容旧前端: 当客户端回的是 JSON object 时, 把它的字段平级展开到顶层而不是塞到 data 里;
+// 否则当作字符串放进 data 字段。
+func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder, group string,
+	targetClient *client.RpcClient, resp *forwarder.InvokeResponse, reqAction string, startTime time.Time) {
+
+	metricStatus := "success"
+	if resp.Status < 0 || resp.Error != "" {
+		metricStatus = "failure"
+		targetClient.MarkFailure()
+	} else {
+		targetClient.MarkSuccess()
+	}
+	h.recordInvokeMetric(builder, group, reqAction, metricStatus, startTime)
+
+	if resp.Error != "" {
+		// resp.Status 可能为 0 (客户端没显式置错误码), 此时按 -1 输出避免错把"成功"
+		// 状态和错误信息一起返回。
+		status := resp.Status
+		if status == 0 {
+			status = -1
 		}
 		c.JSON(http.StatusOK, BusinessExtraResponse{
-			Status:   -1,
-			Message:  "Request timeout",
+			Status:   status,
+			Message:  resp.Error,
 			Group:    group,
 			ClientID: targetClient.ClientID,
 		})
 		return
-	case resp := <-responseChan:
-		// Mark client health based on response
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-
-		// 记录调用指标
-		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
-			status := "success"
-			if resp.Status < 0 || resp.Error != "" {
-				status = "failure"
-			}
-			metricAPI := builder.GetMetricAPI(reqAction)
-			h.metricsCollector.Incr("invoke.total", map[string]string{"group": group, "api": metricAPI, "status": status}, 1)
-			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{"group": group, "api": metricAPI}, float64(time.Since(startTime).Milliseconds()))
-		}
-
-		if resp.Error != "" {
-			// 使用 resp.Status 可能为 0，此时不视为 -1 错误
-			status := resp.Status
-			if status == 0 {
-				status = -1
-			}
-			c.JSON(http.StatusOK, BusinessExtraResponse{
-				Status:   status,
-				Message:  resp.Error,
-				Group:    group,
-				ClientID: targetClient.ClientID,
-			})
-			return
-		}
-
-		// 如果 status 为 -1 但没有 Error，说明是异常情况
-		message := "success"
-		if resp.Status < 0 {
-			message = "unknown error"
-		}
-
-		// 解析响应数据，如果是 JSON object 则平级展开
-		var responseMap map[string]interface{}
-		if err := unmarshalJSON(resp.Data, &responseMap); err == nil {
-			result := gin.H{
-				"status":   resp.Status,
-				"message":  message,
-				"group":    group,
-				"clientId": targetClient.ClientID,
-			}
-			for k, v := range responseMap {
-				result[k] = v
-			}
-			c.JSON(http.StatusOK, result)
-			return
-		}
-
-		// 如果响应不是有效 JSON，当作字符串处理
-		c.JSON(http.StatusOK, BusinessExtraResponse{
-			Status:   resp.Status,
-			Message:  message,
-			Group:    group,
-			ClientID: targetClient.ClientID,
-			Data:     string(resp.Data),
-		})
 	}
+
+	message := "success"
+	if resp.Status < 0 {
+		// 没有 error 字符串但 status<0, 是不期望的形态, 降级成 unknown error。
+		message = "unknown error"
+	}
+
+	var responseMap map[string]interface{}
+	if err := unmarshalJSON(resp.Data, &responseMap); err == nil {
+		result := gin.H{
+			"status":   resp.Status,
+			"message":  message,
+			"group":    group,
+			"clientId": targetClient.ClientID,
+		}
+		for k, v := range responseMap {
+			result[k] = v
+		}
+		c.JSON(http.StatusOK, result)
+		return
+	}
+
+	c.JSON(http.StatusOK, BusinessExtraResponse{
+		Status:   resp.Status,
+		Message:  message,
+		Group:    group,
+		ClientID: targetClient.ClientID,
+		Data:     string(resp.Data),
+	})
+}
+
+// recordInvokeMetric 写一次 invoke 指标 (调用计数 + 延迟)。
+// builder.ShouldRecordMetrics()/h.metricsCollector 任一缺失则跳过, unary 超时 /
+// unary 完成 / stream defer 三处共用, 防止漏埋点或形态不一致。
+func (h *APIHandler) recordInvokeMetric(builder RequestBuilder, group, action, status string, startTime time.Time) {
+	if !builder.ShouldRecordMetrics() || h.metricsCollector == nil {
+		return
+	}
+	metricAPI := builder.GetMetricAPI(action)
+	tags := map[string]string{"group": group, "api": metricAPI, "status": status}
+	h.metricsCollector.Incr("invoke.total", tags, 1)
+	h.metricsCollector.RecordLatency("invoke.latency",
+		map[string]string{"group": group, "api": metricAPI},
+		float64(time.Since(startTime).Milliseconds()))
+}
+
+// writeForwardError 输出 invoke 路径下的错误响应包络。
+// 必须带上 group/clientId 便于前端按客户端维度路由 / 重试。
+func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg string) {
+	c.JSON(http.StatusOK, BusinessExtraResponse{
+		Status:   -1,
+		Message:  msg,
+		Group:    group,
+		ClientID: clientID,
+	})
 }
 
 func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, token string) bool {
@@ -650,4 +590,118 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 
 func resolveAccessToken(c *gin.Context) string {
 	return middleware.ExtractAuthTokenFromRequest(c)
+}
+
+// streamSSEResponse 把 StreamRecord 的 chunk 通过 chunked HTTP 以 text/event-stream 输出。
+//
+// 与 unary 路径的区别：
+//   - 不再用 timeoutManager.Wait() 一次性拿响应；改成循环消费 ChunkChan
+//   - HTTP 200 头一旦发出去就无法回退到错误状态码，失败只能用 `event: error` 通知
+//   - 客户端断连（c.Request.Context().Done()）主动 RemoveStream，触发 ChunkChan close 让客户端读流终止
+func (h *APIHandler) streamSSEResponse(
+	c *gin.Context,
+	rec *forwarder.StreamRecord,
+	group string,
+	targetClient *client.RpcClient,
+	builder RequestBuilder,
+	startTime time.Time,
+	reqAction string,
+) {
+	c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		// gin 的 ResponseWriter 实现了 Flusher，理论上不会到这里
+		h.timeoutManager.RemoveStream(rec.ID)
+		logger.Errorf("streamSSEResponse: ResponseWriter does not implement http.Flusher")
+		return
+	}
+	flusher.Flush() // 立即把 200 头送出去
+
+	timeoutTimer := time.NewTimer(rec.Timeout)
+	defer timeoutTimer.Stop()
+
+	var streamErr string
+	defer func() {
+		if builder.ShouldRecordMetrics() && h.metricsCollector != nil {
+			status := "success"
+			if streamErr != "" {
+				status = "failure"
+			}
+			metricAPI := builder.GetMetricAPI(reqAction)
+			h.metricsCollector.Incr("invoke.total", map[string]string{
+				"group": group, "api": metricAPI, "status": status,
+			}, 1)
+			h.metricsCollector.RecordLatency("invoke.latency", map[string]string{
+				"group": group, "api": metricAPI,
+			}, float64(time.Since(startTime).Milliseconds()))
+		}
+		if streamErr != "" {
+			targetClient.MarkFailure()
+		} else {
+			targetClient.MarkSuccess()
+		}
+	}()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			h.timeoutManager.RemoveStream(rec.ID)
+			streamErr = "client disconnected"
+			return
+		case <-timeoutTimer.C:
+			h.timeoutManager.RemoveStream(rec.ID)
+			streamErr = "timeout"
+			writeSSEErrorEvent(c.Writer, "timeout")
+			flusher.Flush()
+			return
+		case chunk, ok := <-rec.ChunkChan:
+			if !ok {
+				if errMsg := rec.TerminalError(); errMsg != "" {
+					streamErr = errMsg
+					writeSSEErrorEvent(c.Writer, errMsg)
+					flusher.Flush()
+				}
+				return
+			}
+			if chunk.Error != "" {
+				streamErr = chunk.Error
+				writeSSEErrorEvent(c.Writer, chunk.Error)
+				flusher.Flush()
+				continue // ChunkChan close 会从 ok=false 退出
+			}
+			// chunk.Data 是 json.RawMessage：
+			//   - 客户端发的 data 通常是 JSON 字符串字面量（带引号），需要 Unmarshal 成 string 再写
+			//   - 如果客户端发了非字符串（对象/数组），退化成原样字节透传
+			if len(chunk.Data) == 0 {
+				continue
+			}
+			var payload string
+			if err := json.Unmarshal(chunk.Data, &payload); err == nil {
+				if _, err := c.Writer.Write([]byte(payload)); err != nil {
+					h.timeoutManager.RemoveStream(rec.ID)
+					streamErr = "write failed: " + err.Error()
+					return
+				}
+			} else {
+				if _, err := c.Writer.Write(chunk.Data); err != nil {
+					h.timeoutManager.RemoveStream(rec.ID)
+					streamErr = "write failed: " + err.Error()
+					return
+				}
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+// writeSSEErrorEvent 写一个 SSE 错误事件帧。msg 中的换行替换为空格，避免破坏 SSE 边界。
+func writeSSEErrorEvent(w io.Writer, msg string) {
+	safe := strings.ReplaceAll(msg, "\r", " ")
+	safe = strings.ReplaceAll(safe, "\n", " ")
+	fmt.Fprintf(w, "event: error\ndata: %s\n\n", safe)
 }

@@ -44,6 +44,7 @@
         headers: {
             'Accept': '*/*',
         },
+        bodyType: 'json'
     };
 
     window.__qwenai.MODEL_NAME = MODEL_NAME;

@@ -96,7 +96,7 @@ func HandleSystemNotice(c *gin.Context) {
 
 // HandleSystemInfo 获取系统信息
 func HandleSystemInfo(c *gin.Context) {
-	yamlConfig := config.DefaultConfig()
+	yamlConfig := config.DefaultServerConfig()
 
 	RpcApiSuccess(c, gin.H{
 		"version":       "1.0.0",

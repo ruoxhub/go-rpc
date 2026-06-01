@@ -260,6 +260,7 @@ func TestHandleInvoke_SpecifiedClientNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockManager := newMockClientManager()
 	defer mockManager.Close()
+	mockManager.AddClient("test-group", &client.RpcClient{ClientID: "other-client"})
 
 	handler := newTestAPIHandler(mockManager)
 	handler.router = newDefaultTestRouter()
@@ -310,12 +311,9 @@ func TestAuthorizeRegisteredGroupAccessWithoutDatabaseAllowsRequest(t *testing.T
 
 func TestNewRequestBuildersExposeAccessToken(t *testing.T) {
 	invoke := &InvokeBuilder{AccessToken: "token-1"}
-	execJS := &ExecJSBuilder{AccessToken: "token-2"}
-	cookie := &GetCookieBuilder{AccessToken: "token-3"}
-	html := &GetHTMLBuilder{AccessToken: "token-4"}
+	chatReq := &ChatCompletionRequest{RpcToken: "token-5"}
 
-	if invoke.GetAccessToken() != "token-1" || execJS.GetAccessToken() != "token-2" ||
-		cookie.GetAccessToken() != "token-3" || html.GetAccessToken() != "token-4" {
+	if invoke.GetAccessToken() != "token-1" || chatReq.GetAccessToken() != "token-5" {
 		t.Fatal("request builders should expose access token")
 	}
 }

@@ -11,8 +11,12 @@ import (
 // DefaultTimeout is the default timeout in seconds
 var DefaultTimeout = 30
 
-// Config holds server configuration
-type Config struct {
+// ServerConfig holds server configuration loaded from config.yaml.
+//
+// NOTE: this type was previously named Config but conflicts with the
+// credentials-oriented Config defined in config_v2.go (used by the AI provider
+// stack). Renamed to ServerConfig to keep both alive in the same package.
+type ServerConfig struct {
 	BasicListen    string        `yaml:"BasicListen"`    // Listen address, e.g., ":5612"
 	Host           string        `yaml:"Host"`           // Listen host, e.g., "0.0.0.0"
 	Port           int           `yaml:"Port"`           // Listen port
@@ -29,6 +33,19 @@ type Config struct {
 	DisableDatabase bool         `yaml:"DisableDatabase"` // Disable PostgreSQL dependency (DB-less mode)
 	Database       DatabaseConfig `yaml:"Database"`      // Database configuration
 	Alert          AlertConfig    `yaml:"Alert"`         // Alert notification configuration
+	Provider       ProviderConfig `yaml:"Provider"`      // OpenAI-compatible provider configuration
+}
+
+// ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
+//
+// QwenTimeoutSeconds applies to qwen invocations only. Other providers reuse
+// the global DefaultTimeOut.
+//
+// QwenLogChunks toggles DEBUG logging of every ws chunk byte count and SSE
+// event type. Off by default to avoid log explosion under heavy traffic.
+type ProviderConfig struct {
+	QwenTimeoutSeconds int  `yaml:"QwenTimeoutSeconds"`
+	QwenLogChunks      bool `yaml:"QwenLogChunks"`
 }
 
 // HttpsConfig holds HTTPS related configuration
@@ -70,9 +87,9 @@ type SMTPConfig struct {
 	UseTLS   bool   `yaml:"UseTLS"`   // Enable TLS
 }
 
-// DefaultConfig returns default configuration
-func DefaultConfig() *Config {
-	return &Config{
+// DefaultServerConfig returns default server configuration
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
 		BasicListen: ":5612",
 		Host:        "0.0.0.0",
 		Port:        5612,
@@ -106,12 +123,16 @@ func DefaultConfig() *Config {
 				UseTLS:   false,
 			},
 		},
+		Provider: ProviderConfig{
+			QwenTimeoutSeconds: 120,
+			QwenLogChunks:      false,
+		},
 	}
 }
 
-// Load reads and parses configuration from a YAML file
-func Load(path string) (*Config, error) {
-	defaultConf := DefaultConfig()
+// LoadServerConfig reads and parses server configuration from a YAML file
+func LoadServerConfig(path string) (*ServerConfig, error) {
+	defaultConf := DefaultServerConfig()
 
 	if !fileExists(path) {
 		logger.Warningf("Config file not found: %s, using default configuration", path)
@@ -125,7 +146,7 @@ func Load(path string) (*Config, error) {
 	}
 	defer file.Close()
 
-	conf := &Config{}
+	conf := &ServerConfig{}
 	decoder := yaml.NewDecoder(file)
 	if err := decoder.Decode(conf); err != nil {
 		logger.Errorf("Failed to parse config file: %v", err)
@@ -154,12 +175,12 @@ func Load(path string) (*Config, error) {
 	return conf, nil
 }
 
-// LoadWithFallback loads configuration from a YAML file with fallback to defaults
-func LoadWithFallback(path string) *Config {
-	conf, err := Load(path)
+// LoadServerConfigWithFallback loads server configuration from a YAML file with fallback to defaults
+func LoadServerConfigWithFallback(path string) *ServerConfig {
+	conf, err := LoadServerConfig(path)
 	if err != nil {
 		logger.Warningf("Using default configuration due to error: %v", err)
-		return DefaultConfig()
+		return DefaultServerConfig()
 	}
 	return conf
 }
@@ -171,7 +192,7 @@ func fileExists(path string) bool {
 }
 
 // ToYAML converts config to YAML string
-func (c *Config) ToYAML() (string, error) {
+func (c *ServerConfig) ToYAML() (string, error) {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return "", err
@@ -179,8 +200,8 @@ func (c *Config) ToYAML() (string, error) {
 	return string(data), nil
 }
 
-// Save saves configuration to a YAML file
-func (c *Config) Save(path string) error {
+// Save saves server configuration to a YAML file
+func (c *ServerConfig) Save(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err

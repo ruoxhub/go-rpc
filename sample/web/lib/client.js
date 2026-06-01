@@ -464,36 +464,41 @@ class BaseClient {
     if (typeof actionConfig === 'function') {
       handler = this.wrapHandler(actionConfig);
     } else if (actionConfig && typeof actionConfig === 'object') {
-      const { method, transform } = actionConfig;
+      const { method, transform, stream } = actionConfig;
 
       if (typeof method !== 'function') {
         this.log(`Action ${actionName} 缺少有效的 method`, 'warn');
         return;
       }
 
-      handler = (request, resolve, reject) => {
-        const executeAction = () => {
-          const params = request.params || {};
-          method(params)
-            .then(response => {
-              const result = typeof transform === 'function'
-                ? transform(response)
-                : response;
-              resolve(result);
-            })
-            .catch(error => {
-              reject(error.message || String(error));
-            });
-        };
+      if (stream) {
+        // 流式 action 自己负责发帧（_sendStreamChunk / _sendStreamEnd），不走 resolve/reject
+        handler = this._buildStreamHandler(actionName, method).bind(this);
+      } else {
+        handler = (request, resolve, reject) => {
+          const executeAction = () => {
+            const params = request.params || {};
+            method(params)
+              .then(response => {
+                const result = typeof transform === 'function'
+                  ? transform(response)
+                  : response;
+                resolve(result);
+              })
+              .catch(error => {
+                reject(error.message || String(error));
+              });
+          };
 
-        const delay = this.actionDelay;
-        if (delay > 0) {
-          this.log(`Action ${actionName} 延迟 ${delay}ms 执行`);
-          setTimeout(executeAction, delay);
-        } else {
-          executeAction();
-        }
-      };
+          const delay = this.actionDelay;
+          if (delay > 0) {
+            this.log(`Action ${actionName} 延迟 ${delay}ms 执行`);
+            setTimeout(executeAction, delay);
+          } else {
+            executeAction();
+          }
+        };
+      }
     } else {
       this.log(`Action ${actionName} 配置无效`, 'warn');
       return;
@@ -501,6 +506,104 @@ class BaseClient {
 
     this.handlers.set(actionName, handler);
     this.log(`注册 Action: ${actionName}${this.actionDelay > 0 ? ` (延迟 ${this.actionDelay}ms)` : ''}`);
+  }
+
+  /**
+   * 构建流式 action handler。
+   *
+   * 与 unary 不同，流式 handler 自己负责整个生命周期：
+   *   - 通过 _sendStreamChunk(seq, dataStr) 多帧推送
+   *   - 用 _sendStreamEnd(seq, errorMsg?) 显式结束
+   *
+   * 因此 _handleRpcRequest 传进来的 resolve / reject 在流式分支里是 no-op：
+   * 我们绝不能调用它们（会触发 _sendSuccess / _sendFailed 走 unary 协议）。
+   *
+   * @param {string} actionName
+   * @param {Function} method - 业务 method，必须返回 fetch Response
+   * @returns {ActionHandler}
+   */
+  _buildStreamHandler(actionName, method) {
+    const self = this;
+    return async function (request, _resolve, _reject) {
+      const seq = (request && request.__sekiro_seq__) || '';
+      const params = (request && request.params) || {};
+
+      const delay = self.actionDelay;
+      if (delay > 0) {
+        self.log(`Stream action ${actionName} 延迟 ${delay}ms 执行`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+
+      let resp;
+      try {
+        resp = await method(params);
+      } catch (e) {
+        self._sendStreamEnd(seq, e instanceof Error ? e.message : String(e));
+        return;
+      }
+
+      if (!resp || !resp.body || typeof resp.body.getReader !== 'function') {
+        self._sendStreamEnd(seq, 'createStream method 必须返回 Response 对象（fetch 的原始 Response）');
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const chunkStr = decoder.decode(value, { stream: true });
+          if (chunkStr) {
+            self._sendStreamChunk(seq, chunkStr);
+          }
+        }
+        const tail = decoder.decode();
+        if (tail) self._sendStreamChunk(seq, tail);
+        self._sendStreamEnd(seq);
+      } catch (e) {
+        self._sendStreamEnd(seq, e instanceof Error ? e.message : String(e));
+      } finally {
+        try { reader.releaseLock(); } catch (e) { /* ignore */ }
+      }
+    };
+  }
+
+  /**
+   * 发送一个流式数据帧。data 用字符串透传，
+   * 服务端 RpcMessage.Data 是 json.RawMessage，会拿到带引号的 JSON 字符串字面量，
+   * 服务端 streamSSEResponse 用 json.Unmarshal 解出原文再写入 SSE。
+   * @param {string} seq
+   * @param {string} dataStr
+   */
+  _sendStreamChunk(seq, dataStr) {
+    if (!seq) return;
+    this._send(JSON.stringify({
+      type: 'invoke_stream',
+      __sekiro_seq__: seq,
+      data: dataStr,
+      done: false,
+    }));
+  }
+
+  /**
+   * 发送流式结束帧。errorMsg 非空则带错误并将 status 标为 -1。
+   * @param {string} seq
+   * @param {string} [errorMsg]
+   */
+  _sendStreamEnd(seq, errorMsg) {
+    if (!seq) return;
+    const msg = {
+      type: 'invoke_stream',
+      __sekiro_seq__: seq,
+      done: true,
+    };
+    if (errorMsg) {
+      msg.error = errorMsg;
+      msg.status = -1;
+      this.log(`Stream ended with error: seq=${seq}, error=${errorMsg}`, 'warn');
+    }
+    this._send(JSON.stringify(msg));
   }
 
   /**
@@ -898,6 +1001,20 @@ function createAction(method, transform = null) {
 }
 
 /**
+ * 辅助函数：创建流式 Action 配置。
+ *
+ * method 必须返回一个 fetch Response（通过 fetchPost(..., {isParseResponse:false}) 拿到）。
+ * BaseClient 内部用 Response.body.getReader() 逐 chunk 推送 invoke_stream 帧到服务端。
+ *
+ * @param {Function} method
+ * @param {Object} [options]
+ * @returns {ActionConfig}
+ */
+function createStream(method, options = {}) {
+  return Object.assign({ method, stream: true }, options);
+}
+
+/**
  * 辅助函数：创建带默认值的参数配置
  * @param {string} name
  * @param {*} [defaultValue]
@@ -912,6 +1029,7 @@ if (typeof window !== 'undefined') {
   window.__crawler_baseclient_loaded = true;
   window.BaseClient = BaseClient;
   window.createAction = createAction;
+  window.createStream = createStream;
   window.param = param;
 }
 

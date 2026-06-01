@@ -53,7 +53,7 @@ func DefaultConfig() *Config {
 // Server represents the Rpc server
 type Server struct {
 	config           *Config
-	yamlConfig       *config.Config
+	yamlConfig       *config.ServerConfig
 	shutdown         chan struct{}
 	eventBus         *eventbus.EventBus
 	clientManager    *client.ClientManager
@@ -93,10 +93,10 @@ func (s *Server) loadYAMLConfig() error {
 	}
 
 	var err error
-	s.yamlConfig, err = config.Load(s.config.ConfigPath)
+	s.yamlConfig, err = config.LoadServerConfig(s.config.ConfigPath)
 	if err != nil {
 		logger.Warningf("Failed to load YAML config: %v, using defaults", err)
-		s.yamlConfig = config.DefaultConfig()
+		s.yamlConfig = config.DefaultServerConfig()
 	}
 	return nil
 }
@@ -317,6 +317,19 @@ func (s *Server) registerRoutes() {
 		handlers.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
 	}
 
+	v1 := s.httpServer.Group("/v1")
+	v1.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	{
+		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
+	}
+
+	// /api/* OpenAI-compatible surface for provider-specific routing.
+	// Currently routes /api/chat/completions to the qwenai browser-extension provider.
+	apiGroup := s.httpServer.Group("/api")
+	apiGroup.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	{
+		apiGroup.POST("/chat/completions", s.apiHandler.HandleQwenChatCompletions)
+	}
 	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 
 	rpcAPI := s.httpServer.Group("/rpc-api")
