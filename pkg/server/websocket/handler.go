@@ -2,11 +2,12 @@ package websocket
 
 import (
 	"context"
-	json "github.com/goccy/go-json"
 	"errors"
 	"net"
 	"sync"
 	"time"
+
+	json "github.com/goccy/go-json"
 
 	"github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
@@ -71,11 +72,11 @@ func (h *Handler) isGroupRegistered(groupName string) bool {
 type MessageType string
 
 const (
-	MessageTypeHeartbeat     MessageType = "heartbeat"
-	MessageTypeInvoke        MessageType = "invoke"
+	MessageTypeHeartbeat      MessageType = "heartbeat"
+	MessageTypeInvoke         MessageType = "invoke"
 	MessageTypeInvokeResponse MessageType = "invoke_response"
-	MessageTypeInvokeStream  MessageType = "invoke_stream"
-	MessageTypeBind          MessageType = "bind"
+	MessageTypeInvokeStream   MessageType = "invoke_stream"
+	MessageTypeBind           MessageType = "bind"
 )
 
 // RpcMessage represents a Rpc protocol message
@@ -257,7 +258,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 
 // processMessage processes a WebSocket message
 func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcClient, data []byte) {
-	logger.Infof("Received raw message")
+	// logger.Debugf("Received raw message")
 
 	var msg RpcMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
@@ -267,7 +268,7 @@ func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcCl
 	}
 
 	sequence := msg.GetSequence()
-	logger.Infof("Parsed message: type=%s, sequence=%s, status=%d, Error=%s", msg.Type, sequence, msg.Status, msg.Error)
+	// logger.Debugf("Parsed message: type=%s, sequence=%s, status=%d, Error=%s", msg.Type, sequence, msg.Status, msg.Error)
 
 	if msg.Type == MessageTypeInvokeResponse || (sequence != "" && msg.Type == "") {
 		h.handleInvokeResponse(&msg, data)
@@ -319,7 +320,7 @@ func (h *Handler) handleInvokeStream(msg *RpcMessage) {
 
 // handleHeartbeat handles heartbeat messages
 func (h *Handler) handleHeartbeat(sekiroClient *client.RpcClient, msg *RpcMessage) {
-	logger.Debugf("Heartbeat received from %s/%s", msg.Group, msg.ClientID)
+	// logger.Debugf("Heartbeat received from %s/%s", msg.Group, msg.ClientID)
 
 	if msg.Group != "" && msg.ClientID != "" {
 		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
