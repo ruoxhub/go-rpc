@@ -144,20 +144,7 @@ func (c *collector) RecordLatency(name string, tags map[string]string, durationM
 
 // makeKey 生成唯一的 bucket key
 func (c *collector) makeKey(name string, tags map[string]string, metricType string) string {
-	// 将 tags 排序后生成 MD5
-	keys := make([]string, 0, len(tags))
-	for k := range tags {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	h := md5.New()
-	for _, k := range keys {
-		h.Write([]byte(fmt.Sprintf("%s=%s,", k, tags[k])))
-	}
-	tagsMD5 := hex.EncodeToString(h.Sum(nil))
-
-	return fmt.Sprintf("%s:%s:%s", name, tagsMD5, metricType)
+	return fmt.Sprintf("%s:%s:%s", name, c.tagsMD5(tags), metricType)
 }
 
 // tagsMD5 生成 tags 的 MD5

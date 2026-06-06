@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,28 +25,25 @@ import (
 // 流式输出在尾部至少扣住这么长再 emit，避免把工具调用前缀当成普通文本吐出去。
 const dsmlOpener = "<|DSML|"
 
-const (
-	chatCompletionGroup        = "qwenai"
-	chatCompletionAction       = "chatCompletions"
-	createChatAction           = "createChat"
-	maxChatCompletionBodyBytes = 1 << 20
-)
+const maxChatCompletionBodyBytes = 1 << 20
 
 // ChatCompletionRequest 是 sekiro chat completions handler 的请求视图。
 //
 // 它嵌入 model.ChatCompletionRequest（OpenAI 完整规范字段：Model / Messages /
-// Stream / Tools / Metadata / ...），并补上 sekiro 私有的路由 / 鉴权字段
-// （Group / ClientID / ConstantInvoke / RpcToken）。
+// Stream / Tools / Metadata / ...），并补上 sekiro 私有的路由字段
+// （Group / ClientID / ConstantInvoke）。
 //
 // Raw 保存原始 JSON map（用于诊断 / 日志），Params 是去掉 sekiro 私有字段
 // 后透传到客户端的参数 map（用于 _chat_completions action）。
+//
+// 鉴权字段 (sekiro_token) 已删除: 鉴权由 AuthMiddleware 解析 Authorization
+// 头并把 user 写入 context，本 handler 不再读取 body / query 中的 token。
 type ChatCompletionRequest struct {
 	model.ChatCompletionRequest
 
 	Group          string                 `json:"group,omitempty"`
 	ClientID       string                 `json:"clientId,omitempty"`
 	ConstantInvoke string                 `json:"constantInvoke,omitempty"`
-	RpcToken       string                 `json:"sekiro_token,omitempty"`
 	Raw            map[string]interface{} `json:"-"`
 	Params         map[string]interface{} `json:"-"`
 	// ToolNames 由 promptcompat 规范化阶段产出，用于 toolcall 解析时识别合法工具。
@@ -69,51 +65,6 @@ func (c configReader) ModelAliases() map[string]string {
 		}
 	}
 	return aliases
-}
-
-// upstream chat_id. The returned id is used as chatId for the subsequent
-// streaming chatCompletions invocation.
-func (h *APIHandler) CreateChat(ctx context.Context, target *client.RpcClient, model string) (string, error) {
-	seq := fmt.Sprintf("%s-%s-%d", qwenGroup, createChatAction, time.Now().UnixNano())
-	reqJSON, err := marshalJSON(map[string]interface{}{
-		"action": createChatAction,
-		"params": map[string]interface{}{"modelId": model},
-	})
-	if err != nil {
-		return "", fmt.Errorf("marshal createChat request: %w", err)
-	}
-
-	rec := h.timeoutManager.Add(seq, qwenGroup, target.ClientID, reqJSON)
-	rec.Timeout = qwenUnaryTimeout
-
-	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON); err != nil {
-		h.timeoutManager.Remove(seq)
-		return "", fmt.Errorf("send createChat: %w", err)
-	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, qwenUnaryTimeout)
-	defer cancel()
-
-	respCh := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(seq)
-		if err != nil {
-			respCh <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
-			return
-		}
-		respCh <- resp
-	}()
-
-	select {
-	case <-waitCtx.Done():
-		h.timeoutManager.Remove(seq)
-		return "", errors.New("createChat timeout")
-	case resp := <-respCh:
-		if resp.Error != "" {
-			return "", errors.New(resp.Error)
-		}
-		return extractQwenChatID(resp.Data)
-	}
 }
 
 // HandleChatCompletions 接收标准 OpenAI Chat Completions 请求体（不含 group/action/params），
@@ -161,12 +112,11 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	rpcToken := resolveAccessToken(c)
-	if !h.authorizeRegisteredGroupAccess(c, chatCompletionGroup, rpcToken) {
+	if !h.authorizeRegisteredGroupAccess(c, qwenGroup) {
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(chatCompletionGroup, "", "", chatCompletionAction, rawMap)
+	targetClient, err := h.selectTargetClient(qwenGroup, "", "", qwenActionChat, rawMap)
 	if err != nil {
 		writeChatError(c, http.StatusOK, err.Error())
 		return
@@ -183,7 +133,7 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 	logger.Infof("chat completions: chatId=%s, model=%s, group=%s, clientId=%s, stream=%v",
-		chatID, openAiReq.Model, chatCompletionGroup, targetClient.ClientID, openAiReq.Stream)
+		chatID, openAiReq.Model, qwenGroup, targetClient.ClientID, openAiReq.Stream)
 
 	chatReqParams := map[string]interface{}{
 		"messages": prompt,
@@ -191,7 +141,7 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		"chatId":   chatID,
 	}
 	reqDataJSON, err := marshalJSON(map[string]interface{}{
-		"action": chatCompletionAction,
+		"action": qwenActionChat,
 		"params": chatReqParams,
 	})
 	if err != nil {
@@ -199,12 +149,11 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	sequence := fmt.Sprintf("%s-%s-%d", chatCompletionGroup, chatCompletionAction, time.Now().UnixNano())
+	sequence := fmt.Sprintf("%s-%s-%d", qwenGroup, qwenActionChat, time.Now().UnixNano())
 
 	req := &ChatCompletionRequest{
 		ChatCompletionRequest: openAiReq,
-		Group:                 chatCompletionGroup,
-		RpcToken:              rpcToken,
+		Group:                 qwenGroup,
 		Raw:                   rawMap,
 		Params:                chatReqParams,
 		ToolNames:             normalizedReq.ToolNames,
@@ -271,12 +220,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 		return
 	}
 
-	header := c.Writer.Header()
-	header.Set("Content-Type", "text/event-stream; charset=utf-8")
-	header.Set("Cache-Control", "no-cache")
-	header.Set("X-Accel-Buffering", "no")
-	header.Set("Connection", "keep-alive")
-	c.Writer.WriteHeader(http.StatusOK)
+	writeSSEHeaders(c)
 	c.Writer.Flush()
 	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
 		logger.Debugf("Failed to clear SSE write deadline: %v", err)
@@ -285,106 +229,18 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()
 
-	// chunkID 优先用上游 response_id，找到前先用本地 sequence 兜底。
-	chunkID := "chatcmpl-" + sequence
-	idAdopted := false
+	holdback := newStreamHoldback("chatcmpl-" + sequence)
 	parser := newQwenSSEParser()
-	roleEmitted := false
-	finished := false
-
-	// holdback 缓冲：累积 answer 阶段全部 content，
-	// 工具调用 DSML 块永远在末尾，结束时统一解析。
-	var fullText strings.Builder
-	emittedLen := 0
 
 	emit := func(delta map[string]interface{}, finishReason interface{}) {
-		writeSSEData(c, chatCompletionStreamFrame(chunkID, req.Model, startTime, delta, finishReason))
+		writeSSEData(c, chatCompletionStreamFrame(holdback.chunkID, req.Model, startTime, delta, finishReason))
 	}
-
-	adoptResponseID := func(id string) {
-		if id == "" || idAdopted {
-			return
-		}
-		chunkID = id
-		idAdopted = true
+	onFinal := func(reason string) {
+		emit(map[string]interface{}{}, reason)
+		writeSSEDone(c)
 	}
-
-	// flushSafeContent emit 已确认安全的纯文本前缀。
-	// 末尾扣住 len(dsmlOpener) 字节防止 DSML 起手被先吐出去；
-	// 一旦定位到 dsmlOpener，则截断到该位置之前。
-	flushSafeContent := func() {
-		full := fullText.String()
-		safeEnd := len(full) - len(dsmlOpener)
-		if safeEnd < 0 {
-			safeEnd = 0
-		}
-		if idx := strings.Index(full, dsmlOpener); idx >= 0 && idx < safeEnd {
-			safeEnd = idx
-		}
-		if safeEnd <= emittedLen {
-			return
-		}
-		delta := map[string]interface{}{}
-		if !roleEmitted {
-			delta["role"] = "assistant"
-			roleEmitted = true
-		}
-		delta["content"] = full[emittedLen:safeEnd]
-		emit(delta, nil)
-		emittedLen = safeEnd
-	}
-
-	// finalizeAndEmit 在流结束时跑工具调用解析。
-	// 如果命中工具调用：补完 DSML 之前的纯文本 → emit tool_calls → finish="tool_calls"。
-	// 否则：把 holdback 扣住的尾巴吐完 → finish="stop"。
-	finalizeAndEmit := func() {
-		full := fullText.String()
-		parsed := toolcall.ParseToolCallsDetailed(full, req.ToolNames)
-		if len(parsed.Calls) > 0 {
-			head := strings.Index(full, dsmlOpener)
-			if head < 0 {
-				head = len(full)
-			}
-			if head > emittedLen {
-				delta := map[string]interface{}{}
-				if !roleEmitted {
-					delta["role"] = "assistant"
-					roleEmitted = true
-				}
-				delta["content"] = full[emittedLen:head]
-				emit(delta, nil)
-				emittedLen = head
-			}
-			tcs := toolcall.FormatOpenAIStreamToolCalls(parsed.Calls, req.ToolsRaw)
-			tcDelta := map[string]interface{}{}
-			if !roleEmitted {
-				tcDelta["role"] = "assistant"
-				roleEmitted = true
-			}
-			tcDelta["tool_calls"] = tcs
-			emit(tcDelta, nil)
-			if !finished {
-				finished = true
-				emit(map[string]interface{}{}, "tool_calls")
-				writeSSEDone(c)
-			}
-			return
-		}
-		if len(full) > emittedLen {
-			delta := map[string]interface{}{}
-			if !roleEmitted {
-				delta["role"] = "assistant"
-				roleEmitted = true
-			}
-			delta["content"] = full[emittedLen:]
-			emit(delta, nil)
-			emittedLen = len(full)
-		}
-		if !finished {
-			finished = true
-			emit(map[string]interface{}{}, "stop")
-			writeSSEDone(c)
-		}
+	finalize := func() {
+		holdback.finalizeAndEmit(emit, req.ToolNames, req.ToolsRaw, onFinal)
 	}
 
 	for {
@@ -399,12 +255,12 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					targetClient.MarkFailure()
 					writeSSEData(c, normalizeChatCompletionErrorChunk(req, sequence, errMsg, startTime))
-					if !finished {
+					if !holdback.finished {
 						writeSSEDone(c)
 					}
 					return
 				}
-				finalizeAndEmit()
+				finalize()
 				targetClient.MarkSuccess()
 				return
 			}
@@ -423,9 +279,9 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				continue
 			}
 			for _, ev := range parser.Feed(text) {
-				adoptResponseID(ev.ResponseID)
+				holdback.adoptResponseID(ev.ResponseID)
 				if ev.Done {
-					finalizeAndEmit()
+					finalize()
 					targetClient.MarkSuccess()
 					return
 				}
@@ -436,7 +292,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 					return
 				}
 				if ev.Finished {
-					finalizeAndEmit()
+					finalize()
 					targetClient.MarkSuccess()
 					return
 				}
@@ -445,31 +301,14 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				}
 				if ev.Phase == "thinking" {
 					// Chain-of-Thought 段不参与工具调用解析，立即透传。
-					delta := map[string]interface{}{}
-					if !roleEmitted {
-						if ev.Role != "" {
-							delta["role"] = ev.Role
-						} else {
-							delta["role"] = "assistant"
-						}
-						roleEmitted = true
-					}
-					if ev.Content != "" {
-						delta["reasoning_content"] = ev.Content
-					}
-					if len(delta) == 0 {
-						continue
-					}
-					emit(delta, nil)
+					holdback.flushThinking(emit, ev.Role, ev.Content)
 					continue
 				}
-				if ev.Content != "" {
-					fullText.WriteString(ev.Content)
-				}
-				flushSafeContent()
+				holdback.appendAnswer(ev.Content)
+				holdback.flushSafeContent(emit)
 			}
 			if chunk.Done {
-				finalizeAndEmit()
+				finalize()
 				targetClient.MarkSuccess()
 				return
 			}
@@ -716,7 +555,7 @@ func firstNonEmpty(values ...string) string {
 // RequestBuilder implementation for *ChatCompletionRequest
 
 func (r *ChatCompletionRequest) BuildRequestData() (string, interface{}, error) {
-	return chatCompletionAction, r.Params, nil
+	return qwenActionChat, r.Params, nil
 }
 
 func (r *ChatCompletionRequest) GetTimeout() time.Duration {
@@ -724,7 +563,7 @@ func (r *ChatCompletionRequest) GetTimeout() time.Duration {
 }
 
 func (r *ChatCompletionRequest) GetSequence(group string) string {
-	return fmt.Sprintf("%s-%s-%d", group, chatCompletionAction, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%s-%d", group, qwenActionChat, time.Now().UnixNano())
 }
 
 func (r *ChatCompletionRequest) ShouldRecordMetrics() bool {
@@ -745,10 +584,6 @@ func (r *ChatCompletionRequest) GetClientID() string {
 
 func (r *ChatCompletionRequest) GetConstantInvoke() string {
 	return r.ConstantInvoke
-}
-
-func (r *ChatCompletionRequest) GetAccessToken() string {
-	return r.RpcToken
 }
 
 func (r *ChatCompletionRequest) IsStream() bool {

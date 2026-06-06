@@ -74,13 +74,12 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 
 	clientID := firstNonEmpty(c.Query("clientId"), stringFromRaw(body["clientId"]))
 	constantInvoke := firstNonEmpty(c.Query("constantInvoke"), stringFromRaw(body["constantInvoke"]))
-	accessToken := firstNonEmpty(c.Query("sekiro_token"), stringFromRaw(body["sekiro_token"]), resolveAccessToken(c))
 	streamWanted := boolFromRaw(body["stream"]) || parseBoolQuery(c.Query("stream"))
 
 	toolsRaw := body["tools"]
 	toolNames := extractToolNames(toolsRaw)
 
-	if !h.authorizeRegisteredGroupAccess(c, qwenGroup, accessToken) {
+	if !h.authorizeRegisteredGroupAccess(c, qwenGroup) {
 		return
 	}
 
@@ -297,20 +296,12 @@ func (h *APIHandler) qwenStreamToOpenAI(
 	defer cancel()
 
 	// chunkID 优先用上游 response_id，找到前先用本地 sequence 兜底。
-	chunkID := "chatcmpl-" + seq
-	idAdopted := false
+	holdback := newStreamHoldback("chatcmpl-" + seq)
 	parser := newQwenSSEParser()
-	roleEmitted := false
-	finished := false
-
-	// holdback 缓冲：累积 answer 阶段全部 content，
-	// 流结束时统一解析工具调用 DSML 块。
-	var fullText strings.Builder
-	emittedLen := 0
 
 	emitOpenAIChunk := func(delta map[string]interface{}, finishReason interface{}) {
 		payload := map[string]interface{}{
-			"id":      chunkID,
+			"id":      holdback.chunkID,
 			"object":  "chat.completion.chunk",
 			"created": startTime.Unix(),
 			"model":   model,
@@ -325,84 +316,13 @@ func (h *APIHandler) qwenStreamToOpenAI(
 		writeSSEData(c, payload)
 	}
 
-	adoptResponseID := func(id string) {
-		if id == "" || idAdopted {
-			return
-		}
-		chunkID = id
-		idAdopted = true
+	onFinal := func(reason string) {
+		emitOpenAIChunk(map[string]interface{}{}, reason)
+		writeSSEDone(c)
 	}
 
-	flushSafeContent := func() {
-		full := fullText.String()
-		safeEnd := len(full) - len(dsmlOpener)
-		if safeEnd < 0 {
-			safeEnd = 0
-		}
-		if idx := strings.Index(full, dsmlOpener); idx >= 0 && idx < safeEnd {
-			safeEnd = idx
-		}
-		if safeEnd <= emittedLen {
-			return
-		}
-		delta := map[string]interface{}{}
-		if !roleEmitted {
-			delta["role"] = "assistant"
-			roleEmitted = true
-		}
-		delta["content"] = full[emittedLen:safeEnd]
-		emitOpenAIChunk(delta, nil)
-		emittedLen = safeEnd
-	}
-
-	finalizeAndEmit := func() {
-		full := fullText.String()
-		parsed := toolcall.ParseToolCallsDetailed(full, toolNames)
-		if len(parsed.Calls) > 0 {
-			head := strings.Index(full, dsmlOpener)
-			if head < 0 {
-				head = len(full)
-			}
-			if head > emittedLen {
-				delta := map[string]interface{}{}
-				if !roleEmitted {
-					delta["role"] = "assistant"
-					roleEmitted = true
-				}
-				delta["content"] = full[emittedLen:head]
-				emitOpenAIChunk(delta, nil)
-				emittedLen = head
-			}
-			tcs := toolcall.FormatOpenAIStreamToolCalls(parsed.Calls, toolsRaw)
-			tcDelta := map[string]interface{}{}
-			if !roleEmitted {
-				tcDelta["role"] = "assistant"
-				roleEmitted = true
-			}
-			tcDelta["tool_calls"] = tcs
-			emitOpenAIChunk(tcDelta, nil)
-			if !finished {
-				finished = true
-				emitOpenAIChunk(map[string]interface{}{}, "tool_calls")
-				writeSSEDone(c)
-			}
-			return
-		}
-		if len(full) > emittedLen {
-			delta := map[string]interface{}{}
-			if !roleEmitted {
-				delta["role"] = "assistant"
-				roleEmitted = true
-			}
-			delta["content"] = full[emittedLen:]
-			emitOpenAIChunk(delta, nil)
-			emittedLen = len(full)
-		}
-		if !finished {
-			finished = true
-			emitOpenAIChunk(map[string]interface{}{}, "stop")
-			writeSSEDone(c)
-		}
+	finalize := func() {
+		holdback.finalizeAndEmit(emitOpenAIChunk, toolNames, toolsRaw, onFinal)
 	}
 
 	for {
@@ -416,19 +336,19 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			if !ok {
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					target.MarkFailure()
-					writeSSEData(c, openAIErrorChunk(chunkID, model, startTime, errMsg))
-					if !finished {
+					writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
+					if !holdback.finished {
 						writeSSEDone(c)
 					}
 					return
 				}
-				finalizeAndEmit()
+				finalize()
 				target.MarkSuccess()
 				return
 			}
 			if chunk.Error != "" {
 				target.MarkFailure()
-				writeSSEData(c, openAIErrorChunk(chunkID, model, startTime, chunk.Error))
+				writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
 				writeSSEDone(c)
 				return
 			}
@@ -442,20 +362,20 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			}
 			events := parser.Feed(text)
 			for _, ev := range events {
-				adoptResponseID(ev.ResponseID)
+				holdback.adoptResponseID(ev.ResponseID)
 				if ev.Done {
-					finalizeAndEmit()
+					finalize()
 					target.MarkSuccess()
 					return
 				}
 				if ev.Error != "" {
 					target.MarkFailure()
-					writeSSEData(c, openAIErrorChunk(chunkID, model, startTime, ev.Error))
+					writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
 					writeSSEDone(c)
 					return
 				}
 				if ev.Finished {
-					finalizeAndEmit()
+					finalize()
 					target.MarkSuccess()
 					return
 				}
@@ -464,31 +384,14 @@ func (h *APIHandler) qwenStreamToOpenAI(
 				}
 				if ev.Phase == "thinking" {
 					// reasoning_content 不参与工具调用解析，立即透传。
-					delta := map[string]interface{}{}
-					if !roleEmitted {
-						if ev.Role != "" {
-							delta["role"] = ev.Role
-						} else {
-							delta["role"] = "assistant"
-						}
-						roleEmitted = true
-					}
-					if ev.Content != "" {
-						delta["reasoning_content"] = ev.Content
-					}
-					if len(delta) == 0 {
-						continue
-					}
-					emitOpenAIChunk(delta, nil)
+					holdback.flushThinking(emitOpenAIChunk, ev.Role, ev.Content)
 					continue
 				}
-				if ev.Content != "" {
-					fullText.WriteString(ev.Content)
-				}
-				flushSafeContent()
+				holdback.appendAnswer(ev.Content)
+				holdback.flushSafeContent(emitOpenAIChunk)
 			}
 			if chunk.Done {
-				finalizeAndEmit()
+				finalize()
 				target.MarkSuccess()
 				return
 			}

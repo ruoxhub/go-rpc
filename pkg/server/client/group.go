@@ -289,18 +289,5 @@ func (g *RpcGroup) HasClient(clientID string) bool {
 	return g.GetClient(clientID) != nil
 }
 
-// AllocateClientWithStatus allocates a client with specific status requirement
-func (g *RpcGroup) AllocateClientWithStatus(status ClientStatus) *RpcClient {
-	c := g.AllocateClient()
-	if c == nil {
-		return nil
-	}
-	if c.GetStatus() != status {
-		// 当前实现：状态不匹配仍返回 client（保持向后兼容）
-		return c
-	}
-	return c
-}
-
 // ErrNoClientAvailable is returned when no client is available
 var ErrNoClientAvailable = errors.New("no client available")

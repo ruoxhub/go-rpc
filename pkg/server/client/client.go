@@ -108,25 +108,3 @@ func (c *RpcClient) GetFailCount() int {
 	return c.FailCount
 }
 
-// ResetHealth resets the health status
-func (c *RpcClient) ResetHealth() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.FailCount = 0
-	c.IsHealthy = true
-}
-
-// AcquireWriteLock acquires the write lock for WebSocket operations
-func (c *RpcClient) AcquireWriteLock() {
-	c.writeMu.Lock()
-}
-
-// ReleaseWriteLock releases the write lock
-func (c *RpcClient) ReleaseWriteLock() {
-	c.writeMu.Unlock()
-}
-
-// GetWriteLock returns the write mutex for use with defer
-func (c *RpcClient) GetWriteLock() *sync.Mutex {
-	return &c.writeMu
-}

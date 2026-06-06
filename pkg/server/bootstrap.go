@@ -105,11 +105,10 @@ func (s *Server) applyYAMLConfig() {
 	if s.yamlConfig == nil {
 		return
 	}
-
-	if s.config.Host == "" && s.yamlConfig.Host != "" {
+	if s.config.Host == "" {
 		s.config.Host = s.yamlConfig.Host
 	}
-	if s.config.Port == 0 && s.yamlConfig.Port != 0 {
+	if s.config.Port == 0 {
 		s.config.Port = s.yamlConfig.Port
 	}
 	if s.config.Host == "" {
@@ -148,9 +147,9 @@ func (s *Server) Start() error {
 
 	logger.InitLogger(s.config.Debug, logFileOptions(s.yamlConfig))
 
-	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
-	disableMetrics := s.yamlConfig != nil && s.yamlConfig.DisableMetrics
-	disableAlert := s.yamlConfig != nil && s.yamlConfig.DisableAlert
+	disableDB := s.yamlConfig.DisableDatabase
+	disableMetrics := s.yamlConfig.DisableMetrics
+	disableAlert := s.yamlConfig.DisableAlert
 
 	if !disableDB {
 		if err := database.InitFromConfig(
@@ -217,18 +216,15 @@ func (s *Server) Start() error {
 		metricsReader := alert.NewDefaultMetricsReader()
 		s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
 
-		// 配置 SMTP 通知
-		if s.yamlConfig != nil {
-			smtpConfig := alert.SMTPConfig{
-				Host:     s.yamlConfig.Alert.SMTP.Host,
-				Port:     s.yamlConfig.Alert.SMTP.Port,
-				Username: s.yamlConfig.Alert.SMTP.Username,
-				Password: s.yamlConfig.Alert.SMTP.Password,
-				From:     s.yamlConfig.Alert.SMTP.From,
-				UseTLS:   s.yamlConfig.Alert.SMTP.UseTLS,
-			}
-			s.alertEvaluator.SetSMTPConfig(smtpConfig)
-		}
+		smtp := s.yamlConfig.Alert.SMTP
+		s.alertEvaluator.SetSMTPConfig(alert.SMTPConfig{
+			Host:     smtp.Host,
+			Port:     smtp.Port,
+			Username: smtp.Username,
+			Password: smtp.Password,
+			From:     smtp.From,
+			UseTLS:   smtp.UseTLS,
+		})
 
 		s.alertEvaluator.Start(context.Background())
 	}
@@ -240,17 +236,10 @@ func (s *Server) Start() error {
 
 	s.httpServer = api.NewHTTPServer(s.newHTTPConfig(mode))
 
-	corsEnabled := s.yamlConfig != nil && s.yamlConfig.Cors
-	routeReplaceEnabled := s.yamlConfig != nil && s.yamlConfig.RouterReplace.IsEnable
-	routePrefix := ""
-	if s.yamlConfig != nil {
-		routePrefix = s.yamlConfig.RouterReplace.ReplaceRoute
-	}
-
-	var corsOrigins []string
-	if s.yamlConfig != nil {
-		corsOrigins = s.yamlConfig.CorsOrigins
-	}
+	corsEnabled := s.yamlConfig.Cors
+	routeReplaceEnabled := s.yamlConfig.RouterReplace.IsEnable
+	routePrefix := s.yamlConfig.RouterReplace.ReplaceRoute
+	corsOrigins := s.yamlConfig.CorsOrigins
 
 	s.httpServer.Use(
 		ginCorsMiddleware(corsEnabled, corsOrigins),
@@ -286,7 +275,15 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) registerRoutes() {
-	disableWebAdmin := s.yamlConfig != nil && s.yamlConfig.DisableWebAdmin
+	// registerRoutes can be exercised by tests that bypass NewServer/loadYAMLConfig.
+	// In that case s.yamlConfig is nil; fall back to the default server config so
+	// yaml-driven toggles still resolve to a defined value.
+	yc := s.yamlConfig
+	if yc == nil {
+		yc = config.DefaultServerConfig()
+	}
+	disableWebAdmin := yc.DisableWebAdmin
+	disableDB := yc.DisableDatabase
 
 	if !disableWebAdmin {
 		webui.RegisterRoutes(s.httpServer.Engine())
@@ -303,10 +300,7 @@ func (s *Server) registerRoutes() {
 	})
 
 	s.httpServer.Engine().NoRoute(func(c *gin.Context) {
-		if strings.HasPrefix(c.Request.URL.Path, "/api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/rpc-api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/business/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/v1/") {
+		if isAPIPath(c.Request.URL.Path) {
 			c.JSON(404, gin.H{"error": "Not found"})
 			return
 		}
@@ -317,8 +311,7 @@ func (s *Server) registerRoutes() {
 		c.JSON(404, gin.H{"error": "Not found"})
 	})
 
-	business := s.httpServer.Group("/business")
-	business.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	business := s.optionalAuthGroup("/business")
 	{
 		business.GET("/groupList", s.apiHandler.HandleGroupList)
 		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
@@ -341,20 +334,17 @@ func (s *Server) registerRoutes() {
 		handlers.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
 	}
 
-	v1 := s.httpServer.Group("/v1")
-	v1.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	v1 := s.optionalAuthGroup("/v1")
 	{
 		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
 	}
 
 	// /api/* OpenAI-compatible surface for provider-specific routing.
 	// Currently routes /api/chat/completions to the qwenai browser-extension provider.
-	apiGroup := s.httpServer.Group("/api")
-	apiGroup.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	apiGroup := s.optionalAuthGroup("/api")
 	{
 		apiGroup.POST("/chat/completions", s.apiHandler.HandleQwenChatCompletions)
 	}
-	disableDB := s.yamlConfig != nil && s.yamlConfig.DisableDatabase
 
 	rpcAPI := s.httpServer.Group("/rpc-api")
 	// 为 /rpc-api 路由添加配置服务和仓储上下文
@@ -390,6 +380,27 @@ func (s *Server) registerRoutes() {
 			}
 		}
 	}
+}
+
+// optionalAuthGroup creates a route group that applies the optional auth middleware.
+// Centralized so /business, /v1, and /api all share the same authentication shape.
+func (s *Server) optionalAuthGroup(relativePath string) *gin.RouterGroup {
+	group := s.httpServer.Group(relativePath)
+	group.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	return group
+}
+
+// apiPathPrefixes lists URL path prefixes that should return JSON 404 instead
+// of falling through to the web admin index. Used by the global NoRoute handler.
+var apiPathPrefixes = []string{"/api/", "/rpc-api/", "/business/", "/v1/"}
+
+func isAPIPath(path string) bool {
+	for _, prefix := range apiPathPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) newHTTPConfig(mode string) *api.Config {
@@ -537,26 +548,12 @@ func ginCorsMiddleware(enabled bool, whitelist []string) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		if origin != "" {
-			allow := false
-			if len(whitelist) == 0 {
-				allow = true
-			} else {
-				for _, w := range whitelist {
-					if w == origin {
-						allow = true
-						break
-					}
-				}
-			}
-
-			if allow {
-				c.Header("Access-Control-Allow-Origin", origin)
-				c.Header("Access-Control-Allow-Credentials", "true")
-				c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-				c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
-				c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
-			}
+		if origin != "" && isOriginAllowed(origin, whitelist) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
+			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
 		}
 
 		if c.Request.Method == "OPTIONS" {
@@ -566,6 +563,20 @@ func ginCorsMiddleware(enabled bool, whitelist []string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// isOriginAllowed checks if the origin is allowed by the whitelist.
+// An empty whitelist allows all origins.
+func isOriginAllowed(origin string, whitelist []string) bool {
+	if len(whitelist) == 0 {
+		return true
+	}
+	for _, w := range whitelist {
+		if w == origin {
+			return true
+		}
+	}
+	return false
 }
 
 func ginRouteReplaceMiddleware(enabled bool, prefix string) gin.HandlerFunc {

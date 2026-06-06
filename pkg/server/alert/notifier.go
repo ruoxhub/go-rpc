@@ -147,14 +147,12 @@ func (n *DefaultNotifier) SendEmail(to string, subject string, body string) erro
 	addr := fmt.Sprintf("%s:%d", n.smtpConfig.Host, n.smtpConfig.Port)
 
 	// 根据是否使用 TLS 选择认证方式
-	var err error
+	var auth smtp.Auth
 	if n.smtpConfig.UseTLS {
-		err = n.sendEmailTLS(addr, to, msg)
-	} else {
-		err = n.sendEmailPlain(addr, to, msg)
+		auth = smtp.PlainAuth("", n.smtpConfig.Username, n.smtpConfig.Password, n.smtpConfig.Host)
 	}
 
-	if err != nil {
+	if err := smtpSendMail(addr, auth, n.smtpConfig.From, []string{to}, msg); err != nil {
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 
@@ -163,17 +161,6 @@ func (n *DefaultNotifier) SendEmail(to string, subject string, body string) erro
 		zap.String("subject", subject))
 
 	return nil
-}
-
-// sendEmailTLS 使用 TLS 发送邮件
-func (n *DefaultNotifier) sendEmailTLS(addr, to string, msg []byte) error {
-	auth := smtp.PlainAuth("", n.smtpConfig.Username, n.smtpConfig.Password, n.smtpConfig.Host)
-	return smtpSendMail(addr, auth, n.smtpConfig.From, []string{to}, msg)
-}
-
-// sendEmailPlain 不使用 TLS 发送邮件
-func (n *DefaultNotifier) sendEmailPlain(addr, to string, msg []byte) error {
-	return smtpSendMail(addr, nil, n.smtpConfig.From, []string{to}, msg)
 }
 
 // BuildEmailBody 构建邮件正文（HTML 格式）

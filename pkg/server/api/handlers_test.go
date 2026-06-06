@@ -304,17 +304,8 @@ func TestAuthorizeRegisteredGroupAccessWithoutDatabaseAllowsRequest(t *testing.T
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/business/invoke?group=g1", nil)
 
-	if !handler.authorizeRegisteredGroupAccess(c, "g1", "") {
+	if !handler.authorizeRegisteredGroupAccess(c, "g1") {
 		t.Fatal("expected authorizeRegisteredGroupAccess to allow when database is unavailable")
-	}
-}
-
-func TestNewRequestBuildersExposeAccessToken(t *testing.T) {
-	invoke := &InvokeBuilder{AccessToken: "token-1"}
-	chatReq := &ChatCompletionRequest{RpcToken: "token-5"}
-
-	if invoke.GetAccessToken() != "token-1" || chatReq.GetAccessToken() != "token-5" {
-		t.Fatal("request builders should expose access token")
 	}
 }
 

@@ -45,7 +45,11 @@ type clientManagerIface interface {
 	GetGroup(groupName string) *client.RpcGroup
 }
 
-// RequestBuilder defines the interface for building request data
+// RequestBuilder defines the interface for building request data.
+//
+// 注意：原 GetAccessToken() 已删除。鉴权由中间件 (middleware.AuthMiddleware /
+// OptionalAuth) 负责从 Authorization / sekiro-token header 解析用户并写入
+// gin.Context，业务层用 middleware.GetCurrentUser 取即可。
 type RequestBuilder interface {
 	BuildRequestData() (action string, params interface{}, err error)
 	GetTimeout() time.Duration
@@ -55,7 +59,6 @@ type RequestBuilder interface {
 	GetGroup() string
 	GetClientID() string
 	GetConstantInvoke() string
-	GetAccessToken() string
 	IsStream() bool
 }
 
@@ -64,7 +67,6 @@ type InvokeRequest struct {
 	Group          string      `json:"group"`
 	ClientID       string      `json:"clientId,omitempty"`
 	ConstantInvoke string      `json:"constantInvoke,omitempty"`
-	RpcToken       string      `json:"sekiro_token,omitempty"`
 	Timeout        int         `json:"timeout,omitempty"`
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
@@ -120,7 +122,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 		BusinessError(c, "group parameter required")
 		return
 	}
-	if !h.authorizeRegisteredGroupAccess(c, group, c.Query("sekiro_token")) {
+	if !h.authorizeRegisteredGroupAccess(c, group) {
 		return
 	}
 
@@ -137,38 +139,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 // POST/GET /business/invoke
 func (h *APIHandler) HandleInvoke(c *gin.Context) {
 	startTime := time.Now()
-	var req InvokeRequest
-	accessToken := resolveAccessToken(c)
-
-	// 根据请求方法绑定数据
-	if c.Request.Method == http.MethodPost {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			// JSON 绑定失败，尝试从查询参数获取
-			req.Group = c.Query("group")
-			req.ClientID = c.Query("clientId")
-			req.ConstantInvoke = c.Query("constantInvoke")
-			req.RpcToken = accessToken
-			req.Action = c.Query("action")
-			req.Stream = parseBoolQuery(c.Query("stream"))
-		}
-	} else {
-		// GET 方法从查询参数获取
-		req.Group = c.Query("group")
-		req.ClientID = c.Query("clientId")
-		req.ConstantInvoke = c.Query("constantInvoke")
-		req.RpcToken = accessToken
-		req.Action = c.Query("action")
-		req.Stream = parseBoolQuery(c.Query("stream"))
-	}
-	if req.RpcToken == "" {
-		req.RpcToken = accessToken
-	}
-	// query 中的 stream 优先级更低，但 body 没显式设置时仍然让它生效
-	if !req.Stream {
-		if v := c.Query("stream"); v != "" {
-			req.Stream = parseBoolQuery(v)
-		}
-	}
+	req := bindInvokeRequest(c)
 
 	// 参数验证
 	if req.Action == "" {
@@ -176,19 +147,42 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 		return
 	}
 
-	// 使用通用请求处理方法
-	builder := &InvokeBuilder{
-		Group:          req.Group,
-		ClientID:       req.ClientID,
-		ConstantInvoke: req.ConstantInvoke,
-		AccessToken:    req.RpcToken,
-		Action:         req.Action,
-		Params:         req.Params,
-		Timeout:        time.Duration(req.Timeout) * time.Second,
-		Stream:         req.Stream,
+	builder := newInvokeBuilder(&req)
+	h.handleForwardRequest(c, builder, startTime)
+}
+
+// bindInvokeRequest 解析 /business/invoke 的输入:
+// POST 优先尝试 JSON 绑定, 失败时回退到 query 参数; GET 走 query。
+// 鉴权信息 (sekiro_token) 不再从此 body/query 读取，统一由 AuthMiddleware 从
+// Authorization / sekiro-token 头解析并写入 context。
+func bindInvokeRequest(c *gin.Context) InvokeRequest {
+	var req InvokeRequest
+
+	if c.Request.Method == http.MethodPost {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			req = invokeRequestFromQuery(c)
+		}
+	} else {
+		req = invokeRequestFromQuery(c)
 	}
 
-	h.handleForwardRequest(c, builder, startTime)
+	// query 中的 stream 优先级更低，但 body 没显式设置时仍然让它生效
+	if !req.Stream {
+		if v := c.Query("stream"); v != "" {
+			req.Stream = parseBoolQuery(v)
+		}
+	}
+	return req
+}
+
+func invokeRequestFromQuery(c *gin.Context) InvokeRequest {
+	return InvokeRequest{
+		Group:          c.Query("group"),
+		ClientID:       c.Query("clientId"),
+		ConstantInvoke: c.Query("constantInvoke"),
+		Action:         c.Query("action"),
+		Stream:         parseBoolQuery(c.Query("stream")),
+	}
 }
 
 // parseBoolQuery 把 query 中的 stream 字符串转 bool（"1"/"true"/"yes"/"on"）
@@ -255,11 +249,22 @@ type InvokeBuilder struct {
 	Group          string
 	ClientID       string
 	ConstantInvoke string
-	AccessToken    string
 	Action         string
 	Params         interface{}
 	Timeout        time.Duration
 	Stream         bool
+}
+
+func newInvokeBuilder(req *InvokeRequest) *InvokeBuilder {
+	return &InvokeBuilder{
+		Group:          req.Group,
+		ClientID:       req.ClientID,
+		ConstantInvoke: req.ConstantInvoke,
+		Action:         req.Action,
+		Params:         req.Params,
+		Timeout:        time.Duration(req.Timeout) * time.Second,
+		Stream:         req.Stream,
+	}
 }
 
 func (b *InvokeBuilder) BuildRequestData() (string, interface{}, error) {
@@ -291,7 +296,6 @@ func (b *InvokeBuilder) GetMetricAPI(action string) string {
 func (b *InvokeBuilder) GetGroup() string          { return b.Group }
 func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
-func (b *InvokeBuilder) GetAccessToken() string    { return b.AccessToken }
 func (b *InvokeBuilder) IsStream() bool            { return b.Stream }
 
 // handleForwardRequest 把 RequestBuilder 描述的请求转发到 Rpc 客户端。
@@ -310,7 +314,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		BusinessError(c, "group parameter required")
 		return
 	}
-	if !h.authorizeRegisteredGroupAccess(c, group, builder.GetAccessToken()) {
+	if !h.authorizeRegisteredGroupAccess(c, group) {
 		return
 	}
 	if h.rejectIdleInvoke(builder, constantInvoke) {
@@ -389,6 +393,31 @@ func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group 
 	targetClient *client.RpcClient, sequence string, reqDataJSON []byte,
 	timeout time.Duration, startTime time.Time, reqAction string) {
 
+	resp, ok := h.dispatchInvokeRequest(c, group, targetClient, sequence, reqDataJSON, timeout)
+	if !ok {
+		return
+	}
+	if resp == nil {
+		// ctx 超时分支已写过响应包络并记录了 metric
+		h.recordInvokeMetric(builder, group, reqAction, "timeout", startTime)
+		return
+	}
+	h.renderUnaryResponse(c, builder, group, targetClient, resp, reqAction, startTime)
+}
+
+// dispatchInvokeRequest 统一处理 "Add + send + wait" 三步:
+//   - 发送失败时 Remove + MarkFailure + 写错误包络, 返回 (nil, false)
+//   - ctx 超时分支: Remove + MarkFailure + 写错误包络, 返回 (nil, true) (调用者仍可补埋点)
+//   - 正常返回: 写入 *forwarder.InvokeResponse 和 ok=true
+func (h *APIHandler) dispatchInvokeRequest(
+	c *gin.Context,
+	group string,
+	targetClient *client.RpcClient,
+	sequence string,
+	reqDataJSON []byte,
+	timeout time.Duration,
+) (*forwarder.InvokeResponse, bool) {
+
 	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
@@ -396,7 +425,7 @@ func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group 
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
 		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
-		return
+		return nil, false
 	}
 	logger.Infof("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 
@@ -417,10 +446,10 @@ func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group 
 	case <-ctx.Done():
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
-		h.recordInvokeMetric(builder, group, reqAction, "timeout", startTime)
 		h.writeForwardError(c, group, targetClient.ClientID, "Request timeout")
+		return nil, true
 	case resp := <-responseChan:
-		h.renderUnaryResponse(c, builder, group, targetClient, resp, reqAction, startTime)
+		return resp, true
 	}
 }
 
@@ -512,7 +541,18 @@ func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg stri
 	})
 }
 
-func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, token string) bool {
+// authorizeRegisteredGroupAccess 校验当前请求对已注册 (group_config 存在) 分组的访问权限。
+//
+// 鉴权链路:
+//   - 调用方应先经 middleware.AuthMiddleware 鉴权, 用户信息在 context 中
+//     (key = middleware.ContextUserKey)。
+//   - 若分组匿名 (group_config 缺失), 放行。
+//   - 若当前请求未携带任何用户凭证 (匿名调用) 且分组是注册分组, 拒绝。
+//   - 否则要求当前用户是管理员或 group_config 的归属用户。
+//
+// 原版本同时支持调用方在 body/query 中传 sekiro_token 解析用户 — 已被删除, 鉴权
+// 入口统一收敛到中间件, 业务层不再做 token 解析。
+func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName string) bool {
 	db := database.GetDB()
 	if db == nil {
 		return true
@@ -537,11 +577,8 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, t
 		return true
 	}
 
-	if token == "" {
-		token = middleware.ExtractAuthTokenFromRequest(c)
-	}
-	user, err := middleware.FindUserByToken(token)
-	if err != nil {
+	user, ok := middleware.GetCurrentUser(c)
+	if !ok || user == nil {
 		BusinessUnauthorized(c, "registered group requires a valid sekiro token")
 		return false
 	}
@@ -551,7 +588,6 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName, t
 		return false
 	}
 
-	c.Set(middleware.ContextUserKey, user)
 	return true
 }
 
@@ -604,8 +640,15 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 	return filtered, nil
 }
 
-func resolveAccessToken(c *gin.Context) string {
-	return middleware.ExtractAuthTokenFromRequest(c)
+// writeSSEHeaders 把 HTTP 响应头切到 text/event-stream 模式。
+// 调用者需要自行 Flush() 头(常见用法: 拿 http.Flusher 后立即 Flush)。
+func writeSSEHeaders(c *gin.Context) {
+	header := c.Writer.Header()
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("X-Accel-Buffering", "no")
+	header.Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
 }
 
 // streamSSEResponse 把 StreamRecord 的 chunk 通过 chunked HTTP 以 text/event-stream 输出。
@@ -623,11 +666,7 @@ func (h *APIHandler) streamSSEResponse(
 	startTime time.Time,
 	reqAction string,
 ) {
-	c.Writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.WriteHeader(http.StatusOK)
+	writeSSEHeaders(c)
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
