@@ -398,12 +398,10 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 		Status: msg.Status,
 	}
 
-	if msg.Status >= 0 {
-		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+	if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+		if msg.Status >= 0 {
 			sc.MarkSuccess()
-		}
-	} else {
-		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
+		} else {
 			sc.MarkFailure()
 		}
 	}

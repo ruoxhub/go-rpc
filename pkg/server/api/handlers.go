@@ -194,16 +194,6 @@ func parseBoolQuery(v string) bool {
 	return false
 }
 
-// marshalJSON is a helper function for JSON marshaling
-func marshalJSON(v interface{}) ([]byte, error) {
-	return json.Marshal(v)
-}
-
-// unmarshalJSON is a helper function for JSON unmarshaling
-func unmarshalJSON(data []byte, v interface{}) error {
-	return json.Unmarshal(data, v)
-}
-
 func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
 	group := h.clientManager.GetGroup(groupName)
 	if group == nil {
@@ -339,7 +329,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		return
 	}
 
-	reqDataJSON, err := marshalJSON(map[string]interface{}{
+	reqDataJSON, err := json.Marshal(map[string]interface{}{
 		"action": reqAction,
 		"params": reqParams,
 	})
@@ -492,7 +482,7 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 	}
 
 	var responseMap map[string]interface{}
-	if err := unmarshalJSON(resp.Data, &responseMap); err == nil {
+	if err := json.Unmarshal(resp.Data, &responseMap); err == nil {
 		result := gin.H{
 			"status":   resp.Status,
 			"message":  message,
@@ -735,19 +725,17 @@ func (h *APIHandler) streamSSEResponse(
 			if len(chunk.Data) == 0 {
 				continue
 			}
-			var payload string
-			if err := json.Unmarshal(chunk.Data, &payload); err == nil {
-				if _, err := c.Writer.Write([]byte(payload)); err != nil {
-					h.timeoutManager.RemoveStream(rec.ID)
-					streamErr = "write failed: " + err.Error()
-					return
-				}
-			} else {
-				if _, err := c.Writer.Write(chunk.Data); err != nil {
-					h.timeoutManager.RemoveStream(rec.ID)
-					streamErr = "write failed: " + err.Error()
-					return
-				}
+			// chunk.Data 是 json.RawMessage：
+			//   - 客户端发的 data 通常是 JSON 字符串字面量（带引号），需要 Unmarshal 成 string 再写
+			//   - 如果客户端发了非字符串（对象/数组），退化成原样字节透传
+			payload, ok := decodeStreamBytes(chunk.Data)
+			if !ok {
+				continue
+			}
+			if _, err := c.Writer.Write(payload); err != nil {
+				h.timeoutManager.RemoveStream(rec.ID)
+				streamErr = "write failed: " + err.Error()
+				return
 			}
 			flusher.Flush()
 		}
@@ -759,4 +747,19 @@ func writeSSEErrorEvent(w io.Writer, msg string) {
 	safe := strings.ReplaceAll(msg, "\r", " ")
 	safe = strings.ReplaceAll(safe, "\n", " ")
 	fmt.Fprintf(w, "event: error\ndata: %s\n\n", safe)
+}
+
+// decodeStreamBytes 把 chunk.Data (json.RawMessage) 还原成 SSE 文本字节。
+// 客户端通常把 SSE 文本编码为 JSON 字符串字面量（带引号），需要 Unmarshal
+// 成 string；如果发的是非字符串（对象/数组），退化成原样字节透传。
+// 返回 (nil, false) 表示 chunk 是空数据。
+func decodeStreamBytes(data []byte) ([]byte, bool) {
+	if len(data) == 0 {
+		return nil, false
+	}
+	var payload string
+	if err := json.Unmarshal(data, &payload); err == nil {
+		return []byte(payload), true
+	}
+	return data, true
 }

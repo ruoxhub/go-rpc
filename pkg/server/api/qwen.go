@@ -21,7 +21,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	json "github.com/goccy/go-json"
-	"github.com/mrh30000/go-rpc/internal/toolcall"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/server/client"
 	"github.com/mrh30000/go-rpc/pkg/server/forwarder"
@@ -107,7 +106,7 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 		"chatId":   chatID,
 	}
 	chatSeq := fmt.Sprintf("%s-%s-%d", qwenGroup, qwenActionChat, time.Now().UnixNano())
-	chatReqJSON, err := marshalJSON(map[string]interface{}{
+	chatReqJSON, err := json.Marshal(map[string]interface{}{
 		"action": qwenActionChat,
 		"params": chatReqParams,
 	})
@@ -150,7 +149,7 @@ func extractToolNames(toolsRaw any) []string {
 // streaming chatCompletions invocation.
 func (h *APIHandler) qwenCreateChat(ctx context.Context, target *client.RpcClient, model string) (string, error) {
 	seq := fmt.Sprintf("%s-%s-%d", qwenGroup, qwenActionCreateChat, time.Now().UnixNano())
-	reqJSON, err := marshalJSON(map[string]interface{}{
+	reqJSON, err := json.Marshal(map[string]interface{}{
 		"action": qwenActionCreateChat,
 		"params": map[string]interface{}{"modelId": model},
 	})
@@ -336,7 +335,7 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			if !ok {
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					target.MarkFailure()
-					writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
+					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
 					if !holdback.finished {
 						writeSSEDone(c)
 					}
@@ -348,7 +347,7 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			}
 			if chunk.Error != "" {
 				target.MarkFailure()
-				writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
+				writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
 				writeSSEDone(c)
 				return
 			}
@@ -370,7 +369,7 @@ func (h *APIHandler) qwenStreamToOpenAI(
 				}
 				if ev.Error != "" {
 					target.MarkFailure()
-					writeSSEData(c, openAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
+					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
 					writeSSEDone(c)
 					return
 				}
@@ -439,11 +438,11 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 
 	emitFinal := func() {
 		full := builder.String()
-		if resp, hit := buildQwenToolCallResponse(chatID, model, full, startTime, toolNames, toolsRaw); hit {
+		if resp, hit := buildOpenAIToolCallResponse(chatID, model, full, startTime, toolNames, toolsRaw); hit {
 			c.JSON(http.StatusOK, resp)
 			return
 		}
-		c.JSON(http.StatusOK, openAIChatResponse(chatID, model, startTime, full))
+		c.JSON(http.StatusOK, buildOpenAIChatResponse(chatID, model, startTime, full))
 	}
 
 	for {
@@ -496,76 +495,6 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 				return
 			}
 		}
-	}
-}
-
-// buildQwenToolCallResponse 检查累积的 content 是否含 DSML 工具调用块，
-// 命中则返回带 tool_calls 的 chat.completion 包装；否则返回 (nil, false)。
-func buildQwenToolCallResponse(id, model, content string, startTime time.Time, toolNames []string, toolsRaw any) (map[string]interface{}, bool) {
-	parsed := toolcall.ParseToolCallsDetailed(content, toolNames)
-	if len(parsed.Calls) == 0 {
-		return nil, false
-	}
-	head := strings.Index(content, dsmlOpener)
-	if head < 0 {
-		head = len(content)
-	}
-	tcs := toolcall.FormatOpenAIToolCalls(parsed.Calls, toolsRaw)
-	return map[string]interface{}{
-		"id":      id,
-		"object":  "chat.completion",
-		"created": startTime.Unix(),
-		"model":   model,
-		"choices": []map[string]interface{}{
-			{
-				"index": 0,
-				"message": map[string]interface{}{
-					"role":       "assistant",
-					"content":    content[:head],
-					"tool_calls": tcs,
-				},
-				"finish_reason": "tool_calls",
-			},
-		},
-	}, true
-}
-
-func openAIChatResponse(id, model string, startTime time.Time, content string) map[string]interface{} {
-	return map[string]interface{}{
-		"id":      id,
-		"object":  "chat.completion",
-		"created": startTime.Unix(),
-		"model":   model,
-		"choices": []map[string]interface{}{
-			{
-				"index": 0,
-				"message": map[string]interface{}{
-					"role":    "assistant",
-					"content": content,
-				},
-				"finish_reason": "stop",
-			},
-		},
-	}
-}
-
-func openAIErrorChunk(id, model string, startTime time.Time, message string) map[string]interface{} {
-	return map[string]interface{}{
-		"id":      id,
-		"object":  "chat.completion.chunk",
-		"created": startTime.Unix(),
-		"model":   model,
-		"choices": []map[string]interface{}{
-			{
-				"index":         0,
-				"delta":         map[string]interface{}{},
-				"finish_reason": "error",
-			},
-		},
-		"error": map[string]interface{}{
-			"message": message,
-			"type":    "sekiro_error",
-		},
 	}
 }
 

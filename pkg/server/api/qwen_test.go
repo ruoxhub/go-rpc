@@ -2,7 +2,7 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -326,11 +326,10 @@ func TestQwenSSEParser_CommentsAndEmptyData(t *testing.T) {
 	}
 }
 
-// jsonUnmarshal is a thin wrapper kept here (instead of importing goccy
-// directly in the test file) so the test stays in the same JSON dialect as
-// the production handler — they share the package's already-imported encoder.
+// jsonUnmarshal delegates to the same goccy/go-json decoder the production
+// handler uses, so the test stays in the same JSON dialect.
 func jsonUnmarshal(data []byte, v interface{}) error {
-	return unmarshalJSON(data, v)
+	return json.Unmarshal(data, v)
 }
 
 func head(s string, n int) string {

@@ -140,7 +140,7 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		"model":    openAiReq.Model,
 		"chatId":   chatID,
 	}
-	reqDataJSON, err := marshalJSON(map[string]interface{}{
+	reqDataJSON, err := json.Marshal(map[string]interface{}{
 		"action": qwenActionChat,
 		"params": chatReqParams,
 	})
@@ -254,7 +254,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 			if !ok {
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					targetClient.MarkFailure()
-					writeSSEData(c, normalizeChatCompletionErrorChunk(req, sequence, errMsg, startTime))
+					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, errMsg))
 					if !holdback.finished {
 						writeSSEDone(c)
 					}
@@ -266,7 +266,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 			}
 			if chunk.Error != "" {
 				targetClient.MarkFailure()
-				writeSSEData(c, normalizeChatCompletionErrorChunk(req, sequence, chunk.Error, startTime))
+				writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, chunk.Error))
 				writeSSEDone(c)
 				return
 			}
@@ -287,7 +287,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				}
 				if ev.Error != "" {
 					targetClient.MarkFailure()
-					writeSSEData(c, normalizeChatCompletionErrorChunk(req, sequence, ev.Error, startTime))
+					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, ev.Error))
 					writeSSEDone(c)
 					return
 				}
@@ -375,25 +375,26 @@ func normalizeChatCompletionResponse(req *ChatCompletionRequest, data []byte, se
 			}
 			if content, ok := rawMap["content"]; ok {
 				if s, isStr := content.(string); isStr {
-					if resp, hit := buildToolCallChatResponse(req, id, s, startTime); hit {
+					if resp, hit := buildOpenAIToolCallResponse(id, req.Model, s, startTime, req.ToolNames, req.ToolsRaw); hit {
 						return resp
 					}
 				}
-				return chatCompletionResponse(req, id, content, startTime)
+				return buildOpenAIChatResponse(id, req.Model, startTime, content)
 			}
 		}
 		return raw
 	}
-	if resp, hit := buildToolCallChatResponse(req, fallbackID, string(data), startTime); hit {
+	if resp, hit := buildOpenAIToolCallResponse(fallbackID, req.Model, string(data), startTime, req.ToolNames, req.ToolsRaw); hit {
 		return resp
 	}
-	return chatCompletionResponse(req, fallbackID, string(data), startTime)
+	return buildOpenAIChatResponse(fallbackID, req.Model, startTime, string(data))
 }
 
-// buildToolCallChatResponse 检查 content 里是否含 DSML 工具调用块，
-// 命中则返回带 tool_calls 的 chat.completion 包装；否则返回 (nil, false)。
-func buildToolCallChatResponse(req *ChatCompletionRequest, id, content string, startTime time.Time) (map[string]interface{}, bool) {
-	parsed := toolcall.ParseToolCallsDetailed(content, req.ToolNames)
+// buildOpenAIToolCallResponse checks content for DSML tool call blocks and wraps
+// them in a chat.completion with tool_calls. Shared across chat_completions and qwen paths.
+// Returns (nil, false) if no tool calls are found.
+func buildOpenAIToolCallResponse(id, model, content string, startTime time.Time, toolNames []string, toolsRaw any) (map[string]interface{}, bool) {
+	parsed := toolcall.ParseToolCallsDetailed(content, toolNames)
 	if len(parsed.Calls) == 0 {
 		return nil, false
 	}
@@ -401,12 +402,12 @@ func buildToolCallChatResponse(req *ChatCompletionRequest, id, content string, s
 	if head < 0 {
 		head = len(content)
 	}
-	tcs := toolcall.FormatOpenAIToolCalls(parsed.Calls, req.ToolsRaw)
+	tcs := toolcall.FormatOpenAIToolCalls(parsed.Calls, toolsRaw)
 	return map[string]interface{}{
 		"id":      id,
 		"object":  "chat.completion",
 		"created": startTime.Unix(),
-		"model":   req.Model,
+		"model":   model,
 		"choices": []map[string]interface{}{
 			{
 				"index": 0,
@@ -439,12 +440,14 @@ func normalizeChatCompletionChunk(req *ChatCompletionRequest, data []byte, seque
 	return chatCompletionChunk(req, sequence, string(data), nil, startTime)
 }
 
-func normalizeChatCompletionErrorChunk(req *ChatCompletionRequest, sequence, message string, startTime time.Time) interface{} {
+// buildOpenAIErrorChunk constructs a chat.completion.chunk error frame.
+// Shared across chat_completions and qwen paths.
+func buildOpenAIErrorChunk(id, model string, startTime time.Time, message string) map[string]interface{} {
 	return map[string]interface{}{
-		"id":      "chatcmpl-" + sequence,
+		"id":      id,
 		"object":  "chat.completion.chunk",
 		"created": startTime.Unix(),
-		"model":   req.Model,
+		"model":   model,
 		"choices": []map[string]interface{}{
 			{
 				"index":         0,
@@ -459,12 +462,14 @@ func normalizeChatCompletionErrorChunk(req *ChatCompletionRequest, sequence, mes
 	}
 }
 
-func chatCompletionResponse(req *ChatCompletionRequest, sequence string, content interface{}, startTime time.Time) map[string]interface{} {
+// buildOpenAIChatResponse constructs a standard chat.completion response.
+// Shared across chat_completions and qwen paths.
+func buildOpenAIChatResponse(id, model string, startTime time.Time, content interface{}) map[string]interface{} {
 	return map[string]interface{}{
-		"id":      "chatcmpl-" + sequence,
+		"id":      id,
 		"object":  "chat.completion",
 		"created": startTime.Unix(),
-		"model":   req.Model,
+		"model":   model,
 		"choices": []map[string]interface{}{
 			{
 				"index": 0,

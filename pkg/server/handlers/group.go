@@ -152,25 +152,31 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	// Use direct DB for transaction
 	db := database.GetDB()
 	tx := db.Begin()
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback()
+		}
+	}()
 
 	txRepo := h.groupRepo.WithTx(tx)
-	if err := txRepo.DeleteDevicesByGroup(req.GroupName); err != nil {
-		tx.Rollback()
-		InternalError(c, err.Error())
-		return
+	steps := []struct {
+		name string
+		fn   func() error
+	}{
+		{"delete devices", func() error { return txRepo.DeleteDevicesByGroup(req.GroupName) }},
+		{"delete actions", func() error { return txRepo.DeleteActionsByGroup(req.GroupName) }},
+		{"delete group", func() error { return txRepo.DeleteGroup(req.GroupName) }},
 	}
-	if err := txRepo.DeleteActionsByGroup(req.GroupName); err != nil {
-		tx.Rollback()
-		InternalError(c, err.Error())
-		return
-	}
-	if err := txRepo.DeleteGroup(req.GroupName); err != nil {
-		tx.Rollback()
-		InternalError(c, err.Error())
-		return
+	for _, step := range steps {
+		if err := step.fn(); err != nil {
+			InternalError(c, step.name+": "+err.Error())
+			return
+		}
 	}
 
 	tx.Commit()
+	committed = true
 
 	middleware.InvalidateGroup(req.GroupName)
 
@@ -431,20 +437,15 @@ func (h *GroupHandler) DisableDevice(c *gin.Context) {
 		return
 	}
 
+	activeTime := time.Now()
 	if req.Disable {
-		if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
-			"last_active_time": time.Now().Add(-24 * time.Hour),
-		}); err != nil {
-			InternalError(c, err.Error())
-			return
-		}
-	} else {
-		if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
-			"last_active_time": time.Now(),
-		}); err != nil {
-			InternalError(c, err.Error())
-			return
-		}
+		activeTime = activeTime.Add(-24 * time.Hour)
+	}
+	if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
+		"last_active_time": activeTime,
+	}); err != nil {
+		InternalError(c, err.Error())
+		return
 	}
 
 	auditDisableDevice(c, req.GroupName, req.DeviceID)
