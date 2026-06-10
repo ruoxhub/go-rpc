@@ -16,6 +16,51 @@
 
 ---
 
+## Implementation Status（2026-06-10）
+
+**Overall:** 已实施。`pkg/server/` 已移除，服务端子包已扁平化到 `pkg/`，SDK 已迁移到 `pkg/client/sdk/`，`api/` + `handlers/` 已合并为 `pkg/handler/`，bootstrap 已合并到根目录 `main.go`。
+
+**Completed scope:**
+
+- Task 1: `pkg/server/transport` → `pkg/transport`
+- Task 2: root `utils/` → `pkg/utils`
+- Task 3: SDK `pkg/client` → `pkg/client/sdk`
+- Task 4: server client management `pkg/server/client` → `pkg/client`
+- Task 5: `config` / `flow` / `forwarder` promoted to top-level `pkg/`
+- Task 6: `middleware` / `router` / `alert` / `metrics` promoted to top-level `pkg/`
+- Task 7: `websocket` promoted to `pkg/websocket`
+- Task 8: `api` + `handlers` merged into `pkg/handler`
+- Task 9: `DefaultGroupActions` deduplicated into `pkg/model/group.go`
+- Task 10: `pkg/server/bootstrap.go` merged into root `main.go`; `pkg/server/` removed
+- Task 11: structural validation completed
+
+**Intentional deviations from original checklist:**
+
+- No commits were created. The original plan included per-task commits, but the implementation was left as working-tree changes because no explicit commit request was given.
+- `login.go` was not converted from direct `database.GetDB()` calls to repository injection. That change is behavioral and broader than the package restructure; related direct DB access also exists in `anonymous.go`, `group.go`, and invoke authorization paths.
+- `handler.HTTPConfig` replaced the original `api.Config` name to avoid collision with the root server `Config`.
+- `pkg/client/sdk` keeps Go package name `client`, so existing SDK example code can still use `client.NewRpcClient` when importing `github.com/mrh30000/go-rpc/pkg/client/sdk`.
+- README SDK imports were updated to `pkg/client/sdk`.
+- Merged handler tests now isolate `database.DB` in DB-dependent login/register tests so skipped PostgreSQL setup does not poison Qwen tests in the same package.
+
+**Verification results:**
+
+- `go build ./...` — PASS
+- `go vet ./...` — PASS
+- `go test ./pkg/handler -run TestHandleQwenChatCompletions_NoClientAvailable -count=1` — PASS
+- `go test ./...` — FAIL only because Qwen fixture files are missing from the repo root:
+  - `qwenai_completions_response.txt`
+  - `completions_request_body.json`
+
+**Structural checks:**
+
+- `pkg/server/` removed.
+- No Go imports reference `github.com/mrh30000/go-rpc/pkg/server/...`.
+- `pkg/transport` has no internal `pkg/` dependencies.
+- `pkg/client/sdk` does not depend on server-side packages.
+
+---
+
 ## Chunk 1: 基础设施层迁移（Task 1-3）
 
 ### Task 1: 提升 transport/ 到 pkg/transport/
@@ -26,7 +71,7 @@
 - Move: `pkg/server/transport/*` → `pkg/transport/`
 - Modify imports in: `pkg/client/client.go`, `pkg/client/invoker.go`, `pkg/client/client_test.go`, `pkg/server/client/client.go`, `pkg/server/websocket/handler.go`, `pkg/server/websocket/handler_test.go`, `pkg/server/websocket/stream_test.go`, `pkg/server/api/websocket.go`, `pkg/server/api/websocket_test.go`
 
-- [ ] **Step 1: 创建目标目录并移动文件**
+- [x] **Step 1: 创建目标目录并移动文件**
 
 ```bash
 mkdir -p pkg/transport
@@ -35,11 +80,11 @@ git mv pkg/server/transport/tcp_conn.go pkg/transport/
 git mv pkg/server/transport/ws_conn.go pkg/transport/
 ```
 
-- [ ] **Step 2: package 声明无需修改**
+- [x] **Step 2: package 声明无需修改**
 
 `transport` 包名不变（原声明为 `package transport`），无需修改。
 
-- [ ] **Step 3: 更新所有导入路径**
+- [x] **Step 3: 更新所有导入路径**
 
 在所有引用 `pkg/server/transport` 的 `.go` 文件中执行替换：
 
@@ -47,7 +92,7 @@ git mv pkg/server/transport/ws_conn.go pkg/transport/
 find . -name "*.go" -exec grep -l 'pkg/server/transport' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/transport|github.com/mrh30000/go-rpc/pkg/transport|g'
 ```
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 ```bash
 go build ./...
@@ -55,7 +100,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 5: 测试验证**
+- [x] **Step 5: 测试验证**
 
 ```bash
 go test ./pkg/transport/... ./pkg/client/... ./pkg/server/...
@@ -84,7 +129,7 @@ dependency where pkg/client (SDK) imported a server sub-package."
 - Move: `utils/file.go` → `pkg/utils/file.go`
 - Delete: `utils/` directory
 
-- [ ] **Step 1: 移动文件**
+- [x] **Step 1: 移动文件**
 
 注意：根目录 `utils/` 的 package 声明是 `package utils`，与 `pkg/utils/password` 和 `pkg/utils/traceid` 不同层级，不会冲突。
 
@@ -94,7 +139,7 @@ git mv utils/file.go pkg/utils/file.go
 rmdir utils
 ```
 
-- [ ] **Step 2: 编译验证**
+- [x] **Step 2: 编译验证**
 
 ```bash
 go build ./...
@@ -124,7 +169,7 @@ utils/file.go were unused; now co-located with password/ and traceid/."
 - Move: `pkg/client/client_test.go` → `pkg/client/sdk/client_test.go`（如存在）
 - Move: `pkg/client/invoker_test.go` → `pkg/client/sdk/invoker_test.go`
 
-- [ ] **Step 1: 创建目标目录并移动文件**
+- [x] **Step 1: 创建目标目录并移动文件**
 
 ```bash
 mkdir -p pkg/client/sdk
@@ -134,7 +179,7 @@ git mv pkg/client/client_test.go pkg/client/sdk/ 2>/dev/null || true
 git mv pkg/client/invoker_test.go pkg/client/sdk/
 ```
 
-- [ ] **Step 2: 更新 package 声明**
+- [x] **Step 2: 更新 package 声明**
 
 修改移动后的文件，将 `package client` 改为 `package sdk`：
 
@@ -146,7 +191,7 @@ sed -i 's/^package client$/package sdk/' pkg/client/sdk/invoker_test.go
 sed -i 's/^package client_test$/package sdk_test/' pkg/client/sdk/client_test.go 2>/dev/null || true
 ```
 
-- [ ] **Step 3: 更新导入路径**
+- [x] **Step 3: 更新导入路径**
 
 原 SDK 不被项目内任何 Go 代码导入（仅 README.md 提及），但需更新移动后文件内部的 import（如果有自引用）：
 
@@ -159,7 +204,7 @@ grep -r 'github.com/mrh30000/go-rpc/pkg/client' pkg/client/sdk/ || echo "No self
 
 同时更新 `pkg/client/sdk/` 内文件中对 `pkg/server/transport` 的引用（如果 Task 1 已执行，这些应该已经被更新为 `pkg/transport`）。
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 ```bash
 go build ./...
@@ -167,7 +212,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 5: 测试验证**
+- [x] **Step 5: 测试验证**
 
 ```bash
 go test ./pkg/client/sdk/...
@@ -200,7 +245,7 @@ client management package (from pkg/server/client) at pkg/client."
 - Move: `pkg/server/client/*_test.go` → `pkg/client/`（如存在）
 - Modify imports in: `pkg/server/router/strategy.go`, `pkg/server/router/strategy_test.go`, `pkg/server/api/handlers.go`, `pkg/server/api/handlers_test.go`, `pkg/server/api/chat_completions.go`, `pkg/server/api/chat_completions_test.go`, `pkg/server/websocket/handler.go`, `pkg/server/websocket/handler_test.go`, `pkg/server/bootstrap.go`, `pkg/server/bootstrap_test.go`
 
-- [ ] **Step 1: 移动文件**
+- [x] **Step 1: 移动文件**
 
 ```bash
 git mv pkg/server/client/client.go pkg/client/
@@ -210,17 +255,17 @@ git mv pkg/server/client/manager.go pkg/client/
 git mv pkg/server/client/*_test.go pkg/client/ 2>/dev/null || true
 ```
 
-- [ ] **Step 2: 更新导入路径**
+- [x] **Step 2: 更新导入路径**
 
 ```bash
 find . -name "*.go" -exec grep -l 'pkg/server/client' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/client|github.com/mrh30000/go-rpc/pkg/client|g'
 ```
 
-- [ ] **Step 3: 处理 import 别名冲突**
+- [x] **Step 3: 处理 import 别名冲突**
 
 `bootstrap.go` 中有 `pkg/server/client` 的导入。移动后导入路径变为 `pkg/client`，不需要别名。但如果有文件同时导入 `pkg/client`（旧 SDK 路径）和 `pkg/server/client`，需要更新为 `pkg/client/sdk` 和 `pkg/client`。由于 SDK 已移到 `pkg/client/sdk`（Task 3），不应有冲突。
 
-- [ ] **Step 4: 编译验证**
+- [x] **Step 4: 编译验证**
 
 ```bash
 go build ./...
@@ -228,7 +273,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 5: 测试验证**
+- [x] **Step 5: 测试验证**
 
 ```bash
 go test ./pkg/client/... ./pkg/server/...
@@ -258,7 +303,7 @@ pkg/client alongside the SDK at pkg/client/sdk."
 - Move: `pkg/server/forwarder/*` → `pkg/forwarder/`
 - Modify imports in: `pkg/server/middleware/ratelimit.go`, `pkg/server/api/handlers.go`, `pkg/server/websocket/handler.go`, `pkg/server/bootstrap.go`
 
-- [ ] **Step 1: 移动文件**
+- [x] **Step 1: 移动文件**
 
 ```bash
 mkdir -p pkg/config pkg/flow pkg/forwarder
@@ -273,7 +318,7 @@ git mv pkg/server/flow/*_test.go pkg/flow/ 2>/dev/null || true
 git mv pkg/server/forwarder/*_test.go pkg/forwarder/ 2>/dev/null || true
 ```
 
-- [ ] **Step 2: 更新导入路径**
+- [x] **Step 2: 更新导入路径**
 
 ```bash
 find . -name "*.go" -exec grep -l 'pkg/server/config' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/config|github.com/mrh30000/go-rpc/pkg/config|g'
@@ -283,7 +328,7 @@ find . -name "*.go" -exec grep -l 'pkg/server/forwarder' {} \; | xargs sed -i 's
 
 注意：`bootstrap.go` 中使用了别名 `pkgconfig "github.com/mrh30000/go-rpc/pkg/server/config"`。更新后应改为 `pkgconfig "github.com/mrh30000/go-rpc/pkg/config"`，或者直接去掉别名改为 `"github.com/mrh30000/go-rpc/pkg/config"`（因为不再与 `internal/config` 冲突时不需要别名）。检查 bootstrap.go 是否同时导入了 `internal/config`：如果是，保留别名 `pkgconfig`。
 
-- [ ] **Step 3: 编译验证**
+- [x] **Step 3: 编译验证**
 
 ```bash
 go build ./...
@@ -291,7 +336,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 4: 测试验证**
+- [x] **Step 4: 测试验证**
 
 ```bash
 go test ./pkg/config/... ./pkg/flow/... ./pkg/forwarder/... ./pkg/server/...
@@ -320,7 +365,7 @@ Move pkg/server/{config,flow,forwarder} to pkg/{config,flow,forwarder}."
 - Move: `pkg/server/alert/*` → `pkg/alert/`
 - Move: `pkg/server/metrics/*` → `pkg/metrics/`
 
-- [ ] **Step 1: 移动文件**
+- [x] **Step 1: 移动文件**
 
 ```bash
 mkdir -p pkg/middleware pkg/router pkg/alert pkg/metrics
@@ -344,7 +389,7 @@ git mv pkg/server/metrics/collector.go pkg/metrics/
 git mv pkg/server/metrics/*_test.go pkg/metrics/ 2>/dev/null || true
 ```
 
-- [ ] **Step 2: 更新导入路径**
+- [x] **Step 2: 更新导入路径**
 
 ```bash
 find . -name "*.go" -exec grep -l 'pkg/server/middleware' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/middleware|github.com/mrh30000/go-rpc/pkg/middleware|g'
@@ -353,7 +398,7 @@ find . -name "*.go" -exec grep -l 'pkg/server/alert' {} \; | xargs sed -i 's|git
 find . -name "*.go" -exec grep -l 'pkg/server/metrics' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/metrics|github.com/mrh30000/go-rpc/pkg/metrics|g'
 ```
 
-- [ ] **Step 3: 编译验证**
+- [x] **Step 3: 编译验证**
 
 ```bash
 go build ./...
@@ -361,7 +406,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 4: 测试验证**
+- [x] **Step 4: 测试验证**
 
 ```bash
 go test ./pkg/middleware/... ./pkg/router/... ./pkg/alert/... ./pkg/metrics/... ./pkg/server/...
@@ -388,7 +433,7 @@ pkg/{middleware,router,alert,metrics}."
 **Files:**
 - Move: `pkg/server/websocket/*` → `pkg/websocket/`
 
-- [ ] **Step 1: 移动文件**
+- [x] **Step 1: 移动文件**
 
 ```bash
 mkdir -p pkg/websocket
@@ -398,13 +443,13 @@ git mv pkg/server/websocket/stream_test.go pkg/websocket/ 2>/dev/null || true
 git mv pkg/server/websocket/handler_benchmark_test.go pkg/websocket/ 2>/dev/null || true
 ```
 
-- [ ] **Step 2: 更新导入路径**
+- [x] **Step 2: 更新导入路径**
 
 ```bash
 find . -name "*.go" -exec grep -l 'pkg/server/websocket' {} \; | xargs sed -i 's|github.com/mrh30000/go-rpc/pkg/server/websocket|github.com/mrh30000/go-rpc/pkg/websocket|g'
 ```
 
-- [ ] **Step 3: 编译验证**
+- [x] **Step 3: 编译验证**
 
 ```bash
 go build ./...
@@ -412,7 +457,7 @@ go build ./...
 
 Expected: BUILD SUCCESS
 
-- [ ] **Step 4: 测试验证**
+- [x] **Step 4: 测试验证**
 
 ```bash
 go test ./pkg/websocket/... ./pkg/server/...
@@ -445,13 +490,13 @@ Move pkg/server/websocket to pkg/websocket."
 - Merge: `api/response.go` + `handlers/response.go` → `handler/response.go`
 - Merge: `handlers/routes.go` 逻辑合并到 `handler/routes.go`
 
-- [ ] **Step 1: 创建目标目录**
+- [x] **Step 1: 创建目标目录**
 
 ```bash
 mkdir -p pkg/handler
 ```
 
-- [ ] **Step 2: 移动 api/ 文件（重命名冲突文件）**
+- [x] **Step 2: 移动 api/ 文件（重命名冲突文件）**
 
 ```bash
 # 直接移动（无命名冲突的文件）
@@ -473,7 +518,7 @@ git mv pkg/server/api/websocket_test.go pkg/handler/websocket_test.go
 git mv pkg/server/api/http_server_test.go pkg/handler/http_server_test.go
 ```
 
-- [ ] **Step 3: 移动 handlers/ 文件**
+- [x] **Step 3: 移动 handlers/ 文件**
 
 ```bash
 git mv pkg/server/handlers/login.go pkg/handler/
@@ -490,7 +535,7 @@ git mv pkg/server/handlers/constants.go pkg/handler/
 git mv pkg/server/handlers/register_test.go pkg/handler/login_test.go
 ```
 
-- [ ] **Step 4: 统一所有移动文件的 package 声明**
+- [x] **Step 4: 统一所有移动文件的 package 声明**
 
 ```bash
 # 原 api/ 文件的 package 声明从 "api" 改为 "handler"
@@ -502,7 +547,7 @@ find pkg/handler -name "*.go" -exec sed -i 's/^package handlers$/package handler
 find pkg/handler -name "*.go" -exec sed -i 's/^package handlers_test$/package handler_test/' {} \;
 ```
 
-- [ ] **Step 5: 合并 response.go — 函数重命名映射与替换**
+- [x] **Step 5: 合并 response.go — 函数重命名映射与替换**
 
 原 `api/response.go` 和 `handlers/response.go` 的函数/类型需要统一重命名。以下是完整的映射表：
 
@@ -644,7 +689,7 @@ type RpcExtraResponse struct {
 git rm pkg/server/handlers/response.go
 ```
 
-- [ ] **Step 6: 更新 handler/ 内部所有文件的 import 路径**
+- [x] **Step 6: 更新 handler/ 内部所有文件的 import 路径**
 
 原 `api/` 文件导入了 `pkg/server/client`、`pkg/server/config`、`pkg/server/forwarder` 等（这些已在 Task 4-6 中移走），以及 `pkg/server/middleware`、`pkg/server/router`、`pkg/server/websocket`。
 
@@ -669,7 +714,7 @@ find pkg/handler -name "*.go" -exec sed -i 's|github.com/mrh30000/go-rpc/pkg/ser
 
 同时，原 `handlers/` 文件中可能导入了同包内的其他文件（如 `handlers.Response`），现在同属 `handler` 包，这些内部引用需要删除（同包不需要 import）。
 
-- [ ] **Step 7: 合并路由注册**
+- [x] **Step 7: 合并路由注册**
 
 将 `handlers/routes.go`（`SetupWebRoutes`）和 `bootstrap.go` 中的路由注册逻辑统一到 `handler/routes.go`。
 
@@ -677,7 +722,7 @@ find pkg/handler -name "*.go" -exec sed -i 's|github.com/mrh30000/go-rpc/pkg/ser
 
 原 `bootstrap.go` 中的路由注册（`registerRoutes` 方法）将在 Task 10 中合并到 `main.go`。
 
-- [ ] **Step 8: 编译验证**
+- [x] **Step 8: 编译验证**
 
 ```bash
 go build ./...
@@ -718,7 +763,7 @@ RpcExtraResponse (external with group/client info)."
 - Modify: `pkg/websocket/handler.go`（删除 DefaultGroupActions，改用 model.DefaultGroupActions）
 - Modify: `pkg/handler/login.go`（将 database.GetDB() 调用改为 Repository 注入）
 
-- [ ] **Step 1: 创建 pkg/model/group.go**
+- [x] **Step 1: 创建 pkg/model/group.go**
 
 ```go
 package model
@@ -728,13 +773,13 @@ package model
 var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}
 ```
 
-- [ ] **Step 2: 更新 handler/constants.go 和 handler/anonymous.go**
+- [x] **Step 2: 更新 handler/constants.go 和 handler/anonymous.go**
 
 删除 `handler/constants.go` 中的 `DefaultGroupActions` 变量定义，保留其他常量（`ClientInactiveThreshold`、`DefaultGroupQPS`、`DefaultDeviceQPS`）。
 
 同时更新 `handler/anonymous.go` 中所有 `DefaultGroupActions` 引用为 `model.DefaultGroupActions`，并确保该文件 import 了 `model` 包。
 
-- [ ] **Step 3: 更新 websocket/handler.go**
+- [x] **Step 3: 更新 websocket/handler.go**
 
 删除本地 `DefaultGroupActions` 定义，将引用改为 `model.DefaultGroupActions`。
 
@@ -742,7 +787,7 @@ var DefaultGroupActions = []string{"invoke", "execJs", "getHtml", "getCookie"}
 
 将 `HandleLogin`、`HandleRegister` 等独立函数中对 `database.GetDB()` 的直接调用改为通过 Repository 接口注入。具体做法：将这些函数从独立函数改为 `Deps` 结构体的方法（与 `UserHandler` 等保持一致），或添加 Repository 参数。
 
-- [ ] **Step 5: 编译验证**
+- [x] **Step 5: 编译验证**
 
 ```bash
 go build ./...
@@ -779,7 +824,7 @@ injection instead of direct database.GetDB() calls."
 - Merge: `pkg/server/bootstrap.go` → `main.go`
 - Delete: `pkg/server/` directory
 
-- [ ] **Step 1: 分析 bootstrap.go 的完整符号清单**
+- [x] **Step 1: 分析 bootstrap.go 的完整符号清单**
 
 `bootstrap.go` 导出了以下符号，全部需要合并到 `main.go`：
 
@@ -829,7 +874,7 @@ sed -i 's/handler\.DefaultConfig/handler.DefaultHTTPConfig/g' main.go
 
 **bootstrap_test.go 处理策略**：`bootstrap_test.go` 中的测试依赖 `server.Config` 和 `server.NewServer`。合并到 `main.go` 后，由于 Go 的 `main` 包不支持外部导入，将测试改为集成测试或移到 `pkg/` 下的独立测试包。具体做法：如果测试只验证 `NewServer` 和 `Start` 的基本行为，可以保留在 `main_test.go` 中（`package main` 的测试文件可以测试 main 包内的函数）。
 
-- [ ] **Step 2: 重写 main.go**
+- [x] **Step 2: 重写 main.go**
 
 将 `main.go` 和 `bootstrap.go` 的内容合并。`main.go` 的新内容包含：
 1. 原 `main.go` 的 flag 解析逻辑
@@ -863,7 +908,7 @@ import (
 
 注意：`main.go` 中引用 `handler.Deps`、`handler.SetupWebRoutes`（原 `handlers.Deps`、`handlers.SetupWebRoutes`）和 `handler.NewHTTPServer`（原 `api.NewHTTPServer`）、`handler.NewAPIHandler`（原 `api.NewAPIHandler`）等。
 
-- [ ] **Step 3: 更新 main.go 中对 api/handlers 的引用**
+- [x] **Step 3: 更新 main.go 中对 api/handlers 的引用**
 
 合并后，原来的 `api.HTTPServer`、`api.APIHandler`、`api.Config` 等类型变成了 `handler.HTTPServer`、`handler.APIHandler`、`handler.Config`。
 
@@ -871,7 +916,7 @@ import (
 
 原来的 `handlers.HandleLogin`、`handlers.HandleRegister` 等变成了 `handler.HandleLogin`、`handler.HandleRegister`。
 
-- [ ] **Step 4: 删除 pkg/server/ 目录**
+- [x] **Step 4: 删除 pkg/server/ 目录**
 
 ```bash
 git rm pkg/server/bootstrap.go
@@ -881,7 +926,7 @@ rmdir pkg/server 2>/dev/null || true
 find pkg/server -type f 2>/dev/null
 ```
 
-- [ ] **Step 5: 编译验证**
+- [x] **Step 5: 编译验证**
 
 ```bash
 go build ./...
@@ -897,7 +942,7 @@ go test ./...
 
 Expected: ALL PASS
 
-- [ ] **Step 7: 静态分析**
+- [x] **Step 7: 静态分析**
 
 ```bash
 go vet ./...
@@ -905,7 +950,7 @@ go vet ./...
 
 Expected: NO WARNINGS
 
-- [ ] **Step 8: 验证 pkg/server/ 已完全清除**
+- [x] **Step 8: 验证 pkg/server/ 已完全清除**
 
 ```bash
 ls pkg/server/ 2>/dev/null && echo "ERROR: pkg/server/ still exists" || echo "OK: pkg/server/ removed"
@@ -926,7 +971,7 @@ the composition root, directly wiring all flattened pkg/ packages."
 
 ### Task 11: 最终验证与清理
 
-- [ ] **Step 1: 全量构建**
+- [x] **Step 1: 全量构建**
 
 ```bash
 go build ./...
@@ -938,13 +983,13 @@ go build ./...
 go test ./...
 ```
 
-- [ ] **Step 3: 静态分析**
+- [x] **Step 3: 静态分析**
 
 ```bash
 go vet ./...
 ```
 
-- [ ] **Step 4: 验证目录结构**
+- [x] **Step 4: 验证目录结构**
 
 ```bash
 find pkg/ -type d | sort
@@ -975,13 +1020,13 @@ pkg/utils/traceid
 pkg/websocket
 ```
 
-- [ ] **Step 5: 验证无旧路径残留**
+- [x] **Step 5: 验证无旧路径残留**
 
 ```bash
 grep -r 'pkg/server/' --include="*.go" . && echo "FAIL" || echo "PASS: no old imports"
 ```
 
-- [ ] **Step 6: 验证依赖层次**
+- [x] **Step 6: 验证依赖层次**
 
 ```bash
 # 验证 transport 不导入任何 pkg/ 子包

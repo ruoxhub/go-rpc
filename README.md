@@ -208,7 +208,7 @@ go-rpc/
 
 ## SDK 使用
 
-> 本仓库只发布 server 可执行文件。客户端/调用端以 SDK 形式提供（`pkg/client`），完整示例见 `sample/go/sekio/`。
+> 本仓库只发布 server 可执行文件。客户端/调用端以 SDK 形式提供（`pkg/client/sdk`），完整示例见 `sample/go/sekio/`。
 
 ### 客户端：注册并处理请求
 
@@ -217,7 +217,7 @@ package main
 
 import (
     "log"
-    "github.com/mrh30000/go-rpc/pkg/client"
+    "github.com/mrh30000/go-rpc/pkg/client/sdk"
 )
 
 func main() {
@@ -242,7 +242,7 @@ package main
 import (
     "fmt"
     "log"
-    "github.com/mrh30000/go-rpc/pkg/client"
+    "github.com/mrh30000/go-rpc/pkg/client/sdk"
 )
 
 func main() {

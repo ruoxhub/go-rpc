@@ -6,9 +6,8 @@
 # Build everything
 go build ./...
 
-# Build specific binaries
+# Build server binary
 go build -o rpc-server ./main.go
-
 
 # Run tests (all packages)
 go test ./...
@@ -16,14 +15,15 @@ go test ./...
 # Run single package tests
 go test ./pkg/protocol/...
 go test ./pkg/compress/...
-go test ./pkg/server/client/...
+go test ./pkg/client/...
+go test ./pkg/handler/...
 
 # Run a single test
 go test -run TestRpcPacket ./pkg/protocol/...
 go test -run TestGzipCompress ./pkg/compress/...
 
 # Start server (requires PostgreSQL)
-go run cmd/server/main.go -c config.yaml
+go run main.go -c config.yaml
 
 # Frontend dev
 cd web && npm install && npm run dev   # port 3000, proxies /business|/api|/rpc-api → localhost:5613
@@ -36,44 +36,51 @@ cd web && npm run build                # outputs to web/dist/
 
 **Module path**: `github.com/mrh30000/go-rpc`
 
-**Three binaries** share `pkg/` but have separate entrypoints:
-- `cmd/server/main.go` — HTTP + WebSocket server (Gin + gorilla/websocket)
-- `cmd/client/main.go` — SDK client that connects via WebSocket
-- `cmd/invoker/main.go` — SDK invoker that sends RPC calls
+**Single entry point**: `main.go` is the server composition root. It wires all `pkg/` packages together via `NewServer()` and `Start()`. The SDK lives at `pkg/client/sdk/` for external consumers.
 
-**Request flow**: Invoker → HTTP POST `/business/invoke` → `APIHandler.HandleInvoke` → `forwarder.TimeoutManager` tracks request → `router.Router` picks client (round-robin / specified / consistent-hash) → `websocket.Handler` sends to client → client response arrives back on channel → APIHandler returns to invoker.
+**Request flow**: Invoker → HTTP POST `/business/invoke` → `handler.APIHandler.HandleInvoke` → `forwarder.TimeoutManager` tracks request → `router.Router` picks client (round-robin / specified / consistent-hash) → `websocket.Handler` sends to client → client response arrives back on channel → APIHandler returns to invoker.
 
-**Bootstrap sequence** (`pkg/server/bootstrap.go`): YAML config → logger init → PostgreSQL connect + AutoMigrate → config service → WebSocket handler → metrics collector → alert evaluator → Gin engine → route registration → `net.Listen` → serve.
+**Bootstrap sequence** (`main.go`): YAML config → logger init → PostgreSQL connect + AutoMigrate → config service → WebSocket handler → metrics collector → alert evaluator → Gin engine → route registration → `net.Listen` → serve.
 
 **Frontend embedding**: `web/embed.go` uses `//go:embed dist` to bundle the React SPA into the binary. No separate static file server needed. `npm run build` in `web/` must produce `web/dist/` before `go build`.
 
 ## Package Boundaries
 
 ```
-cmd/           → Entrypoints only, no business logic
+main.go        → Server composition root (Config, Server, NewServer, Start, Shutdown)
+main_test.go   → Integration tests for route registration and HTTP config
 internal/      → Private packages (config, utils/logger) — not importable by external code
-pkg/client/    → RpcClient + RpcInvoker SDK (used by cmd/client, cmd/invoker)
+pkg/client/    → Server-side client management: RpcClient, RpcGroup, ClientManager
+pkg/client/sdk/→ SDK for external consumers: RpcClient + RpcInvoker (used by sample code)
 pkg/protocol/  → Binary packet codec — shared between server and client
 pkg/compress/  → Gzip/Snappy/None compression — used by protocol layer
+pkg/transport/ → Connection abstraction (TCP + WebSocket) — leaf package, no pkg/ imports
 pkg/database/  → Global *gorm.DB singleton + AutoMigrate
-pkg/model/     → GORM models (UserInfo, GroupConfig, AlertRule, TraceRecord, etc.)
+  └── repository/ → Repository interfaces and implementations
+pkg/model/     → GORM models (UserInfo, GroupConfig, AlertRule, TraceRecord, DefaultGroupActions)
 pkg/eventbus/  → Simple pub/sub event bus
-pkg/server/    → Server core, split into sub-packages:
-  ├── api/          → Gin HTTP handlers + WebSocket upgrade
-  ├── client/       → ClientManager + RpcGroup (actor-model via goroutine channels)
-  ├── config/       → Runtime config service (reads from DB sys_config table)
-  ├── detector/     → Protocol detection (Rpc binary vs HTTP) on raw connections
-  ├── flow/          → Rate limiter + backoff for empty queues
-  ├── forwarder/    → TimeoutManager: tracks in-flight RPC calls with channels
-  ├── handlers/     → Web management API handlers (user, group, metric, trace, alert, sysconfig)
-  ├── metrics/      → MetricCollector: aggregates invoke counts/latency into minute/hour/day tables
-  ├── middleware/    → Gin middleware: auth, CORS, logging, rate-limit, trace
-  ├── router/       → Routing strategies: RoundRobin, SpecifiedClient, ConsistentHash
-  ├── alert/        → Alert evaluation engine (periodic rule checking + SMTP/webhook notification)
-  └── websocket/    → WebSocket message handler (client registration, heartbeat, invoke dispatch)
+pkg/handler/   → Unified HTTP handlers: APIHandler (invoke/chat/qwen) + Web management (user, group, metric, trace, alert, sysconfig) + response types (ApiResponse, RpcResponse, RpcExtraResponse) + HTTPServer wrapper
+pkg/config/    → Runtime config service (reads from DB sys_config table)
+pkg/flow/      → Rate limiter + backoff for empty queues
+pkg/forwarder/ → TimeoutManager: tracks in-flight RPC calls with channels + stream frame handling
+pkg/middleware/ → Gin middleware: auth, CORS, logging, rate-limit, trace
+pkg/router/    → Routing strategies: RoundRobin, SpecifiedClient, ConsistentHash
+pkg/alert/     → Alert evaluation engine (periodic rule checking + SMTP/webhook notification)
+pkg/metrics/   → MetricCollector: aggregates invoke counts/latency into minute/hour/day tables
+pkg/websocket/ → WebSocket message handler (client registration, heartbeat, invoke dispatch)
+pkg/utils/     → Utility functions (code helpers, file ops)
+  ├── password/  → Password hashing
+  └── traceid/   → Trace ID generation
+web/           → React SPA frontend (embedded via //go:embed dist)
 ```
 
-**Key constraint**: `pkg/server/client/group.go` uses an actor model — all group mutations go through `groupCommand` channel, NOT direct method calls. The `RpcGroup` goroutine serializes all operations.
+**Key constraint**: `pkg/client/group.go` uses an actor model — all group mutations go through `groupCommand` channel, NOT direct method calls. The `RpcGroup` goroutine serializes all operations.
+
+**Dependency layers** (bottom to top):
+- Leaf: `pkg/transport`, `pkg/protocol`, `pkg/compress`, `pkg/eventbus`, `pkg/model`
+- Mid: `pkg/client`, `pkg/config`, `pkg/flow`, `pkg/forwarder`, `pkg/middleware`, `pkg/router`, `pkg/alert`, `pkg/metrics`, `pkg/websocket`
+- Top: `pkg/handler` (depends on most mid-layer packages)
+- Root: `main.go` (wires everything together)
 
 ## Conventions
 
@@ -103,21 +110,24 @@ pkg/server/    → Server core, split into sub-packages:
 
 - **Port mismatch**: Vite dev proxy targets `:5613` but default server port is `:5612`. Either change `web/vite.config.js` or start server with `-port 5613`.
 - **`sample/demo-go/` has its own `go.mod`**: Module path `iinti.cn/sekiro` (not the main module). It's a standalone demo, not part of the main build.
-- **Protocol detector**: The server can accept both raw Rpc binary protocol and HTTP/WebSocket on the same port. `pkg/server/detector/` peeks at the first bytes to decide.
+- **SDK package name**: `pkg/client/sdk` uses Go package name `client` (not `sdk`), so SDK example code still uses `client.NewRpcClient` when importing `github.com/mrh30000/go-rpc/pkg/client/sdk`.
 - **Health check defaults to 3 consecutive failures**: `RpcClient` marks unhealthy after 3 fails. Route strategies skip unhealthy clients.
 - **`web/dist/` must exist for `go build`**: The `//go:embed dist` directive will fail if `web/dist/` doesn't exist. Run `cd web && npm run build` first.
 - **No `.golangci.yml`**: No linter config in repo. If adding one, note the project uses `fmt.Errorf` with `%w` (not `errors.Wrap`).
 - **No CI workflows**: No `.github/workflows/`. Tests are run locally.
-- **Config service is DB-backed**: `pkg/server/config/service.go` caches sys_config values from DB. Some runtime config changes need a manual `Refresh()` call (triggered via API).
+- **Config service is DB-backed**: `pkg/config/service.go` caches sys_config values from DB. Some runtime config changes need a manual `Refresh()` call (triggered via API).
 - **Alert evaluator runs on a 1-minute interval**: Rules are loaded from DB at start and refreshed periodically. SMTP config comes from `config.yaml`.
-- **QPS rate limiting**: `middleware/ratelimit.go` uses `flow.RateLimiter` with per-user and per-IP keys. Anonymous users get lower limits configured via `sys_config` table.
+- **QPS rate limiting**: `pkg/middleware/ratelimit.go` uses `flow.RateLimiter` with per-user and per-IP keys. Anonymous users get lower limits configured via `sys_config` table.
+- **Response type split**: `pkg/handler/response.go` defines three response types — `ApiResponse` (admin `/api/*`), `RpcResponse` (external `/rpc-api/*` and `/business/*`), `RpcExtraResponse` (with routing metadata). Frontend `Login.jsx` depends on `status === 0` for success.
 
 ## Testing Notes
 
 - Tests do NOT require a running PostgreSQL instance — most unit tests mock or avoid DB calls.
-- `pkg/server/api/handlers_test.go` and `pkg/server/api/http_server_test.go` set `gin.SetMode(gin.TestMode)`.
+- `pkg/handler/invoke_test.go` and `pkg/handler/http_server_test.go` set `gin.SetMode(gin.TestMode)`.
+- `main_test.go` tests route registration and HTTP config directly on the `Server` struct.
 - `web/embed_test.go` tests the embedded frontend without a real server.
 - Integration tests that need DB should use the `deploy/postgres/` scripts to set up a test database.
+- Some Qwen-related tests require fixture files (`qwenai_completions_response.txt`, `completions_request_body.json`) in the repo root.
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
