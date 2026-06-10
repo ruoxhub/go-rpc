@@ -361,6 +361,7 @@ func (s *Server) registerRoutes() {
 		deps := handler.Deps{
 			UserRepo:       repository.NewUserRepository(db),
 			GroupRepo:      repository.NewGroupRepository(db),
+			ClientManager:  s.clientManager,
 			SysConfigRepo:  repository.NewSysConfigRepository(db),
 			ServerNodeRepo: repository.NewServerNodeRepository(db),
 			SysLogRepo:     repository.NewSysLogRepository(db),
@@ -387,6 +388,7 @@ func (s *Server) registerRoutes() {
 	// 为 /rpc-api 路由添加配置服务和仓储上下文
 	rpcAPI.Use(func(c *gin.Context) {
 		c.Set("configService", s.configService)
+		c.Set("clientManager", s.clientManager)
 		if !disableDB {
 			c.Set("groupRepo", repository.NewGroupRepository(database.GetDB()))
 		}

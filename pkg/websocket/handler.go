@@ -180,6 +180,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	}
 
 	isRegistered := h.isGroupRegistered(group)
+	sekiroClient.SetRegisteredGroup(isRegistered)
 	if isRegistered {
 		logger.Infof("Connected to registered group: group=%s", group)
 		h.ensureDefaultActions(group)
@@ -187,22 +188,23 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		logger.Infof("Connected to anonymous group (not registered): group=%s", group)
 	}
 
-	remoteIP := extractRemoteIP(conn)
-	now := time.Now()
+	if isRegistered {
+		remoteIP := extractRemoteIP(conn)
+		now := time.Now()
+		if db := database.GetDB(); db != nil {
+			device := model.GroupDevice{
+				GroupName:      group,
+				DeviceID:       clientID,
+				RemoteIP:       remoteIP,
+				LastActiveTime: now,
+			}
 
-	if db := database.GetDB(); db != nil {
-		device := model.GroupDevice{
-			GroupName:      group,
-			DeviceID:       clientID,
-			RemoteIP:       remoteIP,
-			LastActiveTime: now,
-		}
-
-		if err := db.Where("group_name = ? AND device_id = ?", group, clientID).
-			FirstOrCreate(&device).Error; err != nil {
-			logger.Warnf("Failed to create device record: %v", err)
-		} else {
-			logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
+			if err := db.Where("group_name = ? AND device_id = ?", group, clientID).
+				FirstOrCreate(&device).Error; err != nil {
+				logger.Warnf("Failed to create device record: %v", err)
+			} else {
+				logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
+			}
 		}
 	}
 
@@ -324,13 +326,15 @@ func (h *Handler) handleHeartbeat(sekiroClient *client.RpcClient, msg *RpcMessag
 	if msg.Group != "" && msg.ClientID != "" {
 		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
 			sc.MarkSuccess()
-		}
 
-		if db := database.GetDB(); db != nil {
-			if err := db.Model(&model.GroupDevice{}).
-				Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
-				Update("last_active_time", time.Now()).Error; err != nil {
-				logger.Warnf("Failed to update device last_active_time: %v", err)
+			if sc.IsRegisteredGroup() {
+				if db := database.GetDB(); db != nil {
+					if err := db.Model(&model.GroupDevice{}).
+						Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
+						Update("last_active_time", time.Now()).Error; err != nil {
+						logger.Warnf("Failed to update device last_active_time: %v", err)
+					}
+				}
 			}
 		}
 	}

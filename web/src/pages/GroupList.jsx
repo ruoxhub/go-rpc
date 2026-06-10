@@ -19,13 +19,6 @@ function GroupList() {
       const result = await groupApi.list()
       setGroups(result.data || [])
     } catch (error) {
-      // 如果是 401 错误，清除 token 并重定向到登录页
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        localStorage.removeItem('api_token')
-        localStorage.removeItem('login_token')
-        window.location.href = '/login'
-        return
-      }
       message.error('加载分组列表失败：' + (error.message || '未知错误'))
     } finally {
       setLoading(false)
@@ -116,9 +109,9 @@ function GroupList() {
     }
   }
 
-  const handleCreateGroup = () => {
-    setCreateModalVisible(true)
-    createForm.resetFields()
+  const toggleCreateModal = (open) => {
+    setCreateModalVisible(open)
+    if (!open) createForm.resetFields()
   }
 
   const handleCreateModalOk = async () => {
@@ -130,7 +123,7 @@ function GroupList() {
         quotaQpsPerDevice: values.quotaQpsPerDevice || -1
       })
       message.success('分组创建成功')
-      setCreateModalVisible(false)
+      toggleCreateModal(false)
       loadGroups()
     } catch (error) {
       if (error.response?.status === 409) {
@@ -144,16 +137,11 @@ function GroupList() {
     }
   }
 
-  const handleCreateModalCancel = () => {
-    setCreateModalVisible(false)
-    createForm.resetFields()
-  }
-
   return (
     <div>
       <div className="page-header">
         <h2 className="page-title">分组列表</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreateGroup}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => toggleCreateModal(true)}>
           创建分组
         </Button>
       </div>
@@ -186,7 +174,7 @@ function GroupList() {
         title="创建分组"
         open={createModalVisible}
         onOk={handleCreateModalOk}
-        onCancel={handleCreateModalCancel}
+        onCancel={() => toggleCreateModal(false)}
         okText="确定"
         cancelText="取消"
       >

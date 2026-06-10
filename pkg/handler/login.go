@@ -197,6 +197,13 @@ func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
 
 // HandleFrontendAnonymousGroupList 获取匿名分组列表
 func HandleFrontendAnonymousGroupList(c *gin.Context) {
+	if clientManager, exists := c.Get("clientManager"); exists {
+		if cm, ok := clientManager.(anonymousClientManager); ok {
+			RpcSuccess(c, buildAnonymousGroupVOs(cm))
+			return
+		}
+	}
+
 	// Use groupRepo if available in context
 	if groupRepo, exists := c.Get("groupRepo"); exists {
 		if gr, ok := groupRepo.(repository.GroupRepository); ok {
@@ -204,7 +211,7 @@ func HandleFrontendAnonymousGroupList(c *gin.Context) {
 			return
 		}
 	}
-	anonymousHandler := NewAnonymousGroupHandler(nil)
+	anonymousHandler := NewAnonymousGroupHandler(nil, nil)
 	anonymousHandler.List(c)
 }
 

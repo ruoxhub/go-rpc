@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/alert"
+	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
@@ -12,6 +13,7 @@ import (
 type Deps struct {
 	UserRepo       repository.UserRepository
 	GroupRepo      repository.GroupRepository
+	ClientManager  *client.ClientManager
 	SysConfigRepo  repository.SysConfigRepository
 	ServerNodeRepo repository.ServerNodeRepository
 	SysLogRepo     repository.SysLogRepository
@@ -32,7 +34,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 	userHandler := NewUserHandler(deps.UserRepo)
 	groupHandler := NewGroupHandler(deps.GroupRepo)
 	sysConfigHandler := NewSysConfigHandler(deps.SysConfigRepo, deps.ServerNodeRepo, deps.SysLogRepo, cfgSvc)
-	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo)
+	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo, deps.ClientManager)
 	metricHandler := NewMetricHandler(deps.MetricRepo)
 	traceHandler := NewTraceHandler(deps.TraceRepo)
 	alertHandler := NewAlertHandler(deps.AlertRepo, alertEvaluator)

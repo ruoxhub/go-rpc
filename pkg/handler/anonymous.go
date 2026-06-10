@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/client"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
@@ -14,12 +15,19 @@ import (
 
 // AnonymousGroupHandler 匿名分组处理器
 type AnonymousGroupHandler struct {
-	groupRepo repository.GroupRepository
+	groupRepo     repository.GroupRepository
+	clientManager anonymousClientManager
+}
+
+type anonymousClientManager interface {
+	GetAllGroups() []string
+	GetClientsByGroup(group string) []*client.RpcClient
+	Unregister(groupName, clientID string)
 }
 
 // NewAnonymousGroupHandler 创建匿名分组处理器
-func NewAnonymousGroupHandler(groupRepo repository.GroupRepository) *AnonymousGroupHandler {
-	return &AnonymousGroupHandler{groupRepo: groupRepo}
+func NewAnonymousGroupHandler(groupRepo repository.GroupRepository, clientManager anonymousClientManager) *AnonymousGroupHandler {
+	return &AnonymousGroupHandler{groupRepo: groupRepo, clientManager: clientManager}
 }
 
 // AnonymousGroupVO 匿名分组 VO
@@ -31,57 +39,12 @@ type AnonymousGroupVO struct {
 }
 
 // List 获取匿名分组列表
-// 匿名分组定义：存在于 group_device 表中，但其 group_name 不在 group_config 表中的设备
+// 匿名分组定义：当前内存连接中未归属正式分组的设备
 func (h *AnonymousGroupHandler) List(c *gin.Context) {
-	db := database.GetDB()
-
-	var devices []struct {
-		GroupName      string    `json:"group_name"`
-		LastActiveTime time.Time `json:"last_active_time"`
-	}
-
-	if err := db.Table("group_device gd").
-		Where("NOT EXISTS (SELECT 1 FROM group_config gc WHERE gc.group_name = gd.group_name)").
-		Find(&devices).Error; err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-
-	if len(devices) == 0 {
-		Success(c, []AnonymousGroupVO{})
-		return
-	}
-
-	groupMap := make(map[string][]time.Time)
-	for _, d := range devices {
-		groupMap[d.GroupName] = append(groupMap[d.GroupName], d.LastActiveTime)
-	}
-
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
-
-	var vos []AnonymousGroupVO
-	for groupName, activeTimes := range groupMap {
-		var availableCount, disabledCount int64
-		for _, activeTime := range activeTimes {
-			if activeTime.After(activeThreshold) {
-				availableCount++
-			} else {
-				disabledCount++
-			}
-		}
-
-		vos = append(vos, AnonymousGroupVO{
-			GroupName:        groupName,
-			AvailableClients: availableCount,
-			DisabledClients:  disabledCount,
-			TotalClients:     availableCount + disabledCount,
-		})
-	}
-
-	Success(c, vos)
+	Success(c, buildAnonymousGroupVOs(h.clientManager))
 }
 
-// ListOptimized 优化版本：使用数据库聚合查询
+// ListOptimized 使用内存中的实时连接状态统计匿名分组。
 func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
 	user, ok := getAuthenticatedUser(c)
 	if !ok {
@@ -92,29 +55,59 @@ func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
 		return
 	}
 
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
-	stats, err := h.groupRepo.FindAnonymousDeviceGroups(activeThreshold)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
+	Success(c, buildAnonymousGroupVOs(h.clientManager))
+}
+
+func buildAnonymousGroupVOs(clientManager anonymousClientManager) []AnonymousGroupVO {
+	if clientManager == nil {
+		return []AnonymousGroupVO{}
 	}
 
-	if len(stats) == 0 {
-		Success(c, []AnonymousGroupVO{})
-		return
-	}
+	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
+	groups := clientManager.GetAllGroups()
+	vos := make([]AnonymousGroupVO, 0, len(groups))
 
-	vos := make([]AnonymousGroupVO, len(stats))
-	for i, s := range stats {
-		vos[i] = AnonymousGroupVO{
-			GroupName:        s.GroupName,
-			AvailableClients: s.AvailableClients,
-			DisabledClients:  s.DisabledClients,
-			TotalClients:     s.TotalClients,
+	for _, groupName := range groups {
+		clients := clientManager.GetClientsByGroup(groupName)
+		if len(clients) == 0 {
+			continue
 		}
+
+		var availableCount, disabledCount int64
+		registeredGroup := false
+		for _, c := range clients {
+			if c == nil {
+				continue
+			}
+			if c.IsRegisteredGroup() {
+				registeredGroup = true
+				break
+			}
+			if c.GetStatus() == client.StatusOnline && c.GetLastActive().After(activeThreshold) {
+				availableCount++
+				continue
+			}
+			disabledCount++
+		}
+
+		if registeredGroup {
+			continue
+		}
+
+		totalCount := availableCount + disabledCount
+		if totalCount == 0 {
+			continue
+		}
+
+		vos = append(vos, AnonymousGroupVO{
+			GroupName:        groupName,
+			AvailableClients: availableCount,
+			DisabledClients:  disabledCount,
+			TotalClients:     totalCount,
+		})
 	}
 
-	Success(c, vos)
+	return vos
 }
 
 // DeleteAnonymousGroupRequest 删除匿名分组请求
@@ -139,23 +132,85 @@ func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	isAnon, err := h.groupRepo.IsAnonymousGroup(req.GroupName)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-	if !isAnon {
-		BadRequest(c, "不能删除已注册的分组，请在分组管理中删除")
+	if h.clientManager == nil {
+		InternalError(c, "client manager unavailable")
 		return
 	}
 
-	count, err := h.groupRepo.DeleteAnonymousGroupDevices(req.GroupName)
-	if err != nil {
-		InternalError(c, err.Error())
+	clients := h.clientManager.GetClientsByGroup(req.GroupName)
+	for _, rpcClient := range clients {
+		if rpcClient != nil && rpcClient.IsRegisteredGroup() {
+			BadRequest(c, "不能删除已注册的分组，请在分组管理中删除")
+			return
+		}
+	}
+	if len(clients) == 0 {
+		Success(c, int64(0))
 		return
+	}
+
+	var count int64
+	for _, rpcClient := range clients {
+		if rpcClient == nil {
+			continue
+		}
+		h.clientManager.Unregister(req.GroupName, rpcClient.ClientID)
+		count++
 	}
 
 	Success(c, count)
+}
+
+func (h *AnonymousGroupHandler) markGroupRegistered(groupName string) {
+	if h.clientManager == nil {
+		return
+	}
+
+	clients := h.clientManager.GetClientsByGroup(groupName)
+	for _, c := range clients {
+		if c != nil {
+			c.SetRegisteredGroup(true)
+		}
+	}
+}
+
+func (h *AnonymousGroupHandler) isAnonymousGroupInMemory(groupName string) bool {
+	if h.clientManager == nil {
+		return false
+	}
+
+	clients := h.clientManager.GetClientsByGroup(groupName)
+	if len(clients) == 0 {
+		return false
+	}
+	for _, c := range clients {
+		if c != nil && c.IsRegisteredGroup() {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *AnonymousGroupHandler) validateAnonymousGroupForConvert(c *gin.Context, groupName string) bool {
+	if h.isAnonymousGroupInMemory(groupName) {
+		return true
+	}
+
+	if h.groupRepo == nil {
+		BadRequest(c, "该分组已是正式分组，无需转换")
+		return false
+	}
+
+	isAnon, err := h.groupRepo.IsAnonymousGroup(groupName)
+	if err != nil {
+		InternalError(c, err.Error())
+		return false
+	}
+	if !isAnon {
+		BadRequest(c, "该分组已是正式分组，无需转换")
+		return false
+	}
+	return true
 }
 
 // ConvertAnonymousGroupRequest 转换匿名分组请求
@@ -182,13 +237,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 		return
 	}
 
-	isAnon, err := h.groupRepo.IsAnonymousGroup(req.GroupName)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-	if !isAnon {
-		BadRequest(c, "该分组已是正式分组，无需转换")
+	if !h.validateAnonymousGroupForConvert(c, req.GroupName) {
 		return
 	}
 
@@ -232,6 +281,24 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 		return
 	}
 
+	if h.clientManager != nil {
+		for _, rpcClient := range h.clientManager.GetClientsByGroup(req.GroupName) {
+			if rpcClient == nil {
+				continue
+			}
+			device := model.GroupDevice{
+				GroupName:      req.GroupName,
+				DeviceID:       rpcClient.ClientID,
+				LastActiveTime: rpcClient.GetLastActive(),
+			}
+			if err := tx.Where("group_name = ? AND device_id = ?", req.GroupName, rpcClient.ClientID).
+				FirstOrCreate(&device).Error; err != nil {
+				InternalError(c, err.Error())
+				return
+			}
+		}
+	}
+
 	txRepo := h.groupRepo.WithTx(tx)
 	for _, actionName := range model.DefaultGroupActions {
 		existingAction, err := txRepo.FindAction(req.GroupName, actionName)
@@ -257,6 +324,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	committed = true
 
 	middleware.InvalidateGroup(req.GroupName)
+	h.markGroupRegistered(req.GroupName)
 
 	auditConvertGroup(c, "anonymous:"+req.GroupName, req.GroupName)
 	Success(c, group.ID)

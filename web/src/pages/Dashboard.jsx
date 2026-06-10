@@ -24,12 +24,6 @@ function Dashboard() {
       }
     } catch (error) {
       console.error('加载用户信息失败:', error)
-      // 如果是 401 错误，清除 token 并重定向到登录页
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        localStorage.removeItem('api_token')
-        localStorage.removeItem('login_token')
-        window.location.href = '/login'
-      }
     }
   }
 

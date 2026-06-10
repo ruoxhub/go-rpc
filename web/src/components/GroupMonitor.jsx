@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, Empty, Select, Spin, Row, Col, Statistic, Alert, Button } from 'antd'
+import * as echarts from 'echarts'
 import ReactECharts from 'echarts-for-react'
 import { metricApi } from '../utils/api'
 

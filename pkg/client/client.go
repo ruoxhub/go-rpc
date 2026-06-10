@@ -25,6 +25,7 @@ type RpcClient struct {
 	LastActive       time.Time
 	IsHealthy        bool
 	FailCount        int
+	RegisteredGroup  bool
 	OnHealthDegraded func(client *RpcClient)
 	mu               sync.RWMutex
 	writeMu          sync.Mutex
@@ -62,6 +63,27 @@ func (c *RpcClient) GetStatus() ClientStatus {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Status
+}
+
+// GetLastActive returns the last activity timestamp.
+func (c *RpcClient) GetLastActive() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.LastActive
+}
+
+// SetRegisteredGroup records whether the client belongs to a configured group.
+func (c *RpcClient) SetRegisteredGroup(registered bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.RegisteredGroup = registered
+}
+
+// IsRegisteredGroup returns whether the client belongs to a configured group.
+func (c *RpcClient) IsRegisteredGroup() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.RegisteredGroup
 }
 
 // Close closes the client connection

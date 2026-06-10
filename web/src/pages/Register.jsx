@@ -3,6 +3,7 @@ import { Form, Input, Button, Card, message } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import Logo from '../components/Logo'
 
 function Register() {
   const [loading, setLoading] = useState(false)
@@ -53,28 +54,8 @@ function Register() {
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: 30 }}>
-          <svg
-            viewBox="0 0 32 32"
-            fill="none"
-            style={{ width: 64, height: 64, marginBottom: 16 }}
-          >
-            <circle
-              cx="16"
-              cy="16"
-              r="14"
-              stroke="#667eea"
-              strokeWidth="2"
-              fill="none"
-            />
-            <path
-              d="M10 16L14 20L22 12"
-              stroke="#667eea"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          <h1 style={{ fontSize: 24, fontWeight: 600, margin: 0 }}>Rpc 管理系统</h1>
+          <Logo size={64} />
+          <h1 style={{ fontSize: 24, fontWeight: 600, margin: '16px 0 0' }}>Rpc 管理系统</h1>
         </div>
 
         <Form

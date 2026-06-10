@@ -121,16 +121,6 @@ function SystemPanel() {
     loadAll()
   }, [])
 
-  // 获取配置值的辅助函数
-  const getConfigValue = (key, defaultValue) => {
-    const config = configs.find(c => c.key === key)
-    if (!config) return defaultValue
-    const value = config.value
-    if (value === undefined || value === null || value === '') return defaultValue
-    return value
-  }
-
-  // 将值转换为适当的类型
   const parseValue = (key, value) => {
     const def = CONFIG_DEFINITIONS.find(d => d.key === key)
     if (!def) return value

@@ -26,9 +26,9 @@ function GroupAction({ groupName, onRefresh }) {
     loadActions()
   }, [groupName])
 
-  const handleAddAction = () => {
-    setAddModalVisible(true)
-    addForm.resetFields()
+  const toggleAddModal = (open) => {
+    setAddModalVisible(open)
+    if (!open) addForm.resetFields()
   }
 
   const handleAddModalOk = async () => {
@@ -39,7 +39,7 @@ function GroupAction({ groupName, onRefresh }) {
         actionName: values.actionName
       })
       message.success('Action 添加成功')
-      setAddModalVisible(false)
+      toggleAddModal(false)
       loadActions()
       onRefresh && onRefresh()
     } catch (error) {
@@ -51,11 +51,6 @@ function GroupAction({ groupName, onRefresh }) {
         message.error('添加 Action 失败：' + (error.message || '未知错误'))
       }
     }
-  }
-
-  const handleAddModalCancel = () => {
-    setAddModalVisible(false)
-    addForm.resetFields()
   }
 
   const handleDeleteAction = async (actionName) => {
@@ -108,7 +103,7 @@ function GroupAction({ groupName, onRefresh }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleAddAction}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => toggleAddModal(true)}>
           添加 Action
         </Button>
       </div>
@@ -136,7 +131,7 @@ function GroupAction({ groupName, onRefresh }) {
         title="添加 Action"
         open={addModalVisible}
         onOk={handleAddModalOk}
-        onCancel={handleAddModalCancel}
+        onCancel={() => toggleAddModal(false)}
         okText="确定"
         cancelText="取消"
       >

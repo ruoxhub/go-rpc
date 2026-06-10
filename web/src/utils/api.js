@@ -1,154 +1,112 @@
 import axios from 'axios'
 import { message } from 'antd'
 
-const defaultHeaders = {
-  'Content-Type': 'application/json'
-}
-
-const businessApi = axios.create({
-  baseURL: '/business',
-  timeout: 30000,
-  headers: defaultHeaders
-})
-
-const adminApi = axios.create({
+const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
-  headers: defaultHeaders
+  headers: { 'Content-Type': 'application/json' }
 })
 
-const apiClient = axios.create({
-  baseURL: '/api',
-  timeout: 30000,
-  headers: defaultHeaders
-})
-
-const handleAuthFailure = () => {
-  localStorage.removeItem('api_token')
-  localStorage.removeItem('login_token')
-  if (window.location.pathname !== '/login') {
-    window.location.replace('/login')
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('api_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
   }
-}
+  return config
+})
 
-const setupRequestInterceptor = (apiInstance) => {
-  apiInstance.interceptors.request.use(
-    (config) => {
-      const token = localStorage.getItem('api_token')
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`
+api.interceptors.response.use(
+  (response) => response.data,
+  (error) => {
+    const status = error.response?.status
+    const errorMsg = error.response?.data?.message || error.message || '请求失败'
+
+    if (status === 401) {
+      localStorage.removeItem('api_token')
+      localStorage.removeItem('login_token')
+      if (window.location.pathname !== '/login') {
+        window.location.replace('/login')
       }
-      return config
-    },
-    (error) => Promise.reject(error)
-  )
-}
+    }
 
-const setupResponseInterceptor = (apiInstance) => {
-  apiInstance.interceptors.response.use(
-    (response) => response.data,
-    (error) => {
-      const status = error.response?.status
-      const errorMsg = error.response?.data?.message || error.message || '请求失败'
-
-      if (status === 401) {
-        handleAuthFailure()
-      }
-
-      if (status === 403) {
-        if (!error.config?.silent) {
-          message.error('权限不足')
-        }
-        return Promise.reject(error)
-      }
-
-      if (!error.config?.silent) {
-        message.error(errorMsg)
-      }
-
+    if (status === 403 && !error.config?.silent) {
+      message.error('权限不足')
       return Promise.reject(error)
     }
-  )
-}
 
-setupRequestInterceptor(businessApi)
-setupResponseInterceptor(businessApi)
-setupRequestInterceptor(adminApi)
-setupResponseInterceptor(adminApi)
-setupRequestInterceptor(apiClient)
-setupResponseInterceptor(apiClient)
+    if (!error.config?.silent) {
+      message.error(errorMsg)
+    }
+
+    return Promise.reject(error)
+  }
+)
 
 export const groupApi = {
-  list: () => adminApi.get('/groups'),
-  create: (data) => adminApi.post('/groups', data),
-  delete: (data) => adminApi.delete('/groups', { data }),
-  getDetail: (groupName) => adminApi.get(`/groups/${groupName}`),
-  updateQps: (data) => adminApi.put('/groups/qps', data),
-  getDevices: (groupName) => adminApi.get(`/groups/${groupName}/devices`),
-  deleteDevice: (data) => adminApi.delete('/groups/devices', { data }),
-  disableDevice: (data) => adminApi.put('/groups/devices/disable', data),
-  getActions: (groupName) => adminApi.get(`/groups/${groupName}/actions`),
-  addAction: (data) => adminApi.post('/groups/actions', data),
-  deleteAction: (data) => adminApi.delete('/groups/actions', { data })
+  list: () => api.get('/groups'),
+  create: (data) => api.post('/groups', data),
+  delete: (data) => api.delete('/groups', { data }),
+  getDetail: (groupName) => api.get(`/groups/${groupName}`),
+  updateQps: (data) => api.put('/groups/qps', data),
+  getDevices: (groupName) => api.get(`/groups/${groupName}/devices`),
+  deleteDevice: (data) => api.delete('/groups/devices', { data }),
+  disableDevice: (data) => api.put('/groups/devices/disable', data),
+  getActions: (groupName) => api.get(`/groups/${groupName}/actions`),
+  addAction: (data) => api.post('/groups/actions', data),
+  deleteAction: (data) => api.delete('/groups/actions', { data })
 }
 
 export const userApi = {
-  list: () => adminApi.get('/users'),
-  add: (data) => adminApi.post('/users', data),
-  updateQps: (data) => adminApi.put('/users/qps', data),
-  delete: (data) => adminApi.delete('/users', { data }),
-  getCurrentUser: () => adminApi.get('/current'),
-  changePassword: (data) => adminApi.post('/current/password', data),
-  refreshToken: () => adminApi.post('/current/token/refresh')
+  list: () => api.get('/users'),
+  add: (data) => api.post('/users', data),
+  updateQps: (data) => api.put('/users/qps', data),
+  delete: (data) => api.delete('/users', { data }),
+  getCurrentUser: () => api.get('/current'),
+  changePassword: (data) => api.post('/current/password', data),
+  refreshToken: () => api.post('/current/token/refresh')
 }
 
 export const sysConfigApi = {
-  list: () => adminApi.get('/sysconfig'),
-  update: (data) => adminApi.put('/sysconfig', data),
-  getNodes: () => adminApi.get('/sysconfig/nodes'),
-  getLogs: (params) => adminApi.get('/sysconfig/logs', { params }),
-  getAppLogs: (params) => adminApi.get('/sysconfig/app-logs', { params })
+  list: () => api.get('/sysconfig'),
+  update: (data) => api.put('/sysconfig', data),
+  getNodes: () => api.get('/sysconfig/nodes'),
+  getLogs: (params) => api.get('/sysconfig/logs', { params }),
+  getAppLogs: (params) => api.get('/sysconfig/app-logs', { params })
 }
 
 export const anonymousGroupApi = {
-  list: () => adminApi.get('/anonymous-groups'),
-  delete: (data) => adminApi.delete('/anonymous-groups', { data }),
-  convert: (data) => adminApi.post('/anonymous-groups/convert', data)
+  list: () => api.get('/anonymous-groups'),
+  convert: (data) => api.post('/anonymous-groups/convert', data)
 }
 
 export const metricApi = {
-  getMetrics: (params) => adminApi.get('/metrics', { params }),
-  getMetricList: () => adminApi.get('/metrics/list'),
-  getDashboard: () => adminApi.get('/metrics/dashboard'),
-  getLatencyPercentiles: (params) => adminApi.get('/metrics/latency/percentiles', { params })
+  getMetrics: (params) => api.get('/metrics', { params }),
+  getMetricList: () => api.get('/metrics/list'),
+  getDashboard: () => api.get('/metrics/dashboard'),
+  getLatencyPercentiles: (params) => api.get('/metrics/latency/percentiles', { params })
 }
 
 export const traceApi = {
-  getTraces: (params) => apiClient.get('/traces', { params }),
-  getTraceDetail: (traceId) => apiClient.get(`/traces/${traceId}`),
-  getTraceStats: (params) => apiClient.get('/traces/stats', { params }),
-  getTraceTimeline: (params) => apiClient.get('/traces/timeline', { params }),
-  getTraceExtraData: (traceId) => apiClient.get(`/traces/${traceId}/extra`)
+  getTraces: (params) => api.get('/traces', { params }),
+  getTraceDetail: (traceId) => api.get(`/traces/${traceId}`),
+  getTraceStats: (params) => api.get('/traces/stats', { params }),
+  getTraceTimeline: (params) => api.get('/traces/timeline', { params }),
+  getTraceExtraData: (traceId) => api.get(`/traces/${traceId}/extra`)
 }
 
 export const alertApi = {
-  getRules: (params) => apiClient.get('/alerts/rules', { params }),
-  getRule: (id) => apiClient.get(`/alerts/rules/${id}`),
-  createRule: (data) => apiClient.post('/alerts/rules', data),
-  updateRule: (id, data) => apiClient.put(`/alerts/rules/${id}`, data),
-  deleteRule: (id) => apiClient.delete(`/alerts/rules/${id}`),
-  getHistory: (params) => apiClient.get('/alerts/history', { params })
+  getRules: (params) => api.get('/alerts/rules', { params }),
+  getRule: (id) => api.get(`/alerts/rules/${id}`),
+  createRule: (data) => api.post('/alerts/rules', data),
+  updateRule: (id, data) => api.put(`/alerts/rules/${id}`, data),
+  deleteRule: (id) => api.delete(`/alerts/rules/${id}`),
+  getHistory: (params) => api.get('/alerts/history', { params })
 }
 
-// 前端兼容 API 封装（/rpc-api/frontend/*）
 export const frontendApi = {
-  listGroup: () => apiClient.get('/rpc-api/frontend/listGroup'),
-  anonymousGroupList: () => apiClient.get('/rpc-api/frontend/anonymousGroupList'),
-  groupDetail: (groupName) => apiClient.get('/rpc-api/frontend/groupDetail', {
+  listGroup: () => api.get('/rpc-api/frontend/listGroup'),
+  anonymousGroupList: () => api.get('/rpc-api/frontend/anonymousGroupList'),
+  groupDetail: (groupName) => api.get('/rpc-api/frontend/groupDetail', {
     params: { groupName }
   })
 }
-
-export { adminApi, apiClient, handleAuthFailure }
-
-export default businessApi

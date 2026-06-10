@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Input, Spin, Empty, Alert, Tag, Space, Button, Popconfirm, message, Modal, Form, InputNumber } from 'antd'
-import { SearchOutlined, DeleteOutlined, SyncOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { Table, Input, Spin, Empty, Alert, Tag, Button, message, Modal, Form, InputNumber } from 'antd'
+import { SearchOutlined, SyncOutlined, CheckCircleOutlined } from '@ant-design/icons'
 import { anonymousGroupApi } from '../utils/api'
 
 function AnonymousGroup() {
@@ -8,8 +8,9 @@ function AnonymousGroup() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [searchText, setSearchText] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [convertModalVisible, setConvertModalVisible] = useState(false)
-  const [convertingGroup, setConvertingGroup] = useState(null)
   const [convertForm] = Form.useForm()
 
   // 加载匿名分组列表
@@ -35,19 +36,7 @@ function AnonymousGroup() {
     }
   }
 
-  const handleDeleteGroup = async (groupName) => {
-    try {
-      await anonymousGroupApi.delete({ groupName })
-      message.success(`分组 ${groupName} 已删除`)
-      loadGroups()
-    } catch (err) {
-      // 错误已在拦截器中处理，此处只需刷新列表
-      loadGroups()
-    }
-  }
-
   const handleConvertGroup = (groupName) => {
-    setConvertingGroup(groupName)
     setConvertModalVisible(true)
     convertForm.setFieldsValue({
       groupName,
@@ -133,38 +122,14 @@ function AnonymousGroup() {
       key: 'action',
       align: 'center',
       render: (_, record) => (
-        <Space size="small">
-          <Button
-            type="primary"
-            size="small"
-            icon={<CheckCircleOutlined />}
-            onClick={() => handleConvertGroup(record.groupName)}
-          >
-            转为正式分组
-          </Button>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => message.info(`查看分组 ${record.groupName} 详情`)}
-          >
-            查看
-          </Button>
-          <Popconfirm
-            title="确认删除该匿名分组吗？"
-            onConfirm={() => handleDeleteGroup(record.groupName)}
-            okText="确认"
-            cancelText="取消"
-          >
-            <Button
-              type="link"
-              size="small"
-              danger
-              icon={<DeleteOutlined />}
-            >
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
+        <Button
+          type="primary"
+          size="small"
+          icon={<CheckCircleOutlined />}
+          onClick={() => handleConvertGroup(record.groupName)}
+        >
+          转为正式分组
+        </Button>
       )
     }
   ]
@@ -197,7 +162,10 @@ function AnonymousGroup() {
           placeholder="请输入分组名称进行查询"
           prefix={<SearchOutlined />}
           value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
+          onChange={(e) => {
+            setSearchText(e.target.value)
+            setCurrentPage(1)
+          }}
           style={{ width: 300 }}
           allowClear
         />
@@ -219,11 +187,15 @@ function AnonymousGroup() {
           dataSource={filteredGroups}
           rowKey="groupName"
           pagination={{
-            current: 1,
-            pageSize: 10,
+            current: currentPage,
+            pageSize: pageSize,
             total: filteredGroups.length,
-            showSizeChanger: false,
-            showTotal: (total) => `共 ${total} 条`
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条`,
+            onChange: (page, size) => {
+              setCurrentPage(page)
+              setPageSize(size)
+            }
           }}
         />
       )}
