@@ -26,7 +26,6 @@ func (g *GzipCompressor) init() {
 	g.writerPool.New = func() interface{} {
 		return gzip.NewWriter(io.Discard)
 	}
-	// Note: readerPool is left empty-initialized, handled in Decompress
 }
 
 // Method returns the compression method name
@@ -41,20 +40,17 @@ func (g *GzipCompressor) Compress(input []byte) ([]byte, error) {
 	var buf bytes.Buffer
 	gw := g.writerPool.Get().(*gzip.Writer)
 	gw.Reset(&buf)
+	defer g.writerPool.Put(gw)
 
-	_, err := gw.Write(input)
-	if err != nil {
-		gw.Close()
-		g.writerPool.Put(gw)
-		return nil, err
-	}
-	err = gw.Close()
-	if err != nil {
-		g.writerPool.Put(gw)
+	if _, err := gw.Write(input); err != nil {
+		_ = gw.Close()
 		return nil, err
 	}
 
-	g.writerPool.Put(gw)
+	if err := gw.Close(); err != nil {
+		return nil, err
+	}
+
 	return buf.Bytes(), nil
 }
 

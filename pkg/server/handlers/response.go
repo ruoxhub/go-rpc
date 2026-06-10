@@ -97,22 +97,3 @@ func RpcApiError(c *gin.Context, status int, message string) {
 	})
 }
 
-// RpcApiBadRequest 返回 RPC API 400 错误
-func RpcApiBadRequest(c *gin.Context, message string) {
-	RpcApiError(c, -1, message)
-}
-
-// RpcApiUnauthorized 返回 RPC API 401 错误
-func RpcApiUnauthorized(c *gin.Context, message string) {
-	RpcApiError(c, -1, message)
-}
-
-// RpcApiForbidden 返回 RPC API 403 错误
-func RpcApiForbidden(c *gin.Context, message string) {
-	RpcApiError(c, -1, message)
-}
-
-// RpcApiInternalError 返回 RPC API 500 错误
-func RpcApiInternalError(c *gin.Context, message string) {
-	RpcApiError(c, -1, message)
-}

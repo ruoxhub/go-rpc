@@ -274,7 +274,7 @@ func (h *GroupHandler) GetDevices(c *gin.Context) {
 	now := time.Now()
 	for _, d := range devices {
 		status := "offline"
-		if now.Sub(d.LastActiveTime) < 5*time.Minute {
+		if now.Sub(d.LastActiveTime) < ClientInactiveThreshold {
 			status = "online"
 		}
 		vos = append(vos, DeviceInfoVO{

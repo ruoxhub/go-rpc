@@ -113,20 +113,14 @@ func FindUserByToken(token string) (*model.UserInfo, error) {
 		return nil, errors.New("empty token")
 	}
 
-	if user, ok := defaultTokenCache.get(token); ok {
-		if user == nil {
-			return nil, errors.New("invalid token")
-		}
-		return user, nil
+	if user, err, hit := typedCacheGet(defaultTokenCache, token); hit {
+		return user, err
 	}
 
 	v, err, _ := defaultTokenCache.sf.Do(token, func() (interface{}, error) {
 		// double-check：等到 singleflight 锁的请求中可能已有先到者填好缓存。
-		if user, ok := defaultTokenCache.get(token); ok {
-			if user == nil {
-				return nil, errors.New("invalid token")
-			}
-			return user, nil
+		if user, err, hit := typedCacheGet(defaultTokenCache, token); hit {
+			return user, err
 		}
 		return findUserByTokenFromDB(token)
 	})
@@ -135,6 +129,23 @@ func FindUserByToken(token string) (*model.UserInfo, error) {
 	}
 	return v.(*model.UserInfo), nil
 }
+
+// typedCacheGet 统一处理「缓存命中但值为负（nil）」的语义：
+//   - 未命中：返回 (_, _, false)
+//   - 命中正缓存：返回 (value, nil, true)
+//   - 命中负缓存：返回 (nil, errInvalidToken, true)
+func typedCacheGet[T any](c *cache[T], key string) (*T, error, bool) {
+	v, ok := c.get(key)
+	if !ok {
+		return nil, nil, false
+	}
+	if v == nil {
+		return nil, errInvalidToken, true
+	}
+	return v, nil, true
+}
+
+var errInvalidToken = errors.New("invalid token")
 
 // findUserByTokenFromDB 直接打 DB；按结果决定缓存正/负条目。
 func findUserByTokenFromDB(token string) (*model.UserInfo, error) {
@@ -147,7 +158,7 @@ func findUserByTokenFromDB(token string) (*model.UserInfo, error) {
 	if err := db.Where("api_token = ?", token).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			defaultTokenCache.set(token, nil)
-			return nil, errors.New("invalid token")
+			return nil, errInvalidToken
 		}
 		return nil, err
 	}
@@ -159,8 +170,8 @@ func findUserByTokenFromDB(token string) (*model.UserInfo, error) {
 // GetCurrentUser 从 context 中获取当前用户信息
 // 如果在中间件中已经设置了用户信息，可以直接使用此函数获取
 func GetCurrentUser(c *gin.Context) (*model.UserInfo, bool) {
-	user, exists := c.Get(ContextUserKey)
-	if !exists {
+	user, ok := c.Get(ContextUserKey)
+	if !ok {
 		return nil, false
 	}
 	u, ok := user.(*model.UserInfo)

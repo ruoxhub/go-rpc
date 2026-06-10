@@ -205,6 +205,12 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	// Use direct DB for transaction
 	db := database.GetDB()
 	tx := db.Begin()
+	committed := false
+	defer func() {
+		if !committed {
+			tx.Rollback()
+		}
+	}()
 
 	group := model.GroupConfig{
 		GroupName:         req.GroupName,
@@ -222,7 +228,6 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	}
 
 	if err := tx.Create(&group).Error; err != nil {
-		tx.Rollback()
 		InternalError(c, err.Error())
 		return
 	}
@@ -249,6 +254,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	}
 
 	tx.Commit()
+	committed = true
 
 	middleware.InvalidateGroup(req.GroupName)
 

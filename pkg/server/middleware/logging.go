@@ -40,52 +40,39 @@ func LoggingMiddleware() gin.HandlerFunc {
 			zap.String("client_ip", clientIP),
 		)
 
-		// 将 logger 存入 context
 		c.Set("requestLogger", requestLogger)
-
-		// 处理请求
 		c.Next()
 
-		// 计算耗时
-		duration := time.Since(startTime)
-		durationMs := float64(duration.Nanoseconds()) / 1e6
-
-		// 确定日志级别
+		durationMs := float64(time.Since(startTime).Nanoseconds()) / 1e6
 		statusCode := c.Writer.Status()
 		errorMessage := c.Errors.String()
+		fields := []interface{}{
+			"status", statusCode,
+			"duration_ms", durationMs,
+			"user_agent", userAgent,
+			"error", errorMessage,
+		}
 
-		// 记录请求日志
-		if statusCode >= 500 {
-			requestLogger.Errorw("request_completed",
-				"status", statusCode,
-				"duration_ms", durationMs,
-				"user_agent", userAgent,
-				"error", errorMessage,
-			)
-		} else if statusCode >= 400 {
-			requestLogger.Warnw("request_completed",
-				"status", statusCode,
-				"duration_ms", durationMs,
-				"user_agent", userAgent,
-				"error", errorMessage,
-			)
-		} else {
-			requestLogger.Infow("request_completed",
-				"status", statusCode,
-				"duration_ms", durationMs,
-				"user_agent", userAgent,
-				"error", errorMessage,
-			)
+		switch {
+		case statusCode >= 500:
+			requestLogger.Errorw("request_completed", fields...)
+		case statusCode >= 400:
+			requestLogger.Warnw("request_completed", fields...)
+		default:
+			requestLogger.Infow("request_completed", fields...)
 		}
 	}
 }
 
 // RequestLogger 从 context 中获取请求 logger
 func RequestLogger(c *gin.Context) *zap.SugaredLogger {
-	if logger, exists := c.Get("requestLogger"); exists {
-		if sugaredLogger, ok := logger.(*zap.SugaredLogger); ok {
-			return sugaredLogger
-		}
+	l, exists := c.Get("requestLogger")
+	if !exists {
+		return logger.GetLogger()
 	}
-	return logger.GetLogger()
+	sugaredLogger, ok := l.(*zap.SugaredLogger)
+	if !ok {
+		return logger.GetLogger()
+	}
+	return sugaredLogger
 }

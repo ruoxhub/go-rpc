@@ -10,6 +10,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // 告警防抖时间常量（防止重复告警）
@@ -35,6 +36,14 @@ type MetricsReader interface {
 type MetricPoint struct {
 	TimeKey string  `json:"timeKey"`
 	Value   float64 `json:"value"`
+}
+
+type metricTagMapping struct {
+	Tag1Name string `gorm:"column:tag1_name"`
+	Tag2Name string `gorm:"column:tag2_name"`
+	Tag3Name string `gorm:"column:tag3_name"`
+	Tag4Name string `gorm:"column:tag4_name"`
+	Tag5Name string `gorm:"column:tag5_name"`
 }
 
 // NewEvaluator 创建告警评估引擎
@@ -213,30 +222,8 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 		return // 最近已触发过，跳过
 	}
 
-	// 确定告警级别
-	level := model.AlertLevelInfo
-	if currentValue > rule.Threshold*2 {
-		level = model.AlertLevelCritical
-	} else if currentValue > rule.Threshold*1.5 {
-		level = model.AlertLevelWarning
-	}
-
-	// 创建告警记录
-	history := model.AlertHistory{
-		RuleID:       rule.ID,
-		RuleName:     rule.Name,
-		Group:        rule.Group,
-		API:          rule.API,
-		MetricName:   rule.MetricName,
-		CurrentValue: currentValue,
-		Threshold:    rule.Threshold,
-		Operator:     rule.Operator,
-		Level:        level,
-		TriggeredAt:  time.Now(),
-		Message: fmt.Sprintf("告警：%s - %s 的 %s 指标%s阈值 (%.2f %s %.2f)",
-			rule.Name, rule.Group, rule.MetricName,
-			rule.Operator, currentValue, rule.Operator, rule.Threshold),
-	}
+	level := alertLevel(rule, currentValue)
+	history := newAlertHistory(rule, currentValue, level)
 
 	// 发送通知
 	if err := e.sendNotification(rule, &history); err != nil {
@@ -261,6 +248,34 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 	}
 }
 
+func alertLevel(rule model.AlertRule, currentValue float64) string {
+	if currentValue > rule.Threshold*2 {
+		return model.AlertLevelCritical
+	}
+	if currentValue > rule.Threshold*1.5 {
+		return model.AlertLevelWarning
+	}
+	return model.AlertLevelInfo
+}
+
+func newAlertHistory(rule model.AlertRule, currentValue float64, level string) model.AlertHistory {
+	return model.AlertHistory{
+		RuleID:       rule.ID,
+		RuleName:     rule.Name,
+		Group:        rule.Group,
+		API:          rule.API,
+		MetricName:   rule.MetricName,
+		CurrentValue: currentValue,
+		Threshold:    rule.Threshold,
+		Operator:     rule.Operator,
+		Level:        level,
+		TriggeredAt:  time.Now(),
+		Message: fmt.Sprintf("告警：%s - %s 的 %s 指标%s阈值 (%.2f %s %.2f)",
+			rule.Name, rule.Group, rule.MetricName,
+			rule.Operator, currentValue, rule.Operator, rule.Threshold),
+	}
+}
+
 // sendNotification 发送告警通知
 func (e *Evaluator) sendNotification(rule model.AlertRule, history *model.AlertHistory) error {
 	return SendAlertNotification(e.notifier, rule, history)
@@ -281,51 +296,18 @@ func (r *DefaultMetricsReader) QueryMetrics(name string, tags map[string]string,
 		return nil, fmt.Errorf("database not initialized")
 	}
 
-	// 1. 查询 metric_tag 找到当前指标的映射关系
-	var mapping struct {
-		Tag1Name string `gorm:"column:tag1_name"`
-		Tag2Name string `gorm:"column:tag2_name"`
-		Tag3Name string `gorm:"column:tag3_name"`
-		Tag4Name string `gorm:"column:tag4_name"`
-		Tag5Name string `gorm:"column:tag5_name"`
-	}
+	mapping, hasMapping := loadMetricTagMapping(db, name)
 
-	hasMapping := false
-	if err := db.Table("metric_tag").Select("tag1_name, tag2_name, tag3_name, tag4_name, tag5_name").
-		Where("name = ?", name).Scan(&mapping).Error; err == nil && mapping.Tag1Name != "" {
-		hasMapping = true
-	}
-
-	// 构建查询
 	query := db.Table("metric_minute").
 		Select("time_key, value").
 		Where("name = ?", name).
 		Order("time_key DESC").
 		Limit(windowMinutes)
 
-	// 2. 添加标签过滤
 	if hasMapping {
-		tagColumns := map[string]string{
-			mapping.Tag1Name: "tag1",
-			mapping.Tag2Name: "tag2",
-			mapping.Tag3Name: "tag3",
-			mapping.Tag4Name: "tag4",
-			mapping.Tag5Name: "tag5",
-		}
-
-		for tKey, tVal := range tags {
-			if col, ok := tagColumns[tKey]; ok && col != "" {
-				query = query.Where(fmt.Sprintf("%s = ?", col), tVal)
-			}
-		}
+		query = applyMappedTagFilters(query, mapping, tags)
 	} else {
-		// 向下兼容默认推测
-		if group, ok := tags["group"]; ok {
-			query = query.Where("tag1 = ?", group)
-		}
-		if api, ok := tags["api"]; ok {
-			query = query.Where("tag2 = ?", api)
-		}
+		query = applyDefaultTagFilters(query, tags)
 	}
 
 	var results []MetricPoint
@@ -334,4 +316,41 @@ func (r *DefaultMetricsReader) QueryMetrics(name string, tags map[string]string,
 	}
 
 	return results, nil
+}
+
+func loadMetricTagMapping(db *gorm.DB, name string) (metricTagMapping, bool) {
+	var mapping metricTagMapping
+	err := db.Table("metric_tag").
+		Select("tag1_name, tag2_name, tag3_name, tag4_name, tag5_name").
+		Where("name = ?", name).
+		Scan(&mapping).Error
+	return mapping, err == nil && mapping.Tag1Name != ""
+}
+
+func applyMappedTagFilters(query *gorm.DB, mapping metricTagMapping, tags map[string]string) *gorm.DB {
+	tagColumns := map[string]string{
+		mapping.Tag1Name: "tag1",
+		mapping.Tag2Name: "tag2",
+		mapping.Tag3Name: "tag3",
+		mapping.Tag4Name: "tag4",
+		mapping.Tag5Name: "tag5",
+	}
+
+	for tagName, tagValue := range tags {
+		column, ok := tagColumns[tagName]
+		if ok && column != "" {
+			query = query.Where(fmt.Sprintf("%s = ?", column), tagValue)
+		}
+	}
+	return query
+}
+
+func applyDefaultTagFilters(query *gorm.DB, tags map[string]string) *gorm.DB {
+	if group, ok := tags["group"]; ok {
+		query = query.Where("tag1 = ?", group)
+	}
+	if api, ok := tags["api"]; ok {
+		query = query.Where("tag2 = ?", api)
+	}
+	return query
 }

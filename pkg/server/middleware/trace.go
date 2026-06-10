@@ -94,12 +94,12 @@ func buildTraceSnapshot(c *gin.Context) traceSnapshot {
 func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.Time,
 	durationMs int64, status, errorMessage string) {
 
-	// 检查数据库是否已初始化
 	db := database.GetDB()
 	if db == nil {
 		return
 	}
 
+	duration := time.Duration(durationMs) * time.Millisecond
 	record := model.TraceRecord{
 		TraceID:      traceID,
 		SpanID:       spanID,
@@ -109,20 +109,18 @@ func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.
 		API:          snapshot.API,
 		Caller:       snapshot.Caller,
 		StartTime:    startTime,
-		EndTime:      startTime.Add(time.Duration(durationMs) * time.Millisecond),
+		EndTime:      startTime.Add(duration),
 		DurationMs:   durationMs,
 		Status:       status,
 		ErrorMessage: errorMessage,
 	}
 
-	// 额外数据
-	extraData := map[string]interface{}{
+	extraData := map[string]any{
 		"method":       snapshot.Method,
 		"user_agent":   snapshot.UserAgent,
 		"content_type": snapshot.ContentType,
 		"status_code":  snapshot.StatusCode,
 	}
-
 	if snapshot.UserID > 0 {
 		extraData["user_id"] = snapshot.UserID
 	}
@@ -136,7 +134,7 @@ func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.
 		logger.Error("序列化追踪额外数据失败", zap.Error(err))
 	}
 
-	if err := database.GetDB().Create(&record).Error; err != nil {
+	if err := db.Create(&record).Error; err != nil {
 		logger.Error("写入追踪记录失败", zap.Error(err))
 	}
 }

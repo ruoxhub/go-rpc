@@ -7,6 +7,8 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
+const compressMethodHeader = "compress_method"
+
 // CompressorManager manages multiple compression algorithms
 type CompressorManager struct {
 	compressors map[string]Compressor
@@ -17,42 +19,42 @@ func NewCompressorManager() *CompressorManager {
 	m := &CompressorManager{
 		compressors: make(map[string]Compressor),
 	}
+
 	m.setupDefaultCompressor()
 	return m
 }
 
 // setupDefaultCompressor registers default compressors
 func (m *CompressorManager) setupDefaultCompressor() {
-	m.RegisterCompressor(&GzipCompressor{})
-	m.RegisterCompressor(&NoneCompressor{})
-	m.RegisterCompressor(&SnappyCompressor{})
+	defaultCompressors := []Compressor{
+		&GzipCompressor{},
+		&NoneCompressor{},
+		&SnappyCompressor{},
+	}
+
+	for _, compressor := range defaultCompressors {
+		m.RegisterCompressor(compressor)
+	}
 }
 
 // RegisterCompressor registers a compressor
 func (m *CompressorManager) RegisterCompressor(c Compressor) *CompressorManager {
-	m.compressors[strings.TrimSpace(c.Method())] = c
+	m.compressors[normalizeMethod(c.Method())] = c
 	return m
 }
 
 // fetchCompressor gets the compressor for a packet based on headers
 func (m *CompressorManager) fetchCompressor(packet *protocol.RpcPacket) Compressor {
-	// Only compress response packets
-	if packet.Type != byte(protocol.PacketTypeInvokeResponse) &&
-		packet.Type != byte(protocol.PacketTypeSInvokeResponse) {
+	if !isCompressibleResponse(packet) {
 		return nil
 	}
 
-	method := packet.GetHeader("compress_method")
+	method := normalizeMethod(packet.GetHeader(compressMethodHeader))
 	if method == "" {
 		return nil
 	}
 
-	compressor, ok := m.compressors[strings.TrimSpace(method)]
-	if !ok {
-		return nil
-	}
-
-	return compressor
+	return m.compressors[method]
 }
 
 // HandleDecompress decompresses packet data if needed
@@ -79,7 +81,7 @@ func (m *CompressorManager) DoCompress(packet *protocol.RpcPacket) error {
 	}
 
 	if len(packet.Data) < 1024 {
-		delete(packet.Headers, "compress_method")
+		delete(packet.Headers, compressMethodHeader)
 		return nil
 	}
 
@@ -94,9 +96,18 @@ func (m *CompressorManager) DoCompress(packet *protocol.RpcPacket) error {
 
 // GetCompressor gets a compressor by method name
 func (m *CompressorManager) GetCompressor(method string) (Compressor, error) {
-	c, ok := m.compressors[strings.TrimSpace(method)]
+	c, ok := m.compressors[normalizeMethod(method)]
 	if !ok {
 		return nil, errors.New("compressor not found: " + method)
 	}
 	return c, nil
+}
+
+func normalizeMethod(method string) string {
+	return strings.TrimSpace(method)
+}
+
+func isCompressibleResponse(packet *protocol.RpcPacket) bool {
+	return packet.Type == byte(protocol.PacketTypeInvokeResponse) ||
+		packet.Type == byte(protocol.PacketTypeSInvokeResponse)
 }

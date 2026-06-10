@@ -96,6 +96,25 @@ type UpdateAlertRuleRequest struct {
 	Enabled     *bool    `json:"enabled"`
 }
 
+func toAlertRuleVO(rule *model.AlertRule) AlertRuleVO {
+	return AlertRuleVO{
+		ID:          rule.ID,
+		Name:        rule.Name,
+		Description: rule.Description,
+		Group:       rule.Group,
+		API:         rule.API,
+		MetricName:  rule.MetricName,
+		Operator:    rule.Operator,
+		Threshold:   rule.Threshold,
+		Window:      rule.Window,
+		WebhookURL:  rule.WebhookURL,
+		Email:       rule.Email,
+		Enabled:     rule.Enabled,
+		CreatedAt:   rule.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:   rule.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
 // GetAlertRules 获取告警规则列表
 func (h *AlertHandler) GetAlertRules(c *gin.Context) {
 	var query model.AlertRuleQuery
@@ -110,24 +129,9 @@ func (h *AlertHandler) GetAlertRules(c *gin.Context) {
 		return
 	}
 
-	var vos []AlertRuleVO
-	for _, rule := range rules {
-		vos = append(vos, AlertRuleVO{
-			ID:          rule.ID,
-			Name:        rule.Name,
-			Description: rule.Description,
-			Group:       rule.Group,
-			API:         rule.API,
-			MetricName:  rule.MetricName,
-			Operator:    rule.Operator,
-			Threshold:   rule.Threshold,
-			Window:      rule.Window,
-			WebhookURL:  rule.WebhookURL,
-			Email:       rule.Email,
-			Enabled:     rule.Enabled,
-			CreatedAt:   rule.CreatedAt.Format("2006-01-02 15:04:05"),
-			UpdatedAt:   rule.UpdatedAt.Format("2006-01-02 15:04:05"),
-		})
+	vos := make([]AlertRuleVO, 0, len(rules))
+	for i := range rules {
+		vos = append(vos, toAlertRuleVO(&rules[i]))
 	}
 
 	SuccessWithTotal(c, vos, total)
@@ -149,24 +153,7 @@ func (h *AlertHandler) GetAlertRule(c *gin.Context) {
 		return
 	}
 
-	vo := AlertRuleVO{
-		ID:          rule.ID,
-		Name:        rule.Name,
-		Description: rule.Description,
-		Group:       rule.Group,
-		API:         rule.API,
-		MetricName:  rule.MetricName,
-		Operator:    rule.Operator,
-		Threshold:   rule.Threshold,
-		Window:      rule.Window,
-		WebhookURL:  rule.WebhookURL,
-		Email:       rule.Email,
-		Enabled:     rule.Enabled,
-		CreatedAt:   rule.CreatedAt.Format("2006-01-02 15:04:05"),
-		UpdatedAt:   rule.UpdatedAt.Format("2006-01-02 15:04:05"),
-	}
-
-	Success(c, vo)
+	Success(c, toAlertRuleVO(rule))
 }
 
 // CreateAlertRule 创建告警规则
@@ -207,32 +194,8 @@ func (h *AlertHandler) CreateAlertRule(c *gin.Context) {
 	Success(c, rule)
 }
 
-// UpdateAlertRule 更新告警规则
-func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
-	id := c.Param("id")
-
-	var req UpdateAlertRuleRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		BadRequest(c, err.Error())
-		return
-	}
-
-	if req.Operator != nil && !validateAlertOperator(c, *req.Operator) {
-		return
-	}
-
-	var ruleID int64
-	if _, err := fmt.Sscanf(id, "%d", &ruleID); err != nil {
-		BadRequest(c, "无效的规则 ID")
-		return
-	}
-
-	rule, err := h.alertRepo.FindRuleByID(ruleID)
-	if err != nil || rule == nil {
-		NotFound(c, "规则不存在")
-		return
-	}
-
+// applyAlertRuleUpdates applies partial updates from request to an alert rule.
+func applyAlertRuleUpdates(rule *model.AlertRule, req *UpdateAlertRuleRequest) {
 	if req.Name != nil {
 		rule.Name = *req.Name
 	}
@@ -266,6 +229,35 @@ func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
 	if req.Enabled != nil {
 		rule.Enabled = *req.Enabled
 	}
+}
+
+// UpdateAlertRule 更新告警规则
+func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
+	id := c.Param("id")
+
+	var req UpdateAlertRuleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+
+	if req.Operator != nil && !validateAlertOperator(c, *req.Operator) {
+		return
+	}
+
+	var ruleID int64
+	if _, err := fmt.Sscanf(id, "%d", &ruleID); err != nil {
+		BadRequest(c, "无效的规则 ID")
+		return
+	}
+
+	rule, err := h.alertRepo.FindRuleByID(ruleID)
+	if err != nil || rule == nil {
+		NotFound(c, "规则不存在")
+		return
+	}
+
+	applyAlertRuleUpdates(rule, &req)
 
 	if err := h.alertRepo.UpdateRule(rule); err != nil {
 		InternalError(c, "更新失败：" + err.Error())

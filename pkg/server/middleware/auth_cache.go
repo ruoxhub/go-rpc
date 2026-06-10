@@ -18,24 +18,24 @@ const (
 	cacheSoftCap    = 10000
 )
 
-// tokenEntry 缓存条目；user == nil 表示负缓存（token 不存在）。
-type tokenEntry struct {
-	user      *model.UserInfo
-	expiresAt time.Time
-}
-
-// tokenCache 带 TTL + singleflight 的 token → user 缓存。
-type tokenCache struct {
+// cache 是带 TTL + singleflight 的 string → *T 通用缓存。
+// value == nil 表示负缓存（条目不存在）。
+type cache[T any] struct {
 	mu     sync.RWMutex
-	items  map[string]tokenEntry
+	items  map[string]cacheEntry[T]
 	sf     singleflight.Group
 	posTTL time.Duration
 	negTTL time.Duration
 }
 
-func newTokenCache(positiveTTL, negativeTTL time.Duration) *tokenCache {
-	c := &tokenCache{
-		items:  make(map[string]tokenEntry),
+type cacheEntry[T any] struct {
+	value     *T
+	expiresAt time.Time
+}
+
+func newCache[T any](positiveTTL, negativeTTL time.Duration) *cache[T] {
+	c := &cache[T]{
+		items:  make(map[string]cacheEntry[T]),
 		posTTL: positiveTTL,
 		negTTL: negativeTTL,
 	}
@@ -43,42 +43,39 @@ func newTokenCache(positiveTTL, negativeTTL time.Duration) *tokenCache {
 	return c
 }
 
-func (c *tokenCache) get(token string) (*model.UserInfo, bool) {
+func (c *cache[T]) get(key string) (*T, bool) {
 	c.mu.RLock()
-	e, ok := c.items[token]
+	e, ok := c.items[key]
 	c.mu.RUnlock()
-	if !ok {
+	if !ok || time.Now().After(e.expiresAt) {
 		return nil, false
 	}
-	if time.Now().After(e.expiresAt) {
-		return nil, false
-	}
-	return e.user, true
+	return e.value, true
 }
 
-func (c *tokenCache) set(token string, user *model.UserInfo) {
+func (c *cache[T]) set(key string, value *T) {
 	ttl := c.posTTL
-	if user == nil {
+	if value == nil {
 		ttl = c.negTTL
 	}
 	c.mu.Lock()
-	c.items[token] = tokenEntry{user: user, expiresAt: time.Now().Add(ttl)}
+	c.items[key] = cacheEntry[T]{value: value, expiresAt: time.Now().Add(ttl)}
 	if len(c.items) > cacheSoftCap {
 		c.purgeExpiredLocked()
 	}
 	c.mu.Unlock()
 }
 
-func (c *tokenCache) invalidate(token string) {
-	if token == "" {
+func (c *cache[T]) invalidate(key string) {
+	if key == "" {
 		return
 	}
 	c.mu.Lock()
-	delete(c.items, token)
+	delete(c.items, key)
 	c.mu.Unlock()
 }
 
-func (c *tokenCache) purgeExpiredLocked() {
+func (c *cache[T]) purgeExpiredLocked() {
 	now := time.Now()
 	for k, e := range c.items {
 		if now.After(e.expiresAt) {
@@ -87,7 +84,7 @@ func (c *tokenCache) purgeExpiredLocked() {
 	}
 }
 
-func (c *tokenCache) gcLoop() {
+func (c *cache[T]) gcLoop() {
 	t := time.NewTicker(cacheGCInterval)
 	defer t.Stop()
 	for range t.C {
@@ -97,90 +94,19 @@ func (c *tokenCache) gcLoop() {
 	}
 }
 
-// groupEntry 缓存条目；group == nil 表示负缓存（group_config 不存在，视为匿名分组）。
-type groupEntry struct {
-	group     *model.GroupConfig
-	expiresAt time.Time
-}
-
-// groupCache 带 TTL + singleflight 的 groupName → GroupConfig 缓存。
-type groupCache struct {
-	mu     sync.RWMutex
-	items  map[string]groupEntry
-	sf     singleflight.Group
-	posTTL time.Duration
-	negTTL time.Duration
-}
-
-func newGroupCache(positiveTTL, negativeTTL time.Duration) *groupCache {
-	c := &groupCache{
-		items:  make(map[string]groupEntry),
-		posTTL: positiveTTL,
-		negTTL: negativeTTL,
-	}
-	go c.gcLoop()
-	return c
-}
-
-func (c *groupCache) get(name string) (*model.GroupConfig, bool) {
-	c.mu.RLock()
-	e, ok := c.items[name]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Now().After(e.expiresAt) {
-		return nil, false
-	}
-	return e.group, true
-}
-
-func (c *groupCache) set(name string, group *model.GroupConfig) {
-	ttl := c.posTTL
-	if group == nil {
-		ttl = c.negTTL
-	}
-	c.mu.Lock()
-	c.items[name] = groupEntry{group: group, expiresAt: time.Now().Add(ttl)}
-	if len(c.items) > cacheSoftCap {
-		c.purgeExpiredLocked()
-	}
-	c.mu.Unlock()
-}
-
-func (c *groupCache) invalidate(name string) {
-	if name == "" {
-		return
-	}
-	c.mu.Lock()
-	delete(c.items, name)
-	c.mu.Unlock()
-}
-
-func (c *groupCache) purgeExpiredLocked() {
-	now := time.Now()
-	for k, e := range c.items {
-		if now.After(e.expiresAt) {
-			delete(c.items, k)
-		}
-	}
-}
-
-func (c *groupCache) gcLoop() {
-	t := time.NewTicker(cacheGCInterval)
-	defer t.Stop()
-	for range t.C {
-		c.mu.Lock()
-		c.purgeExpiredLocked()
-		c.mu.Unlock()
-	}
-}
-
-// 包级单例。
+// 包级单例。保留原构造函数名以兼容既有调用与测试。
 var (
-	defaultTokenCache = newTokenCache(defaultTokenPositiveTTL, defaultTokenNegativeTTL)
-	defaultGroupCache = newGroupCache(defaultGroupPositiveTTL, defaultGroupNegativeTTL)
+	defaultTokenCache = newCache[model.UserInfo](defaultTokenPositiveTTL, defaultTokenNegativeTTL)
+	defaultGroupCache = newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
 )
+
+func newTokenCache(posTTL, negTTL time.Duration) *cache[model.UserInfo] {
+	return newCache[model.UserInfo](posTTL, negTTL)
+}
+
+func newGroupCache(posTTL, negTTL time.Duration) *cache[model.GroupConfig] {
+	return newCache[model.GroupConfig](posTTL, negTTL)
+}
 
 // InvalidateToken 显式失效一个 token 的缓存。在用户改密、刷 token、改 IsAdmin/QuotaQps、删除用户时调用。
 func InvalidateToken(token string) {
@@ -220,9 +146,6 @@ func LookupGroupConfig(groupName string, lookup GroupConfigLookup) (*model.Group
 	})
 	if err != nil {
 		return nil, err
-	}
-	if v == nil {
-		return nil, nil
 	}
 	return v.(*model.GroupConfig), nil
 }

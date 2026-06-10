@@ -37,18 +37,20 @@ func (h *Handler) ensureDefaultActions(groupName string) {
 			continue
 		}
 
-		if count == 0 {
-			action := model.GroupAction{
-				GroupName:  groupName,
-				ActionName: actionName,
-				CreateDate: time.Now(),
-			}
-			if err := db.Create(&action).Error; err != nil {
-				logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", groupName, actionName, err)
-			} else {
-				logger.Infof("Default action created: group=%s, action=%s", groupName, actionName)
-			}
+		if count != 0 {
+			continue
 		}
+
+		action := model.GroupAction{
+			GroupName:  groupName,
+			ActionName: actionName,
+			CreateDate: time.Now(),
+		}
+		if err := db.Create(&action).Error; err != nil {
+			logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", groupName, actionName, err)
+			continue
+		}
+		logger.Infof("Default action created: group=%s, action=%s", groupName, actionName)
 	}
 }
 

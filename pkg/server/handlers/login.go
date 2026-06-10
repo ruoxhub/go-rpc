@@ -24,18 +24,18 @@ type LoginRequest struct {
 func HandleLogin(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBind(&req); err != nil {
-		RpcApiBadRequest(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
 	var user model.UserInfo
 	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&user).Error; err != nil {
-		RpcApiUnauthorized(c, "用户名或密码错误")
+		RpcApiError(c, -1, "用户名或密码错误")
 		return
 	}
 
 	if !password.CheckPassword(req.Password, user.Password) {
-		RpcApiUnauthorized(c, "用户名或密码错误")
+		RpcApiError(c, -1, "用户名或密码错误")
 		return
 	}
 
@@ -83,14 +83,12 @@ func HandleGetUserInfo(c *gin.Context) {
 
 // HandleSystemNotice 获取系统通知
 func HandleSystemNotice(c *gin.Context) {
-	cfgSvc, exists := c.Get("configService")
-	var systemNotice string = ""
-	if exists {
-		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
-			systemNotice = configSvc.GetConfig(pkgconfig.ConfigKeySystemNotice)
+	var systemNotice string
+	if cfgSvc, exists := c.Get("configService"); exists {
+		if svc, ok := cfgSvc.(pkgconfig.Service); ok {
+			systemNotice = svc.GetConfig(pkgconfig.ConfigKeySystemNotice)
 		}
 	}
-
 	RpcApiSuccess(c, systemNotice)
 }
 
@@ -150,7 +148,7 @@ func HandleFrontendListGroup(c *gin.Context) {
 		Scan(&stats).Error
 
 	if err != nil {
-		RpcApiInternalError(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -176,7 +174,7 @@ func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := groupRepo.GetGroupStats("", true, activeThreshold)
 	if err != nil {
-		RpcApiInternalError(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -215,7 +213,7 @@ func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) 
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := groupRepo.FindAnonymousDeviceGroups(activeThreshold)
 	if err != nil {
-		RpcApiInternalError(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -240,7 +238,7 @@ func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) 
 func HandleFrontendGroupDetail(c *gin.Context) {
 	groupName := c.Query("groupName")
 	if groupName == "" {
-		RpcApiBadRequest(c, "groupName 参数必填")
+		RpcApiError(c, -1, "groupName 参数必填")
 		return
 	}
 
@@ -267,21 +265,19 @@ type RegisterRequest struct {
 
 // HandleRegister 处理注册请求
 func HandleRegister(c *gin.Context) {
-	cfgSvc, exists := c.Get("configService")
-	if !exists {
-		// 配置服务未初始化，使用默认值允许注册
-	} else {
-		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
-			if !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
-				RpcApiForbidden(c, "当前不允许注册新用户")
-				return
-			}
-		}
+	var configSvc pkgconfig.Service
+	if cfgSvc, exists := c.Get("configService"); exists {
+		configSvc, _ = cfgSvc.(pkgconfig.Service)
+	}
+
+	if configSvc != nil && !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
+		RpcApiError(c, -1, "当前不允许注册新用户")
+		return
 	}
 
 	var req RegisterRequest
 	if err := c.ShouldBind(&req); err != nil {
-		RpcApiBadRequest(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -295,15 +291,13 @@ func HandleRegister(c *gin.Context) {
 
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		RpcApiInternalError(c, "密码加密失败")
+		RpcApiError(c, -1, "密码加密失败")
 		return
 	}
 
 	var defaultQps float64 = 100
-	if cfgSvc != nil {
-		if configSvc, ok := cfgSvc.(pkgconfig.Service); ok {
-			defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
-		}
+	if configSvc != nil {
+		defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
 	}
 
 	user := model.UserInfo{
@@ -319,7 +313,7 @@ func HandleRegister(c *gin.Context) {
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
-		RpcApiInternalError(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -333,7 +327,7 @@ func HandleRegister(c *gin.Context) {
 func HandleUserAdd(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		RpcApiBadRequest(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 
@@ -341,7 +335,7 @@ func HandleUserAdd(c *gin.Context) {
 
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		RpcApiInternalError(c, "密码加密失败")
+		RpcApiError(c, -1, "密码加密失败")
 		return
 	}
 
@@ -358,7 +352,7 @@ func HandleUserAdd(c *gin.Context) {
 	}
 
 	if err := database.GetDB().Create(&user).Error; err != nil {
-		RpcApiInternalError(c, err.Error())
+		RpcApiError(c, -1, err.Error())
 		return
 	}
 

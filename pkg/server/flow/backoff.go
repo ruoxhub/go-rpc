@@ -5,19 +5,13 @@ import (
 	"time"
 )
 
-// BackoffConfig holds configuration for delay backoff
 type BackoffConfig struct {
-	// InitialDelay is the initial delay duration
 	InitialDelay time.Duration
-	// MaxDelay is the maximum delay duration
-	MaxDelay time.Duration
-	// Multiplier is the factor to increase delay
-	Multiplier float64
-	// ResetTimeout is the timeout to reset backoff state
+	MaxDelay     time.Duration
+	Multiplier   float64
 	ResetTimeout time.Duration
 }
 
-// DefaultBackoffConfig returns default backoff configuration
 func DefaultBackoffConfig() *BackoffConfig {
 	return &BackoffConfig{
 		InitialDelay: 1 * time.Second,
@@ -27,26 +21,20 @@ func DefaultBackoffConfig() *BackoffConfig {
 	}
 }
 
-// BackoffState tracks the current backoff state for a group
 type BackoffState struct {
-	// currentDelay is the current delay duration
 	currentDelay time.Duration
-	// lastAttempt is the time of last attempt
-	lastAttempt time.Time
-	// lastSuccess is the time of last successful operation
-	lastSuccess time.Time
-	// mu protects concurrent access
-	mu sync.Mutex
+	lastAttempt  time.Time
+	lastSuccess  time.Time
+	mu           sync.Mutex
 }
 
-// DelayBackoff manages delay backoff for empty client queues
+// DelayBackoff manages delay backoff for empty client queues.
 type DelayBackoff struct {
-	config  *BackoffConfig
-	states  map[string]*BackoffState
+	config   *BackoffConfig
+	states   map[string]*BackoffState
 	statesMu sync.RWMutex
 }
 
-// NewDelayBackoff creates a new DelayBackoff instance
 func NewDelayBackoff(config *BackoffConfig) *DelayBackoff {
 	if config == nil {
 		config = DefaultBackoffConfig()
@@ -57,7 +45,6 @@ func NewDelayBackoff(config *BackoffConfig) *DelayBackoff {
 	}
 }
 
-// GetState gets or creates backoff state for a group
 func (d *DelayBackoff) GetState(groupName string) *BackoffState {
 	d.statesMu.RLock()
 	state, ok := d.states[groupName]
@@ -70,7 +57,6 @@ func (d *DelayBackoff) GetState(groupName string) *BackoffState {
 	d.statesMu.Lock()
 	defer d.statesMu.Unlock()
 
-	// Double-check
 	if state, ok := d.states[groupName]; ok {
 		return state
 	}
@@ -84,13 +70,11 @@ func (d *DelayBackoff) GetState(groupName string) *BackoffState {
 	return state
 }
 
-// GetDelay returns the current delay for a group
 func (d *DelayBackoff) GetDelay(groupName string) time.Duration {
 	state := d.GetState(groupName)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	// Check if reset timeout has passed
 	if time.Since(state.lastSuccess) > d.config.ResetTimeout {
 		state.currentDelay = d.config.InitialDelay
 	}
@@ -98,7 +82,6 @@ func (d *DelayBackoff) GetDelay(groupName string) time.Duration {
 	return state.currentDelay
 }
 
-// RecordEmpty records an empty queue attempt and increases backoff
 func (d *DelayBackoff) RecordEmpty(groupName string) {
 	state := d.GetState(groupName)
 	state.mu.Lock()
@@ -106,7 +89,6 @@ func (d *DelayBackoff) RecordEmpty(groupName string) {
 
 	state.lastAttempt = time.Now()
 
-	// Increase delay with multiplier
 	newDelay := time.Duration(float64(state.currentDelay) * d.config.Multiplier)
 	if newDelay > d.config.MaxDelay {
 		newDelay = d.config.MaxDelay
@@ -114,7 +96,6 @@ func (d *DelayBackoff) RecordEmpty(groupName string) {
 	state.currentDelay = newDelay
 }
 
-// RecordSuccess records a successful operation and resets backoff
 func (d *DelayBackoff) RecordSuccess(groupName string) {
 	state := d.GetState(groupName)
 	state.mu.Lock()
@@ -124,7 +105,6 @@ func (d *DelayBackoff) RecordSuccess(groupName string) {
 	state.currentDelay = d.config.InitialDelay
 }
 
-// Reset resets backoff state for a group
 func (d *DelayBackoff) Reset(groupName string) {
 	d.statesMu.Lock()
 	defer d.statesMu.Unlock()
@@ -137,7 +117,6 @@ func (d *DelayBackoff) Reset(groupName string) {
 	}
 }
 
-// Remove removes backoff state for a group
 func (d *DelayBackoff) Remove(groupName string) {
 	d.statesMu.Lock()
 	defer d.statesMu.Unlock()
@@ -145,7 +124,6 @@ func (d *DelayBackoff) Remove(groupName string) {
 	delete(d.states, groupName)
 }
 
-// Cleanup cleans up all backoff states
 func (d *DelayBackoff) Cleanup() {
 	d.statesMu.Lock()
 	defer d.statesMu.Unlock()

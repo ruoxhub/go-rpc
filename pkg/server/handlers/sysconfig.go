@@ -118,32 +118,37 @@ func (h *SysConfigHandler) GetServerNodes(c *gin.Context) {
 	Success(c, nodes)
 }
 
+// parsePagination parses page and pageSize query parameters with defaults.
+func parsePagination(c *gin.Context, defaultPageSize int) (page, pageSize int) {
+	pageStr := c.DefaultQuery("page", "1")
+	sizeStr := c.DefaultQuery("pageSize", fmt.Sprintf("%d", defaultPageSize))
+
+	fmt.Sscanf(pageStr, "%d", &page)
+	fmt.Sscanf(sizeStr, "%d", &pageSize)
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	return
+}
+
 // GetSysLogs 获取系统日志列表
 func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 	level := c.Query("level")
 	startTime := c.Query("startTime")
 	endTime := c.Query("endTime")
 	keyword := c.Query("keyword")
-	page := c.DefaultQuery("page", "1")
-	pageSize := c.DefaultQuery("pageSize", "20")
-
-	var pageInt, pageSizeInt int
-	fmt.Sscanf(page, "%d", &pageInt)
-	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
-	if pageInt <= 0 {
-		pageInt = 1
-	}
-	if pageSizeInt <= 0 {
-		pageSizeInt = 20
-	}
+	page, pageSize := parsePagination(c, 20)
 
 	logs, total, err := h.sysLogRepo.FindAll(repository.SysLogQuery{
 		Level:     level,
 		StartTime: startTime,
 		EndTime:   endTime,
 		Keyword:   keyword,
-		Page:      pageInt,
-		PageSize:  pageSizeInt,
+		Page:      page,
+		PageSize:  pageSize,
 	})
 	if err != nil {
 		InternalError(c, err.Error())
@@ -155,8 +160,8 @@ func (h *SysConfigHandler) GetSysLogs(c *gin.Context) {
 		"message":  "success",
 		"data":     logs,
 		"total":    total,
-		"page":     pageInt,
-		"pageSize": pageSizeInt,
+		"page":     page,
+		"pageSize": pageSize,
 	})
 }
 
@@ -167,18 +172,7 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 	group := c.Query("group")
 	startTime := c.Query("startTime")
 	endTime := c.Query("endTime")
-	page := c.DefaultQuery("page", "1")
-	pageSize := c.DefaultQuery("pageSize", "50")
-
-	var pageInt, pageSizeInt int
-	fmt.Sscanf(page, "%d", &pageInt)
-	fmt.Sscanf(pageSize, "%d", &pageSizeInt)
-	if pageInt <= 0 {
-		pageInt = 1
-	}
-	if pageSizeInt <= 0 {
-		pageSizeInt = 50
-	}
+	page, pageSize := parsePagination(c, 50)
 
 	type AppLogEntry struct {
 		Timestamp string `json:"timestamp"`
@@ -212,8 +206,8 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 		rawQuery = rawQuery.Where("start_time <= ?", endTime)
 	}
 
-	offset := (pageInt - 1) * pageSizeInt
-	if err := rawQuery.Offset(offset).Limit(pageSizeInt).Order("start_time DESC").Scan(&logs).Error; err != nil {
+	offset := (page - 1) * pageSize
+	if err := rawQuery.Offset(offset).Limit(pageSize).Order("start_time DESC").Scan(&logs).Error; err != nil {
 		InternalError(c, err.Error())
 		return
 	}
@@ -223,7 +217,7 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 		"message":  "success",
 		"data":     logs,
 		"total":    len(logs),
-		"page":     pageInt,
-		"pageSize": pageSizeInt,
+		"page":     page,
+		"pageSize": pageSize,
 	})
 }

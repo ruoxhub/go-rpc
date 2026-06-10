@@ -59,21 +59,11 @@ func (h *MetricHandler) GetMetrics(c *gin.Context) {
 
 	var vos []MetricDataVO
 	for _, m := range metrics {
-		tags := []string{}
-		if m.Tag1 != "" {
-			tags = append(tags, m.Tag1)
-		}
-		if m.Tag2 != "" {
-			tags = append(tags, m.Tag2)
-		}
-		if m.Tag3 != "" {
-			tags = append(tags, m.Tag3)
-		}
-		if m.Tag4 != "" {
-			tags = append(tags, m.Tag4)
-		}
-		if m.Tag5 != "" {
-			tags = append(tags, m.Tag5)
+		var tags []string
+		for _, t := range [...]string{m.Tag1, m.Tag2, m.Tag3, m.Tag4, m.Tag5} {
+			if t != "" {
+				tags = append(tags, t)
+			}
 		}
 
 		vos = append(vos, MetricDataVO{
