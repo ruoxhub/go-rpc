@@ -146,16 +146,25 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	sekiroClient := client.NewRpcClient(group, clientID, wsTransport)
 	sekiroClient.SetStatus(client.StatusOnline)
 
-	// 设置健康降级回调，通过 EventBus 发布事件
+	// 设置熔断器状态变更回调，通过 EventBus 发布事件
 	if h.eventBus != nil {
-		sekiroClient.OnHealthDegraded = func(c *client.RpcClient) {
-			h.eventBus.Publish(eventbus.EventClientHealthDegraded, &eventbus.ClientHealthDegradedEvent{
-				Group:     c.Group,
-				ClientID:  c.ClientID,
-				FailCount: c.GetFailCount(),
+		sekiroClient.SetCircuitBreakerCallback(func(from, to client.CircuitState) {
+			h.eventBus.Publish(eventbus.EventCircuitBreakerStateChanged, &eventbus.CircuitBreakerStateEvent{
+				Group:     group,
+				ClientID:  clientID,
+				From:      from.String(),
+				To:        to.String(),
 				Timestamp: time.Now(),
 			})
-		}
+			if from == client.CircuitClosed && to == client.CircuitOpen {
+				h.eventBus.Publish(eventbus.EventClientHealthDegraded, &eventbus.ClientHealthDegradedEvent{
+					Group:     group,
+					ClientID:  clientID,
+					FailCount: sekiroClient.GetFailCount(),
+					Timestamp: time.Now(),
+				})
+			}
+		})
 	}
 
 	isRegistered := h.isGroupRegistered(group)

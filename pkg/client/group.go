@@ -125,7 +125,7 @@ func (g *RpcGroup) allocate() *RpcClient {
 		if fallbackOnline == nil {
 			fallbackOnline = c
 		}
-		if c.IsHealthy {
+		if c.GetHealthStatus() {
 			return c
 		}
 	}

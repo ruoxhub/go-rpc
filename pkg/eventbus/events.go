@@ -4,14 +4,15 @@ import "time"
 
 // 事件类型常量
 const (
-	EventClientConnect         = "client.connect"
-	EventClientDisconnect      = "client.disconnect"
-	EventClientDestroy         = "client.destroy"
-	EventClientOnline          = "client.online"
-	EventClientHealthDegraded  = "client.health_degraded"
-	EventInvokerConnect        = "invoker.connect"
-	EventInvokerDisconnect     = "invoker.disconnect"
-	EventInvokerDestroy        = "invoker.destroy"
+	EventClientConnect                = "client.connect"
+	EventClientDisconnect             = "client.disconnect"
+	EventClientDestroy                = "client.destroy"
+	EventClientOnline                 = "client.online"
+	EventClientHealthDegraded         = "client.health_degraded"
+	EventCircuitBreakerStateChanged   = "client.circuit_breaker_state_changed"
+	EventInvokerConnect               = "invoker.connect"
+	EventInvokerDisconnect            = "invoker.disconnect"
+	EventInvokerDestroy               = "invoker.destroy"
 )
 
 // ClientConnectEvent 客户端连接事件
@@ -66,4 +67,13 @@ type InvokerDisconnectEvent struct {
 type InvokerDestroyEvent struct {
 	ServerAddr string
 	Timestamp  time.Time
+}
+
+// CircuitBreakerStateEvent 熔断器状态变更事件
+type CircuitBreakerStateEvent struct {
+	Group     string
+	ClientID  string
+	From      string
+	To        string
+	Timestamp time.Time
 }

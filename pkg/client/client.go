@@ -18,17 +18,15 @@ const (
 
 // RpcClient represents a connected Rpc client
 type RpcClient struct {
-	Group            string
-	ClientID         string
-	Connection       transport.Connection
-	Status           ClientStatus
-	LastActive       time.Time
-	IsHealthy        bool
-	FailCount        int
-	RegisteredGroup  bool
-	OnHealthDegraded func(client *RpcClient)
-	mu               sync.RWMutex
-	writeMu          sync.Mutex
+	Group           string
+	ClientID        string
+	Connection      transport.Connection
+	Status          ClientStatus
+	LastActive      time.Time
+	RegisteredGroup bool
+	cb              *CircuitBreaker
+	mu              sync.RWMutex
+	writeMu         sync.Mutex
 }
 
 // NewRpcClient creates a new RpcClient
@@ -39,8 +37,7 @@ func NewRpcClient(group, clientID string, conn transport.Connection) *RpcClient 
 		Connection: conn,
 		Status:     StatusConnected,
 		LastActive: time.Now(),
-		IsHealthy:  true,
-		FailCount:  0,
+		cb:         NewCircuitBreaker(3, 30*time.Second),
 	}
 }
 
@@ -95,37 +92,25 @@ func (c *RpcClient) Close() {
 
 // MarkSuccess marks a successful operation and resets failure count
 func (c *RpcClient) MarkSuccess() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.FailCount = 0
-	c.IsHealthy = true
+	c.cb.RecordSuccess()
 }
 
 // MarkFailure marks a failed operation and increments failure count
 func (c *RpcClient) MarkFailure() {
-	c.mu.Lock()
-	wasHealthy := c.IsHealthy
-	c.FailCount++
-	if c.FailCount >= 3 {
-		c.IsHealthy = false
-	}
-	c.mu.Unlock()
-
-	if wasHealthy && !c.IsHealthy && c.OnHealthDegraded != nil {
-		c.OnHealthDegraded(c)
-	}
+	c.cb.RecordFailure()
 }
 
-// IsHealthy returns whether the client is healthy
+// GetHealthStatus returns whether the client is healthy (circuit not open)
 func (c *RpcClient) GetHealthStatus() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.IsHealthy
+	return c.cb.State() != CircuitOpen
 }
 
 // GetFailCount returns the current failure count
 func (c *RpcClient) GetFailCount() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.FailCount
+	return c.cb.FailureCount()
+}
+
+// SetCircuitBreakerCallback sets a callback for circuit breaker state changes.
+func (c *RpcClient) SetCircuitBreakerCallback(fn func(from, to CircuitState)) {
+	c.cb.OnStateChange = fn
 }

@@ -133,6 +133,9 @@ func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey string) *
 	if selected.GetStatus() != client.StatusOnline {
 		return nil
 	}
+	if !selected.GetHealthStatus() {
+		return nil
+	}
 	return selected
 }
 
