@@ -5,7 +5,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/config"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -141,17 +140,14 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Use direct DB for transaction
-	db := database.GetDB()
-	tx := db.Begin()
+	txRepo := h.groupRepo.BeginTx()
 	committed := false
 	defer func() {
 		if !committed {
-			tx.Rollback()
+			txRepo.Rollback()
 		}
 	}()
 
-	txRepo := h.groupRepo.WithTx(tx)
 	steps := []struct {
 		name string
 		fn   func() error
@@ -167,7 +163,10 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 		}
 	}
 
-	tx.Commit()
+	if err := txRepo.Commit(); err != nil {
+		InternalError(c, "commit failed: "+err.Error())
+		return
+	}
 	committed = true
 
 	middleware.InvalidateGroup(req.GroupName)

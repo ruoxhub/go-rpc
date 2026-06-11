@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -21,50 +22,25 @@ import (
 
 // ensureDefaultActions ensures default actions exist for a group
 func (h *Handler) ensureDefaultActions(groupName string) {
-	db := database.GetDB()
-	if db == nil {
+	if h.groupRepo == nil {
 		return
 	}
-	for _, actionName := range model.DefaultGroupActions {
-		var count int64
-		if err := db.Model(&model.GroupAction{}).
-			Where("group_name = ? AND action_name = ?", groupName, actionName).
-			Count(&count).Error; err != nil {
-			logger.Warnf("Failed to check action existence: group=%s, action=%s, err=%v", groupName, actionName, err)
-			continue
-		}
-
-		if count != 0 {
-			continue
-		}
-
-		action := model.GroupAction{
-			GroupName:  groupName,
-			ActionName: actionName,
-			CreateDate: time.Now(),
-		}
-		if err := db.Create(&action).Error; err != nil {
-			logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", groupName, actionName, err)
-			continue
-		}
-		logger.Infof("Default action created: group=%s, action=%s", groupName, actionName)
+	if err := h.groupRepo.EnsureDefaultActions(groupName); err != nil {
+		logger.Warnf("Failed to ensure default actions: group=%s, err=%v", groupName, err)
 	}
 }
 
 // isGroupRegistered checks if a group exists in group_config table
 func (h *Handler) isGroupRegistered(groupName string) bool {
-	db := database.GetDB()
-	if db == nil {
+	if h.groupRepo == nil {
 		return false
 	}
-	var count int64
-	if err := db.Model(&model.GroupConfig{}).
-		Where("group_name = ?", groupName).
-		Count(&count).Error; err != nil {
+	registered, err := h.groupRepo.IsGroupRegistered(groupName)
+	if err != nil {
 		logger.Warnf("Failed to check group registration: group=%s, err=%v", groupName, err)
 		return false
 	}
-	return count > 0
+	return registered
 }
 
 // MessageType defines Rpc message types
@@ -85,6 +61,7 @@ type RpcMessage struct {
 	RpcSeq    string          `json:"__sekiro_seq__,omitempty"`
 	Group     string          `json:"group,omitempty"`
 	ClientID  string          `json:"clientId,omitempty"`
+	Actions   []string        `json:"actions,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 	Error     string          `json:"error,omitempty"`
 	Status    int             `json:"status,omitempty"`
@@ -119,6 +96,7 @@ type Handler struct {
 	timeoutManager   *forwarder.TimeoutManager
 	heartbeatTimeout time.Duration
 	eventBus         *eventbus.EventBus
+	groupRepo        repository.GroupRepository
 	mu               sync.RWMutex
 }
 
@@ -135,7 +113,7 @@ func DefaultHandlerConfig() *HandlerConfig {
 }
 
 // NewHandler creates a new Handler
-func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutManager, config *HandlerConfig, eventBus *eventbus.EventBus) *Handler {
+func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutManager, config *HandlerConfig, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository) *Handler {
 	if config == nil {
 		config = DefaultHandlerConfig()
 	}
@@ -148,6 +126,7 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 		timeoutManager:   timeoutMgr,
 		heartbeatTimeout: config.HeartbeatTimeout,
 		eventBus:         eventBus,
+		groupRepo:        groupRepo,
 	}
 }
 
@@ -191,7 +170,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	if isRegistered {
 		remoteIP := extractRemoteIP(conn)
 		now := time.Now()
-		if db := database.GetDB(); db != nil {
+		if h.groupRepo != nil {
 			device := model.GroupDevice{
 				GroupName:      group,
 				DeviceID:       clientID,
@@ -199,8 +178,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 				LastActiveTime: now,
 			}
 
-			if err := db.Where("group_name = ? AND device_id = ?", group, clientID).
-				FirstOrCreate(&device).Error; err != nil {
+			if err := h.groupRepo.UpsertDevice(&device); err != nil {
 				logger.Warnf("Failed to create device record: %v", err)
 			} else {
 				logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
@@ -279,6 +257,8 @@ func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcCl
 	switch msg.Type {
 	case MessageTypeHeartbeat:
 		h.handleHeartbeat(sekiroClient, &msg)
+	case MessageTypeBind:
+		h.handleBind(sekiroClient, &msg)
 	case MessageTypeInvokeStream:
 		h.handleInvokeStream(&msg)
 	default:
@@ -291,6 +271,57 @@ func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcCl
 		}
 		logger.Warnf("Unknown message type: %s", msg.Type)
 		h.sendError(sekiroClient, "unknown message type", sequence)
+	}
+}
+
+// handleBind syncs the actions reported by a client into the registered group action list.
+func (h *Handler) handleBind(sekiroClient *client.RpcClient, msg *RpcMessage) {
+	groupName := msg.Group
+	if groupName == "" {
+		groupName = sekiroClient.Group
+	}
+	if groupName == "" || len(msg.Actions) == 0 {
+		return
+	}
+	if !h.isGroupRegistered(groupName) {
+		logger.Infof("Skipping action sync for anonymous group: group=%s", groupName)
+		return
+	}
+
+	if h.groupRepo == nil {
+		return
+	}
+
+	seen := make(map[string]struct{}, len(msg.Actions))
+	for _, actionName := range msg.Actions {
+		actionName = strings.TrimSpace(actionName)
+		if actionName == "" || len(actionName) > 64 {
+			continue
+		}
+		if _, exists := seen[actionName]; exists {
+			continue
+		}
+		seen[actionName] = struct{}{}
+
+		existing, err := h.groupRepo.FindAction(groupName, actionName)
+		if err != nil {
+			logger.Warnf("Failed to check reported action: group=%s, action=%s, err=%v", groupName, actionName, err)
+			continue
+		}
+		if existing != nil {
+			continue
+		}
+
+		action := model.GroupAction{
+			GroupName:  groupName,
+			ActionName: actionName,
+			CreateDate: time.Now(),
+		}
+		if err := h.groupRepo.CreateAction(&action); err != nil {
+			logger.Warnf("Failed to create reported action: group=%s, action=%s, err=%v", groupName, actionName, err)
+			continue
+		}
+		logger.Infof("Reported action created: group=%s, action=%s", groupName, actionName)
 	}
 }
 
@@ -327,13 +358,9 @@ func (h *Handler) handleHeartbeat(sekiroClient *client.RpcClient, msg *RpcMessag
 		if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
 			sc.MarkSuccess()
 
-			if sc.IsRegisteredGroup() {
-				if db := database.GetDB(); db != nil {
-					if err := db.Model(&model.GroupDevice{}).
-						Where("group_name = ? AND device_id = ?", msg.Group, msg.ClientID).
-						Update("last_active_time", time.Now()).Error; err != nil {
-						logger.Warnf("Failed to update device last_active_time: %v", err)
-					}
+			if sc.IsRegisteredGroup() && h.groupRepo != nil {
+				if err := h.groupRepo.UpdateDeviceLastActive(msg.Group, msg.ClientID, time.Now()); err != nil {
+					logger.Warnf("Failed to update device last_active_time: %v", err)
 				}
 			}
 		}

@@ -451,6 +451,34 @@ class BaseClient {
     for (const [actionName, actionConfig] of Object.entries(this.actions)) {
       this.registerAction(actionName, actionConfig);
     }
+    this.reportActions();
+  }
+
+  /**
+   * 上报当前客户端已成功注册的 actions，服务端用于同步 group action 列表。
+   */
+  reportActions() {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const actions = Array.from(this.handlers.keys());
+    if (actions.length === 0) {
+      return;
+    }
+
+    try {
+      this.socket.send(JSON.stringify({
+        type: 'bind',
+        group: this.group,
+        clientId: this.clientId,
+        actions: actions,
+        timestamp: Date.now()
+      }));
+      this.log(`已上报 Actions: ${actions.join(', ')}`);
+    } catch (e) {
+      this.log(`上报 Actions 异常：${e}`, 'warn');
+    }
   }
 
   /**
@@ -691,6 +719,7 @@ class BaseClient {
         this.reconnectAttempts = 0;
         // 启动心跳，避免 TCP 半死状态服务端踢人
         this._startHeartbeat();
+        this.reportActions();
       };
 
       this.socket.onmessage = (event) => {

@@ -7,7 +7,6 @@ import (
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -251,13 +250,12 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 		}
 	}
 
-	// Use direct DB for transaction
-	db := database.GetDB()
-	tx := db.Begin()
+	// Begin transaction
+	txRepo := h.groupRepo.BeginTx()
 	committed := false
 	defer func() {
 		if !committed {
-			tx.Rollback()
+			txRepo.Rollback()
 		}
 	}()
 
@@ -276,7 +274,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 		group.QuotaQpsPerDevice = defaultDeviceQps
 	}
 
-	if err := tx.Create(&group).Error; err != nil {
+	if err := txRepo.CreateGroup(&group); err != nil {
 		InternalError(c, err.Error())
 		return
 	}
@@ -291,15 +289,13 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 				DeviceID:       rpcClient.ClientID,
 				LastActiveTime: rpcClient.GetLastActive(),
 			}
-			if err := tx.Where("group_name = ? AND device_id = ?", req.GroupName, rpcClient.ClientID).
-				FirstOrCreate(&device).Error; err != nil {
+			if err := txRepo.UpsertDevice(&device); err != nil {
 				InternalError(c, err.Error())
 				return
 			}
 		}
 	}
 
-	txRepo := h.groupRepo.WithTx(tx)
 	for _, actionName := range model.DefaultGroupActions {
 		existingAction, err := txRepo.FindAction(req.GroupName, actionName)
 		if err != nil {
@@ -320,7 +316,10 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 		}
 	}
 
-	tx.Commit()
+	if err := txRepo.Commit(); err != nil {
+		InternalError(c, "commit failed: "+err.Error())
+		return
+	}
 	committed = true
 
 	middleware.InvalidateGroup(req.GroupName)

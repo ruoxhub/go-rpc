@@ -7,12 +7,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/mrh30000/go-rpc/internal/config"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/utils/password"
 )
+
+var (
+	loginUserRepo  repository.UserRepository
+	loginGroupRepo repository.GroupRepository
+)
+
+// SetUserRepository sets the UserRepository for login/register handlers.
+func SetUserRepository(r repository.UserRepository) { loginUserRepo = r }
+
+// SetLoginGroupRepository sets the GroupRepository for frontend list handlers.
+func SetLoginGroupRepository(r repository.GroupRepository) { loginGroupRepo = r }
 
 // LoginRequest 登录请求
 type LoginRequest struct {
@@ -28,8 +38,13 @@ func HandleLogin(c *gin.Context) {
 		return
 	}
 
-	var user model.UserInfo
-	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&user).Error; err != nil {
+	if loginUserRepo == nil {
+		RpcError(c, -1, "user repository not available")
+		return
+	}
+
+	user, err := loginUserRepo.FindByUserName(req.UserName)
+	if err != nil || user == nil {
 		RpcError(c, -1, "用户名或密码错误")
 		return
 	}
@@ -39,7 +54,7 @@ func HandleLogin(c *gin.Context) {
 		return
 	}
 
-	database.GetDB().Model(&user).Update("last_active", time.Now())
+	loginUserRepo.UpdateFields(user.ID, map[string]interface{}{"last_active": time.Now()})
 
 	updateTime := ""
 	if user.UpdateTime != nil {
@@ -112,61 +127,21 @@ func HandleSystemInfo(c *gin.Context) {
 
 // HandleFrontendListGroup 获取分组列表（前端兼容接口）
 func HandleFrontendListGroup(c *gin.Context) {
-	// Try to use groupRepo from context if available
-	if groupRepo, exists := c.Get("groupRepo"); exists {
-		if gr, ok := groupRepo.(repository.GroupRepository); ok {
-			listGroupViaRepo(c, gr)
-			return
+	gr := loginGroupRepo
+	if gr == nil {
+		// Try to use groupRepo from context if available
+		if repo, exists := c.Get("groupRepo"); exists {
+			if r, ok := repo.(repository.GroupRepository); ok {
+				gr = r
+			}
 		}
 	}
-
-	// Fallback: use direct DB
-	db := database.GetDB()
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold)
-
-	var stats []struct {
-		ID                int64     `json:"id"`
-		GroupName         string    `json:"groupName"`
-		UserName          string    `json:"userName"`
-		QuotaQpsGroup     float64   `json:"quotaQpsGroup"`
-		QuotaQpsPerDevice float64   `json:"quotaQpsPerDevice"`
-		CreateDate        time.Time `json:"createTime"`
-		AvailableClients  int64     `json:"availableClients"`
-		DisabledClients   int64     `json:"disabledClients"`
-	}
-
-	err := db.Table("group_config gc").
-		Select(`
-			gc.id, gc.group_name, gc.user_name,
-			gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date,
-			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
-			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
-		`, activeThreshold, activeThreshold).
-		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name").
-		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
-		Order("gc.create_date DESC").
-		Scan(&stats).Error
-
-	if err != nil {
-		RpcError(c, -1, err.Error())
+	if gr != nil {
+		listGroupViaRepo(c, gr)
 		return
 	}
 
-	vos := make([]GroupInfoVO, 0, len(stats))
-	for _, s := range stats {
-		vos = append(vos, GroupInfoVO{
-			ID:                s.ID,
-			GroupName:         s.GroupName,
-			UserName:          s.UserName,
-			QuotaQpsGroup:     s.QuotaQpsGroup,
-			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
-			CreateTime:        s.CreateDate.Format("2006-01-02T15:04:05"),
-			AvailableClients:  s.AvailableClients,
-			DisableClientSize: s.DisabledClients,
-		})
-	}
-
-	RpcSuccess(c, vos)
+	RpcError(c, -1, "group repository not available")
 }
 
 // listGroupViaRepo 使用 GroupRepository 查询分组列表（前端格式）
@@ -288,8 +263,13 @@ func HandleRegister(c *gin.Context) {
 		return
 	}
 
-	var existingUser model.UserInfo
-	if err := database.GetDB().Where("user_name = ?", req.UserName).First(&existingUser).Error; err == nil {
+	if loginUserRepo == nil {
+		RpcError(c, -1, "user repository not available")
+		return
+	}
+
+	existing, err := loginUserRepo.FindByUserName(req.UserName)
+	if err == nil && existing != nil {
 		RpcError(c, -1, "用户名已存在")
 		return
 	}
@@ -319,7 +299,7 @@ func HandleRegister(c *gin.Context) {
 		UpdateTime: &now,
 	}
 
-	if err := database.GetDB().Create(&user).Error; err != nil {
+	if err := loginUserRepo.Create(&user); err != nil {
 		RpcError(c, -1, err.Error())
 		return
 	}
@@ -335,6 +315,11 @@ func HandleUserAdd(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		RpcError(c, -1, err.Error())
+		return
+	}
+
+	if loginUserRepo == nil {
+		RpcError(c, -1, "user repository not available")
 		return
 	}
 
@@ -358,7 +343,7 @@ func HandleUserAdd(c *gin.Context) {
 		UpdateTime: &now,
 	}
 
-	if err := database.GetDB().Create(&user).Error; err != nil {
+	if err := loginUserRepo.Create(&user); err != nil {
 		RpcError(c, -1, err.Error())
 		return
 	}

@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +14,7 @@ import (
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/config"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/metrics"
@@ -23,7 +22,6 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/router"
 	ws "github.com/mrh30000/go-rpc/pkg/websocket"
-	"gorm.io/gorm"
 )
 
 // APIHandler handles HTTP API requests
@@ -34,6 +32,7 @@ type APIHandler struct {
 	timeoutManager   *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
 	configService    config.Service
+	groupRepo        repository.GroupRepository
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -74,7 +73,7 @@ type InvokeRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository) *APIHandler {
 	h := &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(),
@@ -82,6 +81,7 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 		timeoutManager:   timeoutMgr,
 		metricsCollector: metricsCollector,
 		configService:    cfgSvc,
+		groupRepo:        groupRepo,
 	}
 
 	if eventBus != nil {
@@ -543,21 +543,11 @@ func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg stri
 // 原版本同时支持调用方在 body/query 中传 sekiro_token 解析用户 — 已被删除, 鉴权
 // 入口统一收敛到中间件, 业务层不再做 token 解析。
 func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName string) bool {
-	db := database.GetDB()
-	if db == nil {
+	if h.groupRepo == nil {
 		return true
 	}
 
-	group, err := middleware.LookupGroupConfig(groupName, func(name string) (*model.GroupConfig, error) {
-		var g model.GroupConfig
-		if err := db.Where("group_name = ?", name).First(&g).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return &g, nil
-	})
+	group, err := middleware.LookupGroupConfig(groupName, h.groupRepo.FindGroupByName)
 	if err != nil {
 		RpcServerError(c, "failed to verify group access: "+err.Error())
 		return false
@@ -582,8 +572,7 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 }
 
 func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]string, error) {
-	db := database.GetDB()
-	if db == nil {
+	if h.groupRepo == nil {
 		return groups, nil
 	}
 
@@ -597,20 +586,9 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 		}
 	}
 
-	lookup := func(name string) (*model.GroupConfig, error) {
-		var g model.GroupConfig
-		if err := db.Where("group_name = ?", name).First(&g).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, nil
-			}
-			return nil, err
-		}
-		return &g, nil
-	}
-
 	filtered := make([]string, 0, len(groups))
 	for _, groupName := range groups {
-		group, err := middleware.LookupGroupConfig(groupName, lookup)
+		group, err := middleware.LookupGroupConfig(groupName, h.groupRepo.FindGroupByName)
 		if err != nil {
 			// 数据库查询异常时保守处理：视为匿名分组并保留，避免临时故障导致 groupList 完全不可用
 			logger.Warnf("filterAccessibleGroups: lookup group_config failed for %s: %v, treating as anonymous", groupName, err)

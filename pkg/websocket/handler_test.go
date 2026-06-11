@@ -41,7 +41,7 @@ func TestHandler_NewHandler(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
 	if handler.clientManager == nil {
@@ -58,7 +58,7 @@ func TestHandler_NewHandler(t *testing.T) {
 func TestHandler_DefaultConfig(t *testing.T) {
 	manager := client.NewClientManager()
 
-	handler := NewHandler(manager, nil, nil, nil)
+	handler := NewHandler(manager, nil, nil, nil, nil)
 	defer handler.Shutdown()
 
 	if handler.timeoutManager == nil {
@@ -70,7 +70,7 @@ func TestHandler_GetTimeoutManager(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
 	got := handler.GetTimeoutManager()
@@ -83,7 +83,7 @@ func TestHandler_Shutdown(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	handler := NewHandler(manager, timeoutMgr, nil, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 
 	// Shutdown should not panic
 	handler.Shutdown()
@@ -99,6 +99,7 @@ func TestRpcMessage_WithAllFields(t *testing.T) {
 		"sequence": "seq-456",
 		"group": "test-group",
 		"clientId": "client-1",
+		"actions": ["chatCompletions", "getModel"],
 		"data": {"key": "value"},
 		"status": 200,
 		"error": "",
@@ -124,6 +125,9 @@ func TestRpcMessage_WithAllFields(t *testing.T) {
 	}
 	if msg.Status != 200 {
 		t.Errorf("Expected status 200, got %d", msg.Status)
+	}
+	if len(msg.Actions) != 2 || msg.Actions[0] != "chatCompletions" || msg.Actions[1] != "getModel" {
+		t.Errorf("Expected actions to unmarshal, got %#v", msg.Actions)
 	}
 
 	// Verify data field
@@ -177,6 +181,23 @@ func TestRpcMessage_ErrorResponse(t *testing.T) {
 	if msg.Status != 404 {
 		t.Errorf("Expected status 404, got %d", msg.Status)
 	}
+}
+
+func TestHandler_ProcessBindWithoutDB(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	sekiroClient := client.NewRpcClient("qwenai", "client-1", nil)
+	message := []byte(`{
+		"type": "bind",
+		"group": "qwenai",
+		"clientId": "client-1",
+		"actions": ["chatCompletions", "getModel", "createChat"]
+	}`)
+
+	handler.processMessage(nil, sekiroClient, message)
 }
 
 func TestDefaultHandlerConfig(t *testing.T) {

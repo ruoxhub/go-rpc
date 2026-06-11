@@ -4,6 +4,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
@@ -76,8 +78,17 @@ type GroupRepository interface {
 	IsAnonymousGroup(name string) (bool, error)
 	DeleteAnonymousGroupDevices(name string) (int64, error)
 
+	// Convenience methods (replaces direct database.GetDB() calls in handler/websocket layers)
+	IsGroupRegistered(name string) (bool, error)
+	EnsureDefaultActions(groupName string) error
+	UpsertDevice(device *model.GroupDevice) error
+	UpdateDeviceLastActive(groupName, deviceID string, t time.Time) error
+
 	// Transaction support
 	WithTx(tx interface{}) GroupRepository
+	BeginTx() GroupRepository
+	Commit() error
+	Rollback() error
 }
 
 // SysConfigRepository handles system configuration data access.

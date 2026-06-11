@@ -12,7 +12,7 @@ import (
 func TestHandleInvokeStreamRoutesChunkAndFinal(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
-	handler := NewHandler(manager, timeoutMgr, nil, nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
 	stream := timeoutMgr.RegisterStream("seq-1", "g1", "c1", time.Second)

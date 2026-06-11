@@ -26,7 +26,6 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/handler"
 	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
-	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 	webui "github.com/mrh30000/go-rpc/web"
 )
@@ -101,6 +100,7 @@ type Server struct {
 	metricsCollector metrics.MetricCollector
 	alertEvaluator   *alert.Evaluator
 	configService    pkgconfig.Service
+	groupRepo        repository.GroupRepository
 	// wsCancel cancels all WebSocket handler goroutines on shutdown
 	wsCtx    context.Context
 	wsCancel context.CancelFunc
@@ -206,6 +206,9 @@ func (s *Server) Start() error {
 			return fmt.Errorf("failed to run database migration: %w", err)
 		}
 		logger.Info("Database migration completed successfully")
+		s.groupRepo = repository.NewGroupRepository(database.GetDB())
+		handler.SetUserRepository(repository.NewUserRepository(database.GetDB()))
+		handler.SetLoginGroupRepository(s.groupRepo)
 	} else {
 		logger.Info("Running in DB-less mode (DisableDatabase=true)")
 	}
@@ -217,12 +220,12 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Config service started successfully")
 
-	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus)
+	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus, s.groupRepo)
 
 	if !disableMetrics {
 		s.metricsCollector = metrics.NewCollector(1 * time.Minute)
 	}
-	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus)
+	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo)
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
 	if s.metricsCollector != nil {
@@ -480,22 +483,11 @@ func (s *Server) handleRegister(c *gin.Context) {
 }
 
 func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool {
-	db := database.GetDB()
-	if db == nil {
+	if s.groupRepo == nil {
 		return true
 	}
 
-	group, err := middleware.LookupGroupConfig(groupName, func(name string) (*model.GroupConfig, error) {
-		var g model.GroupConfig
-		result := db.Where("group_name = ?", name).Limit(1).Find(&g)
-		if result.Error != nil {
-			return nil, result.Error
-		}
-		if result.RowsAffected == 0 {
-			return nil, nil
-		}
-		return &g, nil
-	})
+	group, err := middleware.LookupGroupConfig(groupName, s.groupRepo.FindGroupByName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to verify group access",

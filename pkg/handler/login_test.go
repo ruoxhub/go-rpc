@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
@@ -32,6 +33,10 @@ func setupTestDB(t *testing.T) {
 	if err != nil {
 		t.Skipf("跳过测试：无法迁移数据库 - %v", err)
 	}
+
+	db := database.GetDB()
+	SetUserRepository(repository.NewUserRepository(db))
+	SetLoginGroupRepository(repository.NewGroupRepository(db))
 }
 
 func performLoginRequest(r *gin.Engine, method, path string, body interface{}) *httptest.ResponseRecorder {

@@ -319,6 +319,57 @@ func (r *groupRepository) DeleteAnonymousGroupDevices(name string) (int64, error
 	return result.RowsAffected, nil
 }
 
+// Convenience methods
+
+func (r *groupRepository) IsGroupRegistered(name string) (bool, error) {
+	var count int64
+	if err := r.getDB().Model(&model.GroupConfig{}).
+		Where("group_name = ?", name).
+		Count(&count).Error; err != nil {
+		return false, fmt.Errorf("failed to check group registration: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (r *groupRepository) EnsureDefaultActions(groupName string) error {
+	for _, actionName := range model.DefaultGroupActions {
+		existing, err := r.FindAction(groupName, actionName)
+		if err != nil {
+			return fmt.Errorf("failed to check action: %w", err)
+		}
+		if existing != nil {
+			continue
+		}
+		action := model.GroupAction{
+			GroupName:  groupName,
+			ActionName: actionName,
+			CreateDate: time.Now(),
+		}
+		if err := r.CreateAction(&action); err != nil {
+			return fmt.Errorf("failed to create default action %s: %w", actionName, err)
+		}
+	}
+	return nil
+}
+
+func (r *groupRepository) UpsertDevice(device *model.GroupDevice) error {
+	if err := r.getDB().
+		Where("group_name = ? AND device_id = ?", device.GroupName, device.DeviceID).
+		FirstOrCreate(device).Error; err != nil {
+		return fmt.Errorf("failed to upsert device: %w", err)
+	}
+	return nil
+}
+
+func (r *groupRepository) UpdateDeviceLastActive(groupName, deviceID string, t time.Time) error {
+	if err := r.getDB().Model(&model.GroupDevice{}).
+		Where("group_name = ? AND device_id = ?", groupName, deviceID).
+		Update("last_active_time", t).Error; err != nil {
+		return fmt.Errorf("failed to update device last_active_time: %w", err)
+	}
+	return nil
+}
+
 // Transaction support
 
 type txGroupRepository struct {
@@ -333,4 +384,22 @@ func (r *groupRepository) WithTx(tx interface{}) GroupRepository {
 	return &txGroupRepository{
 		groupRepository: groupRepository{db: gormTx},
 	}
+}
+
+func (r *groupRepository) BeginTx() GroupRepository {
+	return &groupRepository{db: r.getDB().Begin()}
+}
+
+func (r *groupRepository) Commit() error {
+	if r.db == nil {
+		return fmt.Errorf("commit called on non-transaction repository")
+	}
+	return r.db.Commit().Error
+}
+
+func (r *groupRepository) Rollback() error {
+	if r.db == nil {
+		return fmt.Errorf("rollback called on non-transaction repository")
+	}
+	return r.db.Rollback().Error
 }
