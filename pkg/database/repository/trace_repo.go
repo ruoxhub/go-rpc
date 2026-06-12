@@ -163,3 +163,10 @@ func (r *traceRepository) GetTimeline(group, api string, limit int) ([]model.Tra
 	query.Order("start_time DESC").Limit(limit).Find(&records)
 	return records, nil
 }
+
+func (r *traceRepository) Create(record *model.TraceRecord) error {
+	if err := r.getDB().Create(record).Error; err != nil {
+		return fmt.Errorf("failed to create trace record: %w", err)
+	}
+	return nil
+}

@@ -126,6 +126,7 @@ type TraceRepository interface {
 	FindFirstByTraceID(traceID string) (*model.TraceRecord, error)
 	GetStats(group, api, startTime, endTime string) (*TraceStats, error)
 	GetTimeline(group, api string, limit int) ([]model.TraceRecord, error)
+	Create(record *model.TraceRecord) error
 }
 
 // TraceStats holds trace statistics.
@@ -152,6 +153,7 @@ type AlertRepository interface {
 	// History
 	FindHistoryByQuery(query model.AlertHistoryQuery) ([]model.AlertHistory, int64, error)
 	CreateHistory(history *model.AlertHistory) error
+	CountRecentHistory(ruleID int64, since time.Time) (int64, error)
 }
 
 // MetricRepository handles metric data access.
@@ -160,6 +162,32 @@ type MetricRepository interface {
 	FindMetricTags() ([]model.MetricTag, error)
 	GetDashboardData() (*DashboardData, error)
 	GetLatencyPercentiles(group, api, startTime, endTime string) ([]model.MetricMinute, error)
+}
+
+// MetricStore handles metric write operations for the collector flush/rollup pipeline.
+type MetricStore interface {
+	FlushMinutes(records []model.MetricMinute) error
+	UpsertMetricTag(name, tag1, tag2, tag3 string) error
+	RollupHours(hourPrefix string) error
+	RollupDays(dayPrefix string) error
+	DeleteExpired(table string, before time.Time) error
+	QueryMetricMinutes(name string, tags map[string]string, tagMapping *MetricTagMapping, limit int) ([]MetricMinutePoint, error)
+	LoadMetricTagMapping(name string) (*MetricTagMapping, error)
+}
+
+// MetricTagMapping maps metric tag names to column names.
+type MetricTagMapping struct {
+	Tag1Name string
+	Tag2Name string
+	Tag3Name string
+	Tag4Name string
+	Tag5Name string
+}
+
+// MetricMinutePoint is a lightweight metric data point.
+type MetricMinutePoint struct {
+	TimeKey string  `json:"timeKey"`
+	Value   float64 `json:"value"`
 }
 
 // DashboardData holds dashboard statistics.

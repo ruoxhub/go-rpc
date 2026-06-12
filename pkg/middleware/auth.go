@@ -4,13 +4,26 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/model"
-	"gorm.io/gorm"
 )
+
+// TokenUserLookup defines the minimal interface for token-based user lookup.
+type TokenUserLookup interface {
+	FindByToken(token string) (*model.UserInfo, error)
+}
+
+// tokenUserRepoPtr stores the injected repository with atomic safety for concurrent reads.
+var tokenUserRepoPtr atomic.Pointer[TokenUserLookup]
+
+// SetTokenUserRepository injects the UserRepository used by FindUserByToken.
+// Must be called before the server starts accepting requests.
+func SetTokenUserRepository(r TokenUserLookup) {
+	tokenUserRepoPtr.Store(&r)
+}
 
 const (
 	// ContextUserKey 用户在 context 中的键名
@@ -147,24 +160,24 @@ func typedCacheGet[T any](c *cache[T], key string) (*T, error, bool) {
 
 var errInvalidToken = errors.New("invalid token")
 
-// findUserByTokenFromDB 直接打 DB；按结果决定缓存正/负条目。
+// findUserByTokenFromDB queries the injected repository; caches positive/negative results.
 func findUserByTokenFromDB(token string) (*model.UserInfo, error) {
-	db := database.GetDB()
-	if db == nil {
-		return nil, errors.New("database not initialized")
+	p := tokenUserRepoPtr.Load()
+	if p == nil {
+		return nil, errors.New("user repository not initialized")
 	}
 
-	var user model.UserInfo
-	if err := db.Where("api_token = ?", token).First(&user).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			defaultTokenCache.set(token, nil)
-			return nil, errInvalidToken
-		}
+	user, err := (*p).FindByToken(token)
+	if err != nil {
 		return nil, err
 	}
+	if user == nil {
+		defaultTokenCache.set(token, nil)
+		return nil, errInvalidToken
+	}
 
-	defaultTokenCache.set(token, &user)
-	return &user, nil
+	defaultTokenCache.set(token, user)
+	return user, nil
 }
 
 // GetCurrentUser 从 context 中获取当前用户信息

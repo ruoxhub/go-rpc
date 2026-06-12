@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"gorm.io/gorm"
@@ -145,4 +146,14 @@ func (r *alertRepository) CreateHistory(history *model.AlertHistory) error {
 		return fmt.Errorf("failed to create alert history: %w", err)
 	}
 	return nil
+}
+
+func (r *alertRepository) CountRecentHistory(ruleID int64, since time.Time) (int64, error) {
+	var count int64
+	if err := r.getDB().Table("alert_history").
+		Where("rule_id = ? AND triggered_at > ?", ruleID, since).
+		Count(&count).Error; err != nil {
+		return 0, fmt.Errorf("failed to count recent alert history: %w", err)
+	}
+	return count, nil
 }

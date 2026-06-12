@@ -2,15 +2,29 @@ package middleware
 
 import (
 	json "github.com/goccy/go-json"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/utils/traceid"
 	"go.uber.org/zap"
 )
+
+// TraceRecorder defines the minimal interface for writing trace records.
+type TraceRecorder interface {
+	Create(record *model.TraceRecord) error
+}
+
+// traceRepoPtr stores the injected recorder with atomic safety for concurrent reads.
+var traceRepoPtr atomic.Pointer[TraceRecorder]
+
+// SetTraceRecorder injects the TraceRepository used by TraceMiddleware.
+// Must be called before the server starts accepting requests.
+func SetTraceRecorder(r TraceRecorder) {
+	traceRepoPtr.Store(&r)
+}
 
 type traceSnapshot struct {
 	ParentSpanID string
@@ -94,8 +108,8 @@ func buildTraceSnapshot(c *gin.Context) traceSnapshot {
 func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.Time,
 	durationMs int64, status, errorMessage string) {
 
-	db := database.GetDB()
-	if db == nil {
+	p := traceRepoPtr.Load()
+	if p == nil {
 		return
 	}
 
@@ -134,7 +148,7 @@ func recordTrace(snapshot traceSnapshot, traceID, spanID string, startTime time.
 		logger.Error("序列化追踪额外数据失败", zap.Error(err))
 	}
 
-	if err := db.Create(&record).Error; err != nil {
+	if err := (*p).Create(&record); err != nil {
 		logger.Error("写入追踪记录失败", zap.Error(err))
 	}
 }

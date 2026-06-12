@@ -206,9 +206,13 @@ func (s *Server) Start() error {
 			return fmt.Errorf("failed to run database migration: %w", err)
 		}
 		logger.Info("Database migration completed successfully")
-		s.groupRepo = repository.NewGroupRepository(database.GetDB())
-		handler.SetUserRepository(repository.NewUserRepository(database.GetDB()))
+		db := database.GetDB()
+		s.groupRepo = repository.NewGroupRepository(db)
+		userRepo := repository.NewUserRepository(db)
+		handler.SetUserRepository(userRepo)
 		handler.SetLoginGroupRepository(s.groupRepo)
+		middleware.SetTokenUserRepository(userRepo)
+		middleware.SetTraceRecorder(repository.NewTraceRepository(db))
 	} else {
 		logger.Info("Running in DB-less mode (DisableDatabase=true)")
 	}
@@ -223,7 +227,11 @@ func (s *Server) Start() error {
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus, s.groupRepo)
 
 	if !disableMetrics {
-		s.metricsCollector = metrics.NewCollector(1 * time.Minute)
+		var metricStore repository.MetricStore
+		if !disableDB {
+			metricStore = repository.NewMetricStore(database.GetDB())
+		}
+		s.metricsCollector = metrics.NewCollector(1*time.Minute, metricStore)
 	}
 	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo)
 
@@ -256,6 +264,17 @@ func (s *Server) Start() error {
 		metricsReader := alert.NewDefaultMetricsReader()
 		s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
 
+		if !disableDB {
+			db := database.GetDB()
+			alertRepo := repository.NewAlertRepository(db)
+			s.alertEvaluator.SetAlertRepo(alertRepo)
+
+			metricQueryStore := repository.NewMetricStore(db)
+			alertQueryStore := &alert.RepoMetricQueryStore{Inner: metricQueryStore}
+			s.alertEvaluator.SetMetricStore(alertQueryStore)
+			metricsReader.SetStore(alertQueryStore)
+		}
+
 		smtp := s.yamlConfig.Alert.SMTP
 		s.alertEvaluator.SetSMTPConfig(alert.SMTPConfig{
 			Host:     smtp.Host,
@@ -282,8 +301,8 @@ func (s *Server) Start() error {
 	corsOrigins := s.yamlConfig.CorsOrigins
 
 	s.httpServer.Use(
-		ginCorsMiddleware(corsEnabled, corsOrigins),
-		ginRouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
+		middleware.CORSMiddleware(corsEnabled, corsOrigins),
+		middleware.RouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
 		middleware.LoggingMiddleware(),
 		middleware.TraceMiddleware(),
 	)
@@ -388,12 +407,11 @@ func (s *Server) registerRoutes() {
 	}
 
 	rpcAPI := s.httpServer.Group("/rpc-api")
-	// 为 /rpc-api 路由添加配置服务和仓储上下文
 	rpcAPI.Use(func(c *gin.Context) {
 		c.Set("configService", s.configService)
 		c.Set("clientManager", s.clientManager)
-		if !disableDB {
-			c.Set("groupRepo", repository.NewGroupRepository(database.GetDB()))
+		if s.groupRepo != nil {
+			c.Set("groupRepo", s.groupRepo)
 		}
 		c.Next()
 	})
@@ -568,68 +586,4 @@ func (s *Server) GetClientManager() *client.ClientManager {
 
 func (s *Server) GetMetricsCollector() metrics.MetricCollector {
 	return s.metricsCollector
-}
-
-func ginCorsMiddleware(enabled bool, whitelist []string) gin.HandlerFunc {
-	if !enabled {
-		return func(c *gin.Context) {
-			c.Next()
-		}
-	}
-
-	return func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		if origin != "" && isOriginAllowed(origin, whitelist) {
-			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-			// c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE, UPDATE")
-			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Length, X-CSRF-Token, Token, session")
-			c.Header("Access-Control-Expose-Headers", "Content-Length, Access-Control-Allow-Origin, Access-Control-Allow-Headers")
-			//允许客户端传递校验信息比如 cookie (重要)
-			c.Header("Access-Control-Allow-Credentials", "true")
-		}
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusOK)
-			return
-		}
-
-		c.Next()
-	}
-}
-
-// isOriginAllowed checks if the origin is allowed by the whitelist.
-// An empty whitelist allows all origins.
-func isOriginAllowed(origin string, whitelist []string) bool {
-	if len(whitelist) == 0 {
-		return true
-	}
-	for _, w := range whitelist {
-		if w == origin {
-			return true
-		}
-	}
-	return false
-}
-
-func ginRouteReplaceMiddleware(enabled bool, prefix string) gin.HandlerFunc {
-	if !enabled || prefix == "" {
-		return func(c *gin.Context) {
-			c.Next()
-		}
-	}
-
-	return func(c *gin.Context) {
-		newPath := strings.TrimPrefix(c.Request.URL.Path, prefix)
-		if newPath == c.Request.URL.Path {
-			c.Next()
-			return
-		}
-		if newPath == "" {
-			newPath = "/"
-		}
-		c.Request.URL.Path = newPath
-		c.Next()
-	}
 }

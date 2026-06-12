@@ -7,14 +7,85 @@ import (
 	"time"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 // 告警防抖时间常量（防止重复告警）
 const AlertDedupeWindow = 5 * time.Minute
+
+// AlertRepo defines the alert data access interface used by the evaluator.
+type AlertRepo interface {
+	FindAllEnabledRules() ([]model.AlertRule, error)
+	CountRecentHistory(ruleID int64, since time.Time) (int64, error)
+	CreateHistory(history *model.AlertHistory) error
+}
+
+// MetricTagMapping maps metric tag names to column names.
+type MetricTagMapping struct {
+	Tag1Name string
+	Tag2Name string
+	Tag3Name string
+	Tag4Name string
+	Tag5Name string
+}
+
+// MetricMinutePoint is a lightweight metric data point.
+type MetricMinutePoint struct {
+	TimeKey string
+	Value   float64
+}
+
+// MetricQueryStore defines the metric query interface used by the evaluator's DefaultMetricsReader.
+type MetricQueryStore interface {
+	QueryMetricMinutes(name string, tags map[string]string, tagMapping *MetricTagMapping, limit int) ([]MetricMinutePoint, error)
+	LoadMetricTagMapping(name string) (*MetricTagMapping, error)
+}
+
+// RepoMetricQueryStore adapts repository.MetricStore to MetricQueryStore by converting types.
+type RepoMetricQueryStore struct {
+	Inner repository.MetricStore
+}
+
+func (a *RepoMetricQueryStore) QueryMetricMinutes(name string, tags map[string]string, tagMapping *MetricTagMapping, limit int) ([]MetricMinutePoint, error) {
+	var repoMapping *repository.MetricTagMapping
+	if tagMapping != nil {
+		repoMapping = &repository.MetricTagMapping{
+			Tag1Name: tagMapping.Tag1Name,
+			Tag2Name: tagMapping.Tag2Name,
+			Tag3Name: tagMapping.Tag3Name,
+			Tag4Name: tagMapping.Tag4Name,
+			Tag5Name: tagMapping.Tag5Name,
+		}
+	}
+	repoPoints, err := a.Inner.QueryMetricMinutes(name, tags, repoMapping, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]MetricMinutePoint, len(repoPoints))
+	for i, p := range repoPoints {
+		result[i] = MetricMinutePoint{TimeKey: p.TimeKey, Value: p.Value}
+	}
+	return result, nil
+}
+
+func (a *RepoMetricQueryStore) LoadMetricTagMapping(name string) (*MetricTagMapping, error) {
+	m, err := a.Inner.LoadMetricTagMapping(name)
+	if err != nil {
+		return nil, err
+	}
+	if m == nil {
+		return nil, nil
+	}
+	return &MetricTagMapping{
+		Tag1Name: m.Tag1Name,
+		Tag2Name: m.Tag2Name,
+		Tag3Name: m.Tag3Name,
+		Tag4Name: m.Tag4Name,
+		Tag5Name: m.Tag5Name,
+	}, nil
+}
 
 // Evaluator 告警评估引擎
 type Evaluator struct {
@@ -25,6 +96,8 @@ type Evaluator struct {
 	wg            sync.WaitGroup
 	metricsReader MetricsReader
 	notifier      Notifier
+	alertRepo     AlertRepo
+	metricStore   MetricQueryStore
 }
 
 // MetricsReader 指标数据读取接口
@@ -38,14 +111,6 @@ type MetricPoint struct {
 	Value   float64 `json:"value"`
 }
 
-type metricTagMapping struct {
-	Tag1Name string `gorm:"column:tag1_name"`
-	Tag2Name string `gorm:"column:tag2_name"`
-	Tag3Name string `gorm:"column:tag3_name"`
-	Tag4Name string `gorm:"column:tag4_name"`
-	Tag5Name string `gorm:"column:tag5_name"`
-}
-
 // NewEvaluator 创建告警评估引擎
 func NewEvaluator(evalInterval time.Duration, metricsReader MetricsReader) *Evaluator {
 	return &Evaluator{
@@ -54,6 +119,16 @@ func NewEvaluator(evalInterval time.Duration, metricsReader MetricsReader) *Eval
 		shutdown:      make(chan struct{}),
 		notifier:      NewDefaultNotifier(),
 	}
+}
+
+// SetAlertRepo injects the AlertRepository for rule loading and history persistence.
+func (e *Evaluator) SetAlertRepo(repo AlertRepo) {
+	e.alertRepo = repo
+}
+
+// SetMetricStore injects the MetricQueryStore for the DefaultMetricsReader.
+func (e *Evaluator) SetMetricStore(store MetricQueryStore) {
+	e.metricStore = store
 }
 
 // Start 启动评估引擎
@@ -113,11 +188,14 @@ func (e *Evaluator) SetSMTPConfig(config SMTPConfig) {
 
 // loadRules 从数据库加载告警规则
 func (e *Evaluator) loadRules() {
+	if e.alertRepo == nil {
+		return
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	var rules []model.AlertRule
-	if err := database.GetDB().Where("enabled = ?", true).Find(&rules).Error; err != nil {
+	rules, err := e.alertRepo.FindAllEnabledRules()
+	if err != nil {
 		logger.Error("Failed to load alert rules", zap.Error(err))
 		return
 	}
@@ -207,11 +285,12 @@ func (e *Evaluator) checkThreshold(value float64, operator string, threshold flo
 
 // triggerAlert 触发告警
 func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
-	// 检查是否最近已触发过（防抖，5 分钟内不重复触发）
-	var recentCount int64
-	if err := database.GetDB().Table("alert_history").
-		Where("rule_id = ? AND triggered_at > ?", rule.ID, time.Now().Add(-AlertDedupeWindow)).
-		Count(&recentCount).Error; err != nil {
+	if e.alertRepo == nil {
+		return
+	}
+
+	recentCount, err := e.alertRepo.CountRecentHistory(rule.ID, time.Now().Add(-AlertDedupeWindow))
+	if err != nil {
 		logger.Error("Failed to check alert dedupe window",
 			zap.String("rule", rule.Name),
 			zap.Error(err))
@@ -219,13 +298,12 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 	}
 
 	if recentCount > 0 {
-		return // 最近已触发过，跳过
+		return
 	}
 
 	level := alertLevel(rule, currentValue)
 	history := newAlertHistory(rule, currentValue, level)
 
-	// 发送通知
 	if err := e.sendNotification(rule, &history); err != nil {
 		history.NotifyError = err.Error()
 		logger.Error("Failed to send alert notification",
@@ -235,8 +313,7 @@ func (e *Evaluator) triggerAlert(rule model.AlertRule, currentValue float64) {
 		history.Notified = true
 	}
 
-	// 保存到数据库
-	if err := database.GetDB().Create(&history).Error; err != nil {
+	if err := e.alertRepo.CreateHistory(&history); err != nil {
 		logger.Error("Failed to save alert history",
 			zap.String("rule", rule.Name),
 			zap.Error(err))
@@ -282,75 +359,40 @@ func (e *Evaluator) sendNotification(rule model.AlertRule, history *model.AlertH
 }
 
 // DefaultMetricsReader 默认指标读取器
-type DefaultMetricsReader struct{}
+type DefaultMetricsReader struct {
+	store MetricQueryStore
+}
 
 // NewDefaultMetricsReader 创建默认指标读取器
 func NewDefaultMetricsReader() *DefaultMetricsReader {
 	return &DefaultMetricsReader{}
 }
 
+// SetStore injects the MetricQueryStore for metric queries.
+func (r *DefaultMetricsReader) SetStore(store MetricQueryStore) {
+	r.store = store
+}
+
 // QueryMetrics 查询指标数据
 func (r *DefaultMetricsReader) QueryMetrics(name string, tags map[string]string, windowMinutes int) ([]MetricPoint, error) {
-	db := database.GetDB()
-	if db == nil {
-		return nil, fmt.Errorf("database not initialized")
+	if r.store == nil {
+		return nil, fmt.Errorf("metric store not initialized")
 	}
 
-	mapping, hasMapping := loadMetricTagMapping(db, name)
-
-	query := db.Table("metric_minute").
-		Select("time_key, value").
-		Where("name = ?", name).
-		Order("time_key DESC").
-		Limit(windowMinutes)
-
-	if hasMapping {
-		query = applyMappedTagFilters(query, mapping, tags)
-	} else {
-		query = applyDefaultTagFilters(query, tags)
+	mapping, err := r.store.LoadMetricTagMapping(name)
+	if err != nil {
+		logger.Debug("Failed to load metric tag mapping, using default tags",
+			zap.String("name", name), zap.Error(err))
 	}
 
-	var results []MetricPoint
-	if err := query.Scan(&results).Error; err != nil {
+	points, err := r.store.QueryMetricMinutes(name, tags, mapping, windowMinutes)
+	if err != nil {
 		return nil, err
 	}
 
-	return results, nil
-}
-
-func loadMetricTagMapping(db *gorm.DB, name string) (metricTagMapping, bool) {
-	var mapping metricTagMapping
-	err := db.Table("metric_tag").
-		Select("tag1_name, tag2_name, tag3_name, tag4_name, tag5_name").
-		Where("name = ?", name).
-		Scan(&mapping).Error
-	return mapping, err == nil && mapping.Tag1Name != ""
-}
-
-func applyMappedTagFilters(query *gorm.DB, mapping metricTagMapping, tags map[string]string) *gorm.DB {
-	tagColumns := map[string]string{
-		mapping.Tag1Name: "tag1",
-		mapping.Tag2Name: "tag2",
-		mapping.Tag3Name: "tag3",
-		mapping.Tag4Name: "tag4",
-		mapping.Tag5Name: "tag5",
+	result := make([]MetricPoint, len(points))
+	for i, p := range points {
+		result[i] = MetricPoint{TimeKey: p.TimeKey, Value: p.Value}
 	}
-
-	for tagName, tagValue := range tags {
-		column, ok := tagColumns[tagName]
-		if ok && column != "" {
-			query = query.Where(fmt.Sprintf("%s = ?", column), tagValue)
-		}
-	}
-	return query
-}
-
-func applyDefaultTagFilters(query *gorm.DB, tags map[string]string) *gorm.DB {
-	if group, ok := tags["group"]; ok {
-		query = query.Where("tag1 = ?", group)
-	}
-	if api, ok := tags["api"]; ok {
-		query = query.Where("tag2 = ?", api)
-	}
-	return query
+	return result, nil
 }

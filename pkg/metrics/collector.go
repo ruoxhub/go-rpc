@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/database"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"
 )
@@ -40,6 +40,7 @@ type collector struct {
 	stopChan chan struct{}
 	wg       sync.WaitGroup
 	once     sync.Once
+	store    repository.MetricStore
 }
 
 type metricBucket struct {
@@ -78,11 +79,12 @@ func makeKey(name string, tags map[string]string, metricType string) string {
 }
 
 // NewCollector 创建指标采集器
-func NewCollector(interval time.Duration) MetricCollector {
+func NewCollector(interval time.Duration, store repository.MetricStore) MetricCollector {
 	c := &collector{
 		buckets:  make(map[string]*metricBucket),
 		interval: interval,
 		stopChan: make(chan struct{}),
+		store:    store,
 	}
 	c.wg.Add(2)
 	go c.flushLoop()
@@ -174,9 +176,8 @@ func (c *collector) flush() {
 		return
 	}
 
-	db := database.GetDB()
-	if db == nil {
-		logger.Warn("metric collector flush skipped: database not initialized")
+	if c.store == nil {
+		logger.Warn("metric collector flush skipped: metric store not initialized")
 		return
 	}
 
@@ -184,22 +185,14 @@ func (c *collector) flush() {
 		if len(bucket.Tags) == 0 {
 			continue
 		}
-		db.Exec(`
-			INSERT INTO metric_tag (name, tag1_name, tag2_name, tag3_name)
-			VALUES (?, 'group', 'device_id', 'api')
-			ON CONFLICT (name) DO NOTHING
-		`, bucket.Name)
+		_ = c.store.UpsertMetricTag(bucket.Name, "group", "device_id", "api")
 
 		for _, suffix := range []string{".p50", ".p90", ".p99"} {
-			db.Exec(`
-				INSERT INTO metric_tag (name, tag1_name, tag2_name)
-				VALUES (?, 'group', 'api')
-				ON CONFLICT (name) DO NOTHING
-			`, bucket.Name+suffix)
+			_ = c.store.UpsertMetricTag(bucket.Name+suffix, "group", "api", "")
 		}
 	}
 
-	if err := db.CreateInBatches(metrics, 100).Error; err != nil {
+	if err := c.store.FlushMinutes(metrics); err != nil {
 		logger.Error("metric collector flush failed", zap.Error(err), zap.Int("count", len(metrics)))
 	}
 }
@@ -285,29 +278,8 @@ func (c *collector) rollupLoop() {
 	}
 }
 
-// rollup 执行一次聚合写入
-func (c *collector) rollup(targetTable, sourceTable, timeKeyColumn, timeKeyParam, timeKeyFilter, aggFn, typeFilter string) {
-	db := database.GetDB()
-	if db == nil {
-		return
-	}
-	query := fmt.Sprintf(`
-		INSERT INTO %s (name, %s, tags_md5, tag1, tag2, tag3, tag4, tag5, type, value, create_time)
-		SELECT name, ?, tags_md5, tag1, tag2, tag3, tag4, tag5, type, %s(value), MIN(create_time)
-		FROM %s
-		WHERE time_key LIKE ? AND %s
-		GROUP BY name, tags_md5, tag1, tag2, tag3, tag4, tag5, type
-		ON CONFLICT (name, tags_md5, %s)
-		DO UPDATE SET value = EXCLUDED.value
-	`, targetTable, timeKeyColumn, aggFn, sourceTable, typeFilter, timeKeyColumn)
-	if err := db.Exec(query, timeKeyParam, timeKeyFilter).Error; err != nil {
-		logger.Errorf("Failed to rollup %s metrics to %s: %v", typeFilter, targetTable, err)
-	}
-}
-
 func (c *collector) runRollupAndRetention() {
-	db := database.GetDB()
-	if db == nil {
+	if c.store == nil {
 		return
 	}
 
@@ -317,8 +289,9 @@ func (c *collector) runRollupAndRetention() {
 
 	logger.Infof("Starting metrics hourly rollup for time_keyPrefix: %s", prevHourKey)
 
-	c.rollup("metric_hour", "metric_minute", "time_key", prevHourKey, prevHourKey+"%", "SUM", "type = 'counter'")
-	c.rollup("metric_hour", "metric_minute", "time_key", prevHourKey, prevHourKey+"%", "AVG", "(type = 'gauge' OR type = 'latency')")
+	if err := c.store.RollupHours(prevHourKey); err != nil {
+		logger.Errorf("Failed to rollup hourly metrics: %v", err)
+	}
 
 	if now.Hour() == 0 {
 		prevDay := now.AddDate(0, 0, -1)
@@ -326,14 +299,15 @@ func (c *collector) runRollupAndRetention() {
 
 		logger.Infof("Starting metrics daily rollup for time_keyPrefix: %s", prevDayKey)
 
-		c.rollup("metric_day", "metric_hour", "time_key", prevDayKey, prevDayKey+"%", "SUM", "type = 'counter'")
-		c.rollup("metric_day", "metric_hour", "time_key", prevDayKey, prevDayKey+"%", "AVG", "(type = 'gauge' OR type = 'latency')")
+		if err := c.store.RollupDays(prevDayKey); err != nil {
+			logger.Errorf("Failed to rollup daily metrics: %v", err)
+		}
 
 		logger.Info("Cleaning expired metrics data...")
-		if err := db.Exec(`DELETE FROM metric_minute WHERE create_time < ?`, now.AddDate(0, 0, -7)).Error; err != nil {
+		if err := c.store.DeleteExpired("metric_minute", now.AddDate(0, 0, -7)); err != nil {
 			logger.Errorf("Failed to clean metric_minute: %v", err)
 		}
-		if err := db.Exec(`DELETE FROM metric_hour WHERE create_time < ?`, now.AddDate(0, 0, -30)).Error; err != nil {
+		if err := c.store.DeleteExpired("metric_hour", now.AddDate(0, 0, -30)); err != nil {
 			logger.Errorf("Failed to clean metric_hour: %v", err)
 		}
 	}
