@@ -346,7 +346,7 @@ func (h *GroupHandler) AddAction(c *gin.Context) {
 		return
 	}
 	if existing != nil {
-		Error(c, 409, "action already exists")
+		BadRequest(c, "action already exists")
 		return
 	}
 

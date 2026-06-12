@@ -446,7 +446,7 @@ func (s *Server) registerRoutes() {
 // Centralized so /business, /v1, and /api all share the same authentication shape.
 func (s *Server) optionalAuthGroup(relativePath string) *gin.RouterGroup {
 	group := s.httpServer.Group(relativePath)
-	group.Use(middleware.NewAuthMiddleware().OptionalAuth())
+	group.Use(middleware.OptionalAuth())
 	return group
 }
 

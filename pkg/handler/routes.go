@@ -27,9 +27,6 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 	// Set SysLogRepository for audit logging
 	SetSysLogRepository(deps.SysLogRepo)
 
-	// Create auth middleware
-	authMiddleware := middleware.NewAuthMiddleware()
-
 	// Create handler instances with injected repositories
 	userHandler := NewUserHandler(deps.UserRepo)
 	groupHandler := NewGroupHandler(deps.GroupRepo)
@@ -47,13 +44,13 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 			c.Set("groupRepo", deps.GroupRepo)
 			c.Next()
 		},
-		authMiddleware.Authenticate(),
+		middleware.Authenticate(),
 		middleware.AnonymousAccessMiddleware(cfgSvc),
 		middleware.RateLimitMiddleware(cfgSvc),
 	)
 	{
 		users := api.Group("/users")
-		users.Use(authMiddleware.RequireAdmin())
+		users.Use(middleware.RequireAdmin())
 		{
 			users.GET("", userHandler.List)
 			users.POST("", userHandler.Add)
@@ -91,7 +88,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 		}
 
 		sysConfig := api.Group("/sysconfig")
-		sysConfig.Use(authMiddleware.RequireAdmin())
+		sysConfig.Use(middleware.RequireAdmin())
 		{
 			sysConfig.GET("", sysConfigHandler.List)
 			sysConfig.PUT("", sysConfigHandler.Update)
@@ -118,7 +115,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 		}
 
 		alerts := api.Group("/alerts")
-		alerts.Use(authMiddleware.RequireAdmin())
+		alerts.Use(middleware.RequireAdmin())
 		{
 			alerts.GET("/rules", alertHandler.GetAlertRules)
 			alerts.GET("/rules/:id", alertHandler.GetAlertRule)

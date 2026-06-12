@@ -30,36 +30,20 @@ const (
 	ContextUserKey = "current_user"
 )
 
-// AuthMiddleware 认证中间件
-type AuthMiddleware struct{}
-
-// NewAuthMiddleware 创建认证中间件实例
-func NewAuthMiddleware() *AuthMiddleware {
-	return &AuthMiddleware{}
-}
-
 // Authenticate 认证中间件处理函数
 // 从 Authorization header 中提取 Bearer token，查询用户信息并存入 context
-func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
+func Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := ExtractAuthTokenFromRequest(c)
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "未提供认证信息",
-			})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
 			return
 		}
 
 		// 查询用户信息
 		user, err := FindUserByToken(token)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "无效的认证 token",
-			})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "无效的认证 token")
 			return
 		}
 
@@ -73,7 +57,7 @@ func (m *AuthMiddleware) Authenticate() gin.HandlerFunc {
 
 // OptionalAuth 可选认证中间件
 // 如果提供了有效的 token 则设置用户信息，否则继续但不设置用户
-func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
+func OptionalAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := ExtractAuthTokenFromRequest(c)
 		if token == "" {
@@ -193,24 +177,16 @@ func GetCurrentUser(c *gin.Context) (*model.UserInfo, bool) {
 
 // RequireAdmin 管理员权限中间件
 // 要求当前用户是管理员
-func (m *AuthMiddleware) RequireAdmin() gin.HandlerFunc {
+func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		user, exists := GetCurrentUser(c)
 		if !exists {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    401,
-				"message": "请先登录",
-			})
-			c.Abort()
+			abortJSON(c, http.StatusUnauthorized, "请先登录")
 			return
 		}
 
 		if !user.IsAdmin {
-			c.JSON(http.StatusForbidden, gin.H{
-				"code":    403,
-				"message": "需要管理员权限",
-			})
-			c.Abort()
+			abortJSON(c, http.StatusForbidden, "需要管理员权限")
 			return
 		}
 

@@ -39,11 +39,7 @@ func RateLimitMiddleware(cfgSvc config.Service) gin.HandlerFunc {
 
 		// 检查是否允许请求
 		if !limiter.Allow(limiterKey, qps) {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"code":    429,
-				"message": "请求过于频繁，请稍后再试",
-			})
-			c.Abort()
+			abortJSON(c, http.StatusTooManyRequests, "请求过于频繁，请稍后再试")
 			return
 		}
 
@@ -65,11 +61,7 @@ func AnonymousAccessMiddleware(cfgSvc config.Service) gin.HandlerFunc {
 			// 检查用户是否已登录
 			user, exists := GetCurrentUser(c)
 			if !exists || user == nil {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"code":    401,
-					"message": "当前不允许匿名访问，请先登录",
-				})
-				c.Abort()
+				abortJSON(c, http.StatusUnauthorized, "当前不允许匿名访问，请先登录")
 				return
 			}
 		}
