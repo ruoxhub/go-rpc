@@ -19,9 +19,12 @@ api.interceptors.response.use(
   (response) => response.data,
   (error) => {
     const status = error.response?.status
-    const errorMsg = error.response?.data?.message || error.message || '请求失败'
+    const body = error.response?.data
+    // 服务端统一信封: { code, message, data, trace_id, ... }
+    // 业务错误可能是 HTTP 2xx (3xxx 业务码) 或 4xx/5xx, 都从 body.message 取文案。
+    const errorMsg = body?.message || error.message || '请求失败'
 
-    if (status === 401) {
+    if (status === 401 || body?.code === 2001 || body?.code === 2002) {
       localStorage.removeItem('api_token')
       localStorage.removeItem('login_token')
       if (window.location.pathname !== '/login') {
@@ -29,7 +32,7 @@ api.interceptors.response.use(
       }
     }
 
-    if (status === 403 && !error.config?.silent) {
+    if ((status === 403 || body?.code === 2003) && !error.config?.silent) {
       message.error('权限不足')
       return Promise.reject(error)
     }

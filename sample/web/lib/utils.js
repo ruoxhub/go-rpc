@@ -420,12 +420,8 @@ function generateRandomString(useRandomLength, minLength, maxLength) {
  */
 function parseIntFromString(value) {
   if (!value) return 0;
-  try {
-    const cleanedValue = value.replace(/\D/g, '');
-    return cleanedValue ? parseInt(cleanedValue, 10) : 0;
-  } catch (e) {
-    return 0;
-  }
+  const cleaned = value.replace(/\D/g, '');
+  return cleaned ? parseInt(cleaned, 10) : 0;
 }
 
 /**
@@ -473,8 +469,8 @@ function paramsObjToString(params) {
  * @returns {BrowserInfo}
  */
 function getBrowserInfo() {
-  var browserName = getBrowserName();
-  var engineName = 'Blink';
+  const browserName = getBrowserName();
+  let engineName = 'Blink';
   if (browserName === 'Firefox') {
     engineName = 'Gecko';
   } else if (browserName === 'Safari') {

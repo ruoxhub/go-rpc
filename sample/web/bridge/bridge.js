@@ -211,6 +211,15 @@ window.addEventListener('message', async (event) => {
         response.success = false;
         response.error = err instanceof Error ? err.message : 'Navigate failed';
       }
+    } else if (data.action === 'getDnrRules') {
+      try {
+        const result = await sendToBackground('getDnrRules', data);
+        response.success = true;
+        response.rules = result.rules;
+      } catch (err) {
+        response.success = false;
+        response.error = err instanceof Error ? err.message : 'getDnrRules failed';
+      }
     } else if (data.action === 'getCookies') {
       try {
         const result = await sendToBackground('getCookies', data);

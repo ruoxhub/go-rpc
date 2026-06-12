@@ -27,6 +27,51 @@ const DEFAULT_CONFIG = {
   body: undefined
 };
 
+/**
+ * 通过 bridge/background 代理请求，绕过页面 CORS 限制。
+ * 仅在调用方显式设置 options.proxy=true 时启用。
+ */
+function proxyFetch(url, requestOptions, responseType) {
+  return new Promise((resolve, reject) => {
+    const requestId = 'http_proxy_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    const timeout = Math.min(requestOptions.timeout || DEFAULT_CONFIG.timeout, 45000);
+    const timeoutId = setTimeout(() => {
+      window.removeEventListener('message', handler);
+      reject(new Error(`Proxy request timeout after ${timeout}ms (${url})`));
+    }, timeout + 1000);
+
+    function handler(event) {
+      if (event.source !== window) return;
+      const msg = event.data;
+      if (!msg || msg.source !== 'crawler_rpc_bridge' || msg.requestId !== requestId) return;
+      clearTimeout(timeoutId);
+      window.removeEventListener('message', handler);
+      if (!msg.success) {
+        reject(new Error(msg.error || `Proxy request failed (${url})`));
+        return;
+      }
+      if (responseType === 'json') {
+        try {
+          resolve(JSON.parse(msg.data));
+        } catch (error) {
+          reject(new Error(`Proxy JSON parse failed (${url}): ${error.message}`));
+        }
+        return;
+      }
+      resolve(msg.data);
+    }
+
+    window.addEventListener('message', handler);
+    window.postMessage({
+      source: 'crawler_rpc_main',
+      action: 'proxyFetch',
+      requestId,
+      url,
+      options: requestOptions
+    }, '*');
+  });
+}
+
 // ============ 辅助工具函数 ============
 
 /**
@@ -82,7 +127,20 @@ function buildUrlWithParams(url, params) {
 async function parseResponse(source, type) {
   if (source instanceof Response) {
     if (type === 'json') {
-      return source.json();
+      const text = await source.text();
+      if (!text) {
+        const verify = source.headers.get('bdturing-verify');
+        if (verify) {
+          throw new Error(`Anti-bot verification required (${source.url})`);
+        }
+        throw new Error(`Empty response body (${source.url})`);
+      }
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        console.warn('[HTTP] Failed to parse JSON response, falling back to text');
+        return text;
+      }
     }
     if (type === 'eventstream') {
       return source.text();
@@ -155,6 +213,16 @@ async function _baseFetch(url, opts) {
       if (!headers['Content-Encoding'] && !headers['content-encoding']) {
         fetchHeaders.set('Content-Type', 'application/octet-stream');
       }
+    }
+
+    if (options.proxy === true) {
+      return await proxyFetch(requestUrl, {
+        method: method.toUpperCase(),
+        headers: Object.fromEntries(fetchHeaders.entries()),
+        body,
+        timeout,
+        credentials
+      }, responseType);
     }
 
     console.log('[HTTP] Request:', {
@@ -273,9 +341,9 @@ function _baseXHR(url, opts) {
  * @param {Object} [options]
  * @returns {Promise<any>}
  */
-const fetchPost = (url, params, headers, options) => {
+function fetchPost(url, params, headers, options) {
   return _baseFetch(url, { method: 'POST', params: params || {}, headers: headers || {}, options: options || {} });
-};
+}
 
 /**
  * Fetch GET 请求
@@ -285,9 +353,9 @@ const fetchPost = (url, params, headers, options) => {
  * @param {Object} [options]
  * @returns {Promise<any>}
  */
-const fetchGet = (url, params, headers, options) => {
+function fetchGet(url, params, headers, options) {
   return _baseFetch(url, { method: 'GET', params: params || {}, headers: headers || {}, options: options || {} });
-};
+}
 
 /**
  * XMLHttpRequest POST 请求

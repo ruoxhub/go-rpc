@@ -45,6 +45,34 @@ class BackgroundWebSocket {
     this._connect();
   }
 
+
+   /**
+   * 销毁实例：断开 socket、清心跳与重连定时器、移除 message listener、清空 handlers。
+   * 调用后实例即视为废弃，重复调用安全（幂等）。
+   */
+  destroy() {
+    if (this._destroyed) return;
+    this._destroyed = true;
+
+    this.log('正在销毁客户端实例...');
+
+    // 1. 断开 WebSocket 并阻止后续重连
+    //    _disconnect 内部会置 isManualDisconnect=true、清 reconnectTimer、清心跳、关 socket
+    this._disconnect();
+
+    // 2. 摘除 bridge 配置变更监听
+    if (this._configChangeHandler) {
+      window.removeEventListener('message', this._configChangeHandler);
+      this._configChangeHandler = null;
+    }
+
+    // 3. 清空 action handler 表，避免遗留闭包持引用
+    this.handlers.clear();
+
+    this.isInitialized = false;
+  }
+
+
   _connect() {
     window.postMessage({
       source: 'crawler_rpc_main',
@@ -168,6 +196,8 @@ class BaseClient {
     antiDetect: true,
   };
 
+  static defaultActions = {};
+
   /**
    * @param {ResolvedConfig} config
    */
@@ -198,12 +228,9 @@ class BaseClient {
     // 当前连接使用的 clientId（每次重连都会重新生成）
     this.clientId = null;
 
-    // 注册默认的 _execjs handler
-    // this.handlers.set('_execjs', this._execjsHandler.bind(this));
 
     // 绑定后保存引用，destroy 时才能从 window 上 removeEventListener
     this._configChangeHandler = this._handleConfigChange.bind(this);
-
     if (!this.isCorrectDomain()) {
       return;
     }
@@ -228,6 +255,7 @@ class BaseClient {
 
     this.setupConfigChangeListener();
 
+    
     if (config.autoStart !== false) {
       setTimeout(() => this.start(), config.startDelay || 2000);
     }
@@ -289,8 +317,27 @@ class BaseClient {
    * @returns {BaseClient}
    */
   static create(config) {
-    const mergedConfig = { ...this.defaultConfig, ...config };
+    const actions = {
+      ...this.defaultActions,
+      ...((config && config.actions) || {})
+    };
+    const mergedConfig = { ...this.defaultConfig, ...config, actions };
     return new BaseClient(mergedConfig);
+  }
+
+  /**
+   * 注册所有平台客户端都会继承的默认 actions。
+   * 平台自己的同名 action 会在 BaseClient.create() 时覆盖默认 action。
+   * @param {Object} actions
+   */
+  static registerDefaultActions(actions) {
+    if (!actions || typeof actions !== 'object') {
+      return;
+    }
+    this.defaultActions = {
+      ...this.defaultActions,
+      ...actions
+    };
   }
 
   /**
@@ -506,7 +553,7 @@ class BaseClient {
         handler = (request, resolve, reject) => {
           const executeAction = () => {
             const params = request.params || {};
-            method(params)
+            Promise.resolve(method(params))
               .then(response => {
                 const result = typeof transform === 'function'
                   ? transform(response)
@@ -666,32 +713,6 @@ class BaseClient {
       isConnected: this._isConnected(),
       platform: this.platform
     };
-  }
-
-  /**
-   * 销毁实例：断开 socket、清心跳与重连定时器、移除 message listener、清空 handlers。
-   * 调用后实例即视为废弃，重复调用安全（幂等）。
-   */
-  destroy() {
-    if (this._destroyed) return;
-    this._destroyed = true;
-
-    this.log('正在销毁客户端实例...');
-
-    // 1. 断开 WebSocket 并阻止后续重连
-    //    _disconnect 内部会置 isManualDisconnect=true、清 reconnectTimer、清心跳、关 socket
-    this._disconnect();
-
-    // 2. 摘除 bridge 配置变更监听
-    if (this._configChangeHandler) {
-      window.removeEventListener('message', this._configChangeHandler);
-      this._configChangeHandler = null;
-    }
-
-    // 3. 清空 action handler 表，避免遗留闭包持引用
-    this.handlers.clear();
-
-    this.isInitialized = false;
   }
 
   // ==================== 以下为融合进来的 RpcClient 核心逻辑 ====================
@@ -968,51 +989,8 @@ class BaseClient {
   }
 
   /**
-   * 默认 _execjs handler - 执行 JavaScript 代码
-   * @param {Object} request - 请求对象
-   * @param {Function} resolve - 成功回调
-   * @param {Function} reject - 失败回调
-   */
-  _execjsHandler(request, resolve, reject) {
-    // Rpc 旧版本兼容：支持 param / params / code 字段，但只接受字符串。
-    // 注意：其它 action 的 params 通常是对象，对象会被 String() 拼成 "[object Object]"
-    // 导致 new Function 抛语法错误，这里必须做类型守卫。
-    let param = '';
-    if (typeof request.param === 'string' && request.param) {
-      param = request.param;
-    } else if (typeof request.code === 'string' && request.code) {
-      param = request.code;
-    } else if (typeof request.params === 'string' && request.params) {
-      param = request.params;
-    }
-    if (!param) {
-      reject('缺少执行参数 param');
-      return;
-    }
-
-    try {
-      // 使用受限的 eval 执行，禁止访问外部作用域的敏感对象
-      const fn = new Function(
-        'request', 'resolve', 'reject',
-        '"use strict"; return (async () => { return (' + param + ') })()'
-      );
-      const result = fn(request, resolve, reject);
-
-      if (result && typeof result.then === 'function') {
-        result
-          .then(res => resolve(res !== undefined ? res : '执行成功 (无返回值)'))
-          .catch(err => reject('执行错误：' + (err.message || err)));
-      } else {
-        resolve(result !== undefined ? result : '执行成功 (无返回值)');
-      }
-    } catch (err) {
-      reject('语法错误：' + (err.message || err));
-    }
-  }
-
-  /**
    * 检查连接状态
-   * @returns {boolean} - 是否已连接
+   * @returns {boolean}
    */
   _isConnected() {
     return this.socket !== null && this.socket.readyState === WebSocket.OPEN;

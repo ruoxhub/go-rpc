@@ -220,10 +220,7 @@
   function setupCanvasProtection() {
     if (!config.canvas) return;
 
-    var originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
     var originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
-    var originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-    var originalGetParameter2 = WebGL2RenderingContext.prototype.getParameter;
     var originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (type, attributes) {
         if (type === '2d') {

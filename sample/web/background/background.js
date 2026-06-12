@@ -75,6 +75,51 @@ const isFirefox = (function () {
   }
 })();
 
+// ── 允许跨域访问 api.openai.com 的 CORS 规则 ──
+(function installOpenaiCorsRule() {
+  var dnr = (typeof chrome !== 'undefined' && chrome.declarativeNetRequest) ||
+            (typeof browser !== 'undefined' && browser.declarativeNetRequest);
+  if (!dnr) return;
+
+  if (typeof dnr.addDynamicRules !== 'function' || typeof dnr.getDynamicRules !== 'function') {
+    return;
+  }
+
+  var RULE_ID_OPENAI_CORS = 2;
+
+  try {
+    dnr.getDynamicRules().then(function (existingRules) {
+      var removePromise = typeof dnr.removeDynamicRules === 'function'
+        ? dnr.removeDynamicRules([RULE_ID_OPENAI_CORS])
+        : Promise.resolve();
+
+      return removePromise.then(function () {
+        return dnr.addDynamicRules([{
+          id: RULE_ID_OPENAI_CORS,
+          priority: 1,
+          action: {
+            type: 'modifyHeaders',
+            responseHeaders: [
+              { header: 'Access-Control-Allow-Origin', operation: 'set', value: '*' },
+              { header: 'Access-Control-Allow-Methods', operation: 'set', value: 'GET, POST, PUT, DELETE, OPTIONS' },
+              { header: 'Access-Control-Allow-Headers', operation: 'set', value: '*' }
+            ]
+          },
+          condition: {
+            urlFilter: '||api.openai.com'
+          }
+        }]);
+      });
+    }).then(function () {
+      console.log('[Background] CORS modifyHeaders rule installed for api.openai.com');
+    }).catch(function (e) {
+      console.warn('[Background] Failed to install OpenAI CORS rule:', e.message || e);
+    });
+  } catch (e) {
+    console.warn('[Background] declarativeNetRequest error for OpenAI:', e);
+  }
+})();
+
 // ── webRequest 拦截 YouTube 请求头 ──
 // Firefox 不支持 extraHeaders 选项，需要做兼容处理
 var webRequestExtraInfoSpec = ["requestHeaders"];
@@ -152,7 +197,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
     };
 
-    if (request.action === 'log') {
+    if (request.action === 'getDnrRules') {
+        const dnr = chrome.declarativeNetRequest;
+        if (!dnr) {
+            safeSendResponse({ success: false, error: 'declarativeNetRequest API not available' });
+        } else {
+            dnr.getDynamicRules()
+                .then(rules => {
+                    safeSendResponse({ success: true, rules });
+                })
+                .catch(err => {
+                    safeSendResponse({ success: false, error: err.message });
+                });
+        }
+        return true;
+    }
+    else if (request.action === 'log') {
         console.log('Content Script:', request.message);
         safeSendResponse({ success: true });
         return false; // 同步响应，不需要保持通道打开
