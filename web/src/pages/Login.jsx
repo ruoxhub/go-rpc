@@ -23,7 +23,7 @@ function Login() {
         }
       })
 
-      if (response.data.status === 0 && response.data.data) {
+      if (response.data.code === 0 && response.data.data) {
         // 保存 token 到 localStorage
         localStorage.setItem('api_token', response.data.data.apiToken)
         localStorage.setItem('login_token', response.data.data.loginToken)

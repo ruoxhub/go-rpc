@@ -76,7 +76,7 @@ func (h *MetricHandler) GetMetrics(c *gin.Context) {
 		})
 	}
 
-	Success(c, vos)
+	OK(c, vos)
 }
 
 // GetMetricList 获取指标列表
@@ -87,7 +87,7 @@ func (h *MetricHandler) GetMetricList(c *gin.Context) {
 		return
 	}
 
-	Success(c, tags)
+	OK(c, tags)
 }
 
 // GetDashboardData 获取大盘数据
@@ -98,7 +98,7 @@ func (h *MetricHandler) GetDashboardData(c *gin.Context) {
 		return
 	}
 
-	Success(c, gin.H{
+	OK(c, gin.H{
 		"totalCalls":    data.TotalCalls,
 		"onlineDevices": data.OnlineDevices,
 		"totalGroups":   data.TotalGroups,
@@ -152,5 +152,5 @@ func (h *MetricHandler) GetLatencyPercentiles(c *gin.Context) {
 		result = append(result, *stats)
 	}
 
-	Success(c, result)
+	OK(c, result)
 }

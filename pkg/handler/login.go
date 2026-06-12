@@ -8,6 +8,7 @@ import (
 	"github.com/mrh30000/go-rpc/internal/config"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/handler/errorcode"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/utils/password"
@@ -34,23 +35,23 @@ type LoginRequest struct {
 func HandleLogin(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBind(&req); err != nil {
-		RpcError(c, -1, err.Error())
+		BadRequest(c, err.Error())
 		return
 	}
 
 	if loginUserRepo == nil {
-		RpcError(c, -1, "user repository not available")
+		InternalError(c, "user repository not available")
 		return
 	}
 
 	user, err := loginUserRepo.FindByUserName(req.UserName)
 	if err != nil || user == nil {
-		RpcError(c, -1, "用户名或密码错误")
+		Unauthorized(c, "用户名或密码错误")
 		return
 	}
 
 	if !password.CheckPassword(req.Password, user.Password) {
-		RpcError(c, -1, "用户名或密码错误")
+		Unauthorized(c, "用户名或密码错误")
 		return
 	}
 
@@ -61,7 +62,7 @@ func HandleLogin(c *gin.Context) {
 		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
 	}
 
-	RpcSuccess(c, gin.H{
+	OK(c, gin.H{
 		"id":         user.ID,
 		"userName":   user.UserName,
 		"lastActive": user.LastActive.Format("2006-01-02T15:04:05"),
@@ -79,17 +80,17 @@ func HandleLogin(c *gin.Context) {
 func HandleGetUserInfo(c *gin.Context) {
 	token := middleware.ExtractAuthTokenFromRequest(c)
 	if token == "" {
-		RpcError(c, -1, "请重新登录")
+		Unauthorized(c, "请重新登录")
 		return
 	}
 
 	user, err := middleware.FindUserByToken(token)
 	if err != nil {
-		RpcError(c, -1, "请重新登录")
+		Unauthorized(c, "请重新登录")
 		return
 	}
 
-	RpcSuccess(c, gin.H{
+	OK(c, gin.H{
 		"id":       user.ID,
 		"userName": user.UserName,
 		"isAdmin":  user.IsAdmin,
@@ -104,14 +105,14 @@ func HandleSystemNotice(c *gin.Context) {
 			systemNotice = svc.GetConfig(pkgconfig.ConfigKeySystemNotice)
 		}
 	}
-	RpcSuccess(c, systemNotice)
+	OK(c, systemNotice)
 }
 
 // HandleSystemInfo 获取系统信息
 func HandleSystemInfo(c *gin.Context) {
 	yamlConfig := config.DefaultServerConfig()
 
-	RpcSuccess(c, gin.H{
+	OK(c, gin.H{
 		"version":       "1.0.0",
 		"buildTime":     "2026-03-20",
 		"expireTime":    time.Now().AddDate(0, 1, 0).Format("2006-01-02 15:04"),
@@ -141,7 +142,7 @@ func HandleFrontendListGroup(c *gin.Context) {
 		return
 	}
 
-	RpcError(c, -1, "group repository not available")
+	InternalError(c, "group repository not available")
 }
 
 // listGroupViaRepo 使用 GroupRepository 查询分组列表（前端格式）
@@ -149,7 +150,7 @@ func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := groupRepo.GetGroupStats("", true, activeThreshold)
 	if err != nil {
-		RpcError(c, -1, err.Error())
+		InternalError(c, err.Error())
 		return
 	}
 
@@ -167,14 +168,14 @@ func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
 		})
 	}
 
-	RpcSuccess(c, vos)
+	OK(c, vos)
 }
 
 // HandleFrontendAnonymousGroupList 获取匿名分组列表
 func HandleFrontendAnonymousGroupList(c *gin.Context) {
 	if clientManager, exists := c.Get("clientManager"); exists {
 		if cm, ok := clientManager.(anonymousClientManager); ok {
-			RpcSuccess(c, buildAnonymousGroupVOs(cm))
+			OK(c, buildAnonymousGroupVOs(cm))
 			return
 		}
 	}
@@ -195,7 +196,7 @@ func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) 
 	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := groupRepo.FindAnonymousDeviceGroups(activeThreshold)
 	if err != nil {
-		RpcError(c, -1, err.Error())
+		InternalError(c, err.Error())
 		return
 	}
 
@@ -213,14 +214,14 @@ func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) 
 		vos = []AnonymousGroupVO{}
 	}
 
-	RpcSuccess(c, vos)
+	OK(c, vos)
 }
 
 // HandleFrontendGroupDetail 获取分组详情
 func HandleFrontendGroupDetail(c *gin.Context) {
 	groupName := c.Query("groupName")
 	if groupName == "" {
-		RpcError(c, -1, "groupName 参数必填")
+		BadRequest(c, "groupName 参数必填")
 		return
 	}
 
@@ -253,24 +254,24 @@ func HandleRegister(c *gin.Context) {
 	}
 
 	if configSvc != nil && !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
-		RpcError(c, -1, "当前不允许注册新用户")
+		Fail(c, errorcode.RegisterDisabled, "当前不允许注册新用户")
 		return
 	}
 
 	var req RegisterRequest
 	if err := c.ShouldBind(&req); err != nil {
-		RpcError(c, -1, err.Error())
+		BadRequest(c, err.Error())
 		return
 	}
 
 	if loginUserRepo == nil {
-		RpcError(c, -1, "user repository not available")
+		InternalError(c, "user repository not available")
 		return
 	}
 
 	existing, err := loginUserRepo.FindByUserName(req.UserName)
 	if err == nil && existing != nil {
-		RpcError(c, -1, "用户名已存在")
+		BadRequest(c, "用户名已存在")
 		return
 	}
 
@@ -278,7 +279,7 @@ func HandleRegister(c *gin.Context) {
 
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		RpcError(c, -1, "密码加密失败")
+		Fail(c, errorcode.EncryptFailed, "密码加密失败")
 		return
 	}
 
@@ -300,11 +301,11 @@ func HandleRegister(c *gin.Context) {
 	}
 
 	if err := loginUserRepo.Create(&user); err != nil {
-		RpcError(c, -1, err.Error())
+		InternalError(c, err.Error())
 		return
 	}
 
-	RpcSuccess(c, gin.H{
+	OK(c, gin.H{
 		"id":       user.ID,
 		"userName": user.UserName,
 	})
@@ -314,12 +315,12 @@ func HandleRegister(c *gin.Context) {
 func HandleUserAdd(c *gin.Context) {
 	var req AddUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		RpcError(c, -1, err.Error())
+		BadRequest(c, err.Error())
 		return
 	}
 
 	if loginUserRepo == nil {
-		RpcError(c, -1, "user repository not available")
+		InternalError(c, "user repository not available")
 		return
 	}
 
@@ -327,7 +328,7 @@ func HandleUserAdd(c *gin.Context) {
 
 	hashedPassword, err := password.HashPassword(req.Password)
 	if err != nil {
-		RpcError(c, -1, "密码加密失败")
+		Fail(c, errorcode.EncryptFailed, "密码加密失败")
 		return
 	}
 
@@ -344,9 +345,9 @@ func HandleUserAdd(c *gin.Context) {
 	}
 
 	if err := loginUserRepo.Create(&user); err != nil {
-		RpcError(c, -1, err.Error())
+		InternalError(c, err.Error())
 		return
 	}
 
-	RpcSuccess(c, user.ID)
+	OK(c, user.ID)
 }

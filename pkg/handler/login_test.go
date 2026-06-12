@@ -86,8 +86,8 @@ func TestHandleRegister_Success(t *testing.T) {
 	}
 
 	// 验证响应数据
-	if int(result["status"].(float64)) != 0 {
-		t.Errorf("Expected status 0, got %v", result["status"])
+	if int(result["code"].(float64)) != 0 {
+		t.Errorf("Expected code 0 (success), got %v", result["code"])
 	}
 
 	// 验证用户已创建
@@ -129,8 +129,8 @@ func TestHandleRegister_DuplicateUser(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&result)
 
 	// 应该返回错误状态
-	if int(result["status"].(float64)) != -1 {
-		t.Errorf("Expected status -1 for duplicate user, got %v", result["status"])
+	if int(result["code"].(float64)) != 1000 {
+		t.Errorf("Expected code 1000 (BadRequest) for duplicate user, got %v", result["code"])
 	}
 
 	if !strings.Contains(result["message"].(string), "已存在") {

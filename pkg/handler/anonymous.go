@@ -40,7 +40,7 @@ type AnonymousGroupVO struct {
 // List 获取匿名分组列表
 // 匿名分组定义：当前内存连接中未归属正式分组的设备
 func (h *AnonymousGroupHandler) List(c *gin.Context) {
-	Success(c, buildAnonymousGroupVOs(h.clientManager))
+	OK(c, buildAnonymousGroupVOs(h.clientManager))
 }
 
 // ListOptimized 使用内存中的实时连接状态统计匿名分组。
@@ -54,7 +54,7 @@ func (h *AnonymousGroupHandler) ListOptimized(c *gin.Context) {
 		return
 	}
 
-	Success(c, buildAnonymousGroupVOs(h.clientManager))
+	OK(c, buildAnonymousGroupVOs(h.clientManager))
 }
 
 func buildAnonymousGroupVOs(clientManager anonymousClientManager) []AnonymousGroupVO {
@@ -144,7 +144,7 @@ func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
 		}
 	}
 	if len(clients) == 0 {
-		Success(c, int64(0))
+		OK(c, int64(0))
 		return
 	}
 
@@ -157,7 +157,7 @@ func (h *AnonymousGroupHandler) Delete(c *gin.Context) {
 		count++
 	}
 
-	Success(c, count)
+	OK(c, count)
 }
 
 func (h *AnonymousGroupHandler) markGroupRegistered(groupName string) {
@@ -326,5 +326,5 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	h.markGroupRegistered(req.GroupName)
 
 	auditConvertGroup(c, "anonymous:"+req.GroupName, req.GroupName)
-	Success(c, group.ID)
+	OK(c, group.ID)
 }

@@ -112,7 +112,7 @@ func decode(data []byte) (*RpcPacket, error) {
 }
 
 type commonRes struct {
-	Status  int32       `json:"status"`
+	Status  int32       `json:"code"`
 	Message *string     `json:"message"`
 	Data    interface{} `json:"data"`
 }

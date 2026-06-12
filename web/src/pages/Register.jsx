@@ -23,7 +23,7 @@ function Register() {
         }
       })
 
-      if (response.data.status === 0) {
+      if (response.data.code === 0) {
         message.success('注册成功，请登录')
         // 跳转到登录页
         navigate('/login')

@@ -30,7 +30,7 @@ def _decode_sekiro_fast_json(data: bytes, client_id: str) -> str:
     json_part = json_part if json_part is not None else "null"
 
     json_body = "{\"clientId\":" + client_id + ",\"message\":" + msg + \
-                ",\"status\":" + str(status) + ",\"data\":" + json_part + "}"
+                ",\"code\":" + str(status) + ",\"data\":" + json_part + "}"
     return json_body
 
 
@@ -38,7 +38,7 @@ class _Record:
     def __init__(self):
         self.condition = threading.Condition()
         self._response: dict = {
-            "status": -1,
+            "code": 5001,
             "message": "invoker client timeout"
         }
 
@@ -58,7 +58,7 @@ class _Record:
                 # 即当前只有python的invoker调用xposed的RpcClient会默认走到压缩
                 # 压缩行为的判定在RpcClient，他通过报文大小来决定是否启动压缩，以及通过用户的主动控制来确定是否压缩
                 return {
-                    "status": -1,
+                    "code": 5001,
                     "message": "invoker client error, the python client just only support gzip compress method ,"
                                "now is: " + compress_method
                 }
@@ -68,7 +68,7 @@ class _Record:
         content_type = content_type if content_type is not None else pkg.headers.get('Content-Type')
         if content_type is None:
             return {
-                "status": 0,
+                "code": 0,
                 "data": pkg.data
             }
         sekiro_client_id = pkg.headers.get('SEKIRO_CLIENT_ID')
@@ -78,7 +78,7 @@ class _Record:
             body = pkg.data.decode("utf-8")
         else:
             return {
-                "status": 0,
+                "code": 0,
                 "data": pkg.data
             }
         return json.loads(body)
@@ -86,14 +86,14 @@ class _Record:
     def response(self, res):
         if isinstance(res, str):
             self._response = {
-                "status": -1,
+                "code": 5001,
                 "message": res
             }
         elif isinstance(res, _RpcPacket):
             self._response = self.decode_sekiro_packet(res)
         else:
             self._response = {
-                "status": -1,
+                "code": 5001,
                 "message": "unknown response msg type:" + str(type(res))
             }
         self.condition.acquire()

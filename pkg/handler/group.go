@@ -65,7 +65,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 		})
 	}
 
-	SuccessWithTotal(c, vos, int64(len(vos)))
+	OKWithTotal(c, vos, int64(len(vos)))
 }
 
 // CreateGroupRequest 创建分组请求
@@ -121,7 +121,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 
 	middleware.InvalidateGroup(group.GroupName)
 
-	Success(c, group.ID)
+	OK(c, group.ID)
 }
 
 // DeleteGroupRequest 删除分组请求
@@ -172,7 +172,7 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	middleware.InvalidateGroup(req.GroupName)
 
 	auditDeleteGroup(c, req.GroupName)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // GetGroupDetail 获取分组详情
@@ -191,7 +191,7 @@ func (h *GroupHandler) GetDetail(c *gin.Context) {
 		return
 	}
 
-	Success(c, gin.H{
+	OK(c, gin.H{
 		"groupName":         group.GroupName,
 		"userName":          group.UserName,
 		"createTime":        group.CreateDate.Format("2006-01-02 15:04:05"),
@@ -236,7 +236,7 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 	middleware.InvalidateGroup(req.GroupName)
 
 	auditUpdateQps(c, "group", req.GroupName, req.QuotaQpsGroup)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // GetGroupDevices 获取分组设备列表
@@ -278,7 +278,7 @@ func (h *GroupHandler) GetDevices(c *gin.Context) {
 		})
 	}
 
-	Success(c, vos)
+	OK(c, vos)
 }
 
 // DeleteDeviceRequest 删除设备请求
@@ -304,7 +304,7 @@ func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 	}
 
 	auditDeleteDevice(c, req.GroupName, req.DeviceID)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // GetGroupActions 获取分组 Action 列表
@@ -320,7 +320,7 @@ func (h *GroupHandler) GetActions(c *gin.Context) {
 		return
 	}
 
-	Success(c, actions)
+	OK(c, actions)
 }
 
 // AddActionRequest 添加 Action 请求
@@ -361,7 +361,7 @@ func (h *GroupHandler) AddAction(c *gin.Context) {
 		return
 	}
 
-	Success(c, action.ID)
+	OK(c, action.ID)
 }
 
 // DeleteActionRequest 删除 Action 请求
@@ -387,7 +387,7 @@ func (h *GroupHandler) DeleteAction(c *gin.Context) {
 	}
 
 	auditDeleteAction(c, req.GroupName, req.ActionName)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // DisableDeviceRequest 禁用/启用设备请求
@@ -430,5 +430,5 @@ func (h *GroupHandler) DisableDevice(c *gin.Context) {
 	}
 
 	auditDisableDevice(c, req.GroupName, req.DeviceID)
-	Success(c, nil)
+	OK(c, nil)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/handler/errorcode"
 	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -107,11 +108,11 @@ func (h *APIHandler) HandleGroupList(c *gin.Context) {
 	logger.Debugf("HandleGroupList: raw groups=%v, count=%d", groups, len(groups))
 	filtered, err := h.filterAccessibleGroups(c, groups)
 	if err != nil {
-		RpcServerError(c, err.Error())
+		InternalError(c, err.Error())
 		return
 	}
 	logger.Debugf("HandleGroupList: filtered groups=%v, count=%d", filtered, len(filtered))
-	RpcSuccess(c, filtered)
+	OK(c, filtered)
 }
 
 // HandleClientQueue handles /business/clientQueue request
@@ -119,7 +120,7 @@ func (h *APIHandler) HandleGroupList(c *gin.Context) {
 func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 	group := c.Query("group")
 	if group == "" {
-		RpcError(c, -1, "group parameter required")
+		BadRequest(c, "group parameter required")
 		return
 	}
 	if !h.authorizeRegisteredGroupAccess(c, group) {
@@ -132,7 +133,7 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 		clientIDs[i] = c.ClientID
 	}
 
-	RpcSuccess(c, clientIDs)
+	OK(c, clientIDs)
 }
 
 // HandleInvoke handles /business/invoke request
@@ -143,7 +144,7 @@ func (h *APIHandler) HandleInvoke(c *gin.Context) {
 
 	// 参数验证
 	if req.Action == "" {
-		RpcError(c, -1, "action parameter required")
+		BadRequest(c, "action parameter required")
 		return
 	}
 
@@ -301,7 +302,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	logger.Infof("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
 
 	if group == "" {
-		RpcError(c, -1, "group parameter required")
+		BadRequest(c, "group parameter required")
 		return
 	}
 	if !h.authorizeRegisteredGroupAccess(c, group) {
@@ -309,23 +310,23 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	}
 	if h.rejectIdleInvoke(builder, constantInvoke) {
 		logger.Warnf("DefendIdleInvoke: blocked constant invoke request, group=%s, action=%s", group, reqAction)
-		RpcError(c, -1, "空转调用被拒绝，请联系管理员配置实际处理逻辑")
+		Fail(c, errorcode.EmptyInvoke, "空转调用被拒绝，请联系管理员配置实际处理逻辑")
 		return
 	}
 	// BuildRequestData 的错误延迟到鉴权 / 空转保护之后再返回, 与重构前的语义保持一致
 	// (老代码原本就是先 idle-defense 再 BuildRequestData)。
 	if buildErr != nil {
-		RpcError(c, -1, "Failed to build request data: "+buildErr.Error())
+		Fail(c, errorcode.InvalidParams, "Failed to build request data: "+buildErr.Error())
 		return
 	}
 
 	targetClient, err := h.selectTargetClient(group, clientID, constantInvoke, reqAction, reqParams)
 	if err != nil {
-		RpcError(c, -1, err.Error())
+		Fail(c, errorcode.NoClientAvailable, err.Error())
 		return
 	}
 	if targetClient == nil {
-		RpcError(c, -1, "no client available")
+		Fail(c, errorcode.NoClientAvailable, "no client available")
 		return
 	}
 
@@ -334,7 +335,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		"params": reqParams,
 	})
 	if err != nil {
-		RpcError(c, -1, "Failed to marshal request data: "+err.Error())
+		Fail(c, errorcode.MarshalFailed, "Failed to marshal request data: "+err.Error())
 		return
 	}
 
@@ -426,7 +427,7 @@ func (h *APIHandler) dispatchInvokeRequest(
 	go func() {
 		resp, err := h.timeoutManager.Wait(sequence)
 		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
+			responseChan <- &forwarder.InvokeResponse{Error: err.Error(), Status: errorcode.Timeout}
 			return
 		}
 		responseChan <- resp
@@ -443,7 +444,8 @@ func (h *APIHandler) dispatchInvokeRequest(
 	}
 }
 
-// renderUnaryResponse 把 InvokeResponse 渲染成 RpcExtraResponse。
+// renderUnaryResponse 把 InvokeResponse 渲染成统一响应信封 Response, 携带路由元数据
+// group / clientId 与 trace_id。
 //
 // 兼容旧前端: 当客户端回的是 JSON object 时, 把它的字段平级展开到顶层而不是塞到 data 里;
 // 否则当作字符串放进 data 字段。
@@ -460,18 +462,21 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 	h.recordInvokeMetric(builder, group, reqAction, metricStatus, startTime)
 
 	if resp.Error != "" {
-		// resp.Status 可能为 0 (客户端没显式置错误码), 此时按 -1 输出避免错把"成功"
-		// 状态和错误信息一起返回。
-		status := resp.Status
-		if status == 0 {
-			status = -1
+		// 客户端返回了错误信息: 优先使用客户端给出的 status 作为业务码;
+		// 若客户端没显式置错误码 (status=0), 降级为 ClientInvokeFailed, 避免
+		// 把"成功码"和错误信息一起返回。
+		code := resp.Status
+		if code == 0 {
+			code = errorcode.ClientInvokeFailed
 		}
-		c.JSON(http.StatusOK, RpcExtraResponse{
-			Status:   status,
+		r := Response{
+			Code:     code,
 			Message:  resp.Error,
 			Group:    group,
 			ClientID: targetClient.ClientID,
-		})
+		}
+		r.TraceID = traceID(c)
+		c.JSON(http.StatusOK, r)
 		return
 	}
 
@@ -481,13 +486,15 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 		message = "unknown error"
 	}
 
+	// 成功路径: 客户端返回 JSON object 时平级展开到顶层, 否则原样放入 Data。
 	var responseMap map[string]interface{}
 	if err := json.Unmarshal(resp.Data, &responseMap); err == nil {
 		result := gin.H{
-			"status":   resp.Status,
+			"code":     resp.Status,
 			"message":  message,
 			"group":    group,
 			"clientId": targetClient.ClientID,
+			"trace_id": traceID(c),
 		}
 		for k, v := range responseMap {
 			result[k] = v
@@ -496,13 +503,15 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 		return
 	}
 
-	c.JSON(http.StatusOK, RpcExtraResponse{
-		Status:   resp.Status,
+	r := Response{
+		Code:     resp.Status,
 		Message:  message,
+		Data:     string(resp.Data),
 		Group:    group,
 		ClientID: targetClient.ClientID,
-		Data:     string(resp.Data),
-	})
+	}
+	r.TraceID = traceID(c)
+	c.JSON(http.StatusOK, r)
 }
 
 // recordInvokeMetric 写一次 invoke 指标 (调用计数 + 延迟)。
@@ -520,15 +529,15 @@ func (h *APIHandler) recordInvokeMetric(builder RequestBuilder, group, action, s
 		float64(time.Since(startTime).Milliseconds()))
 }
 
-// writeForwardError 输出 invoke 路径下的错误响应包络。
-// 必须带上 group/clientId 便于前端按客户端维度路由 / 重试。
+// writeForwardError 输出 invoke 路径下的错误响应包络, 携带 group / clientId 与 trace_id。
+// 必须在 HTTP 响应头未写出时调用 (否则 JSON 头会失败)。
+// msg 为 "Request timeout" 时按 errorcode.Timeout 输出, 其余按 errorcode.InternalError。
 func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg string) {
-	c.JSON(http.StatusOK, RpcExtraResponse{
-		Status:   -1,
-		Message:  msg,
-		Group:    group,
-		ClientID: clientID,
-	})
+	code := errorcode.InternalError
+	if msg == "Request timeout" {
+		code = errorcode.Timeout
+	}
+	FailWithRoute(c, code, msg, group, clientID)
 }
 
 // authorizeRegisteredGroupAccess 校验当前请求对已注册 (group_config 存在) 分组的访问权限。
@@ -549,7 +558,7 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 
 	group, err := middleware.LookupGroupConfig(groupName, h.groupRepo.FindGroupByName)
 	if err != nil {
-		RpcServerError(c, "failed to verify group access: "+err.Error())
+		InternalError(c, "failed to verify group access: "+err.Error())
 		return false
 	}
 	if group == nil {
@@ -559,12 +568,12 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 
 	user, ok := middleware.GetCurrentUser(c)
 	if !ok || user == nil {
-		RpcUnauthorized(c, "registered group requires a valid sekiro token")
+		Unauthorized(c, "registered group requires a valid sekiro token")
 		return false
 	}
 
 	if !user.IsAdmin && user.UserName != group.UserName {
-		RpcForbidden(c, "no access to registered group")
+		Forbidden(c, "no access to registered group")
 		return false
 	}
 

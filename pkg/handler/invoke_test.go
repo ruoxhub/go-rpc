@@ -123,8 +123,8 @@ func TestHandleGroupList(t *testing.T) {
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	if int(result["status"].(float64)) != 0 {
-		t.Error("Expected status code 0")
+	if int(result["code"].(float64)) != 0 {
+		t.Error("Expected response code 0")
 	}
 
 	data := result["data"].([]interface{})
@@ -153,15 +153,15 @@ func TestHandleClientQueue(t *testing.T) {
 
 	var result map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&result)
-	if int(result["status"].(float64)) != -1 {
-		t.Error("Expected error when group parameter missing")
+	if int(result["code"].(float64)) != 1000 {
+		t.Errorf("Expected code 1000 (BadRequest) when group parameter missing, got %v", result["code"])
 	}
 
 	w = performRequest(router, http.MethodGet, "/business/clientQueue?group=test-group", nil)
 
 	json.NewDecoder(w.Body).Decode(&result)
-	if int(result["status"].(float64)) != 0 {
-		t.Error("Expected success status")
+	if int(result["code"].(float64)) != 0 {
+		t.Errorf("Expected success code 0, got %v", result["code"])
 	}
 
 	data := result["data"].([]interface{})
@@ -185,8 +185,8 @@ func TestHandleInvoke_MissingGroup(t *testing.T) {
 
 	var result map[string]interface{}
 	json.NewDecoder(w.Body).Decode(&result)
-	if int(result["status"].(float64)) != -1 {
-		t.Error("Expected error when group parameter missing")
+	if int(result["code"].(float64)) != 1000 {
+		t.Errorf("Expected code 1000 (BadRequest) when group parameter missing, got %v", result["code"])
 	}
 }
 

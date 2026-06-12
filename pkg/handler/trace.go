@@ -32,7 +32,7 @@ func (h *TraceHandler) GetTraces(c *gin.Context) {
 		return
 	}
 
-	SuccessWithTotal(c, records, total)
+	OKWithTotal(c, records, total)
 }
 
 // GetTraceDetail 获取追踪详情（包含完整链路）
@@ -50,7 +50,7 @@ func (h *TraceHandler) GetTraceDetail(c *gin.Context) {
 		return
 	}
 
-	Success(c, gin.H{
+	OK(c, gin.H{
 		"trace_id": traceID,
 		"spans":    records,
 	})
@@ -69,7 +69,7 @@ func (h *TraceHandler) GetTraceStats(c *gin.Context) {
 		return
 	}
 
-	Success(c, gin.H{
+	OK(c, gin.H{
 		"total":        stats.Total,
 		"successCount": stats.SuccessCount,
 		"failureCount": stats.FailureCount,
@@ -117,7 +117,7 @@ func (h *TraceHandler) GetTraceTimeline(c *gin.Context) {
 		stats = append(stats, *stat)
 	}
 
-	Success(c, stats)
+	OK(c, stats)
 }
 
 // ExtraDataVO 额外数据结构
@@ -145,5 +145,5 @@ func (h *TraceHandler) GetTraceExtraData(c *gin.Context) {
 		json.Unmarshal([]byte(record.ExtraData), &extraData)
 	}
 
-	Success(c, extraData)
+	OK(c, extraData)
 }

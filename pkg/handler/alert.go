@@ -134,7 +134,7 @@ func (h *AlertHandler) GetAlertRules(c *gin.Context) {
 		vos = append(vos, toAlertRuleVO(&rules[i]))
 	}
 
-	SuccessWithTotal(c, vos, total)
+	OKWithTotal(c, vos, total)
 }
 
 // GetAlertRule 获取告警规则详情
@@ -153,7 +153,7 @@ func (h *AlertHandler) GetAlertRule(c *gin.Context) {
 		return
 	}
 
-	Success(c, toAlertRuleVO(rule))
+	OK(c, toAlertRuleVO(rule))
 }
 
 // CreateAlertRule 创建告警规则
@@ -191,7 +191,7 @@ func (h *AlertHandler) CreateAlertRule(c *gin.Context) {
 		h.evaluator.ReloadRules()
 	}
 
-	Success(c, rule)
+	OK(c, rule)
 }
 
 // applyAlertRuleUpdates applies partial updates from request to an alert rule.
@@ -268,7 +268,7 @@ func (h *AlertHandler) UpdateAlertRule(c *gin.Context) {
 		h.evaluator.ReloadRules()
 	}
 
-	Success(c, rule)
+	OK(c, rule)
 }
 
 // DeleteAlertRule 删除告警规则
@@ -290,7 +290,7 @@ func (h *AlertHandler) DeleteAlertRule(c *gin.Context) {
 		h.evaluator.ReloadRules()
 	}
 
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // AlertHistoryVO 告警历史 VO
@@ -345,5 +345,5 @@ func (h *AlertHandler) GetAlertHistory(c *gin.Context) {
 		})
 	}
 
-	SuccessWithTotal(c, vos, total)
+	OKWithTotal(c, vos, total)
 }

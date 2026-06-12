@@ -47,7 +47,7 @@ func (h *UserHandler) List(c *gin.Context) {
 		})
 	}
 
-	SuccessWithTotal(c, vos, int64(len(vos)))
+	OKWithTotal(c, vos, int64(len(vos)))
 }
 
 type AddUserRequest struct {
@@ -111,7 +111,7 @@ func (h *UserHandler) Add(c *gin.Context) {
 		return
 	}
 
-	Success(c, user.ID)
+	OK(c, user.ID)
 }
 
 type UpdateUserQpsRequest struct {
@@ -141,7 +141,7 @@ func (h *UserHandler) UpdateQps(c *gin.Context) {
 
 	middleware.InvalidateToken(user.ApiToken)
 	auditUpdateQps(c, "user", user.UserName, req.QuotaQps)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 type DeleteUserRequest struct {
@@ -165,7 +165,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	Success(c, nil)
+	OK(c, nil)
 }
 
 type ChangePasswordRequest struct {
@@ -198,7 +198,7 @@ func (h *UserHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
-	Success(c, nil)
+	OK(c, nil)
 }
 
 func (h *UserHandler) RefreshToken(c *gin.Context) {
@@ -219,7 +219,7 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 	middleware.InvalidateToken(user.ApiToken)
 	middleware.InvalidateToken(newToken)
 
-	Success(c, gin.H{"apiToken": newToken})
+	OK(c, gin.H{"apiToken": newToken})
 }
 
 func (h *UserHandler) GetCurrentUser(c *gin.Context) {
@@ -229,7 +229,7 @@ func (h *UserHandler) GetCurrentUser(c *gin.Context) {
 		return
 	}
 
-	Success(c, gin.H{
+	OK(c, gin.H{
 		"id":       user.ID,
 		"userName": user.UserName,
 		"apiToken": user.ApiToken,

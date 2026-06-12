@@ -74,7 +74,7 @@ func (h *SysConfigHandler) List(c *gin.Context) {
 		})
 	}
 
-	Success(c, vos)
+	OK(c, vos)
 }
 
 // UpdateConfigRequest 更新配置请求
@@ -104,7 +104,7 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 	}
 
 	auditUpdateConfig(c, req.Key, req.Value)
-	Success(c, nil)
+	OK(c, nil)
 }
 
 // GetServerNodes 获取服务器节点列表
@@ -115,7 +115,7 @@ func (h *SysConfigHandler) GetServerNodes(c *gin.Context) {
 		return
 	}
 
-	Success(c, nodes)
+	OK(c, nodes)
 }
 
 // parsePagination parses page and pageSize query parameters with defaults.
