@@ -268,7 +268,7 @@ main.go (组合根)
 | **全局 DB 单例** | `pkg/database/database.go` | `database.DB` 包级变量，所有需要 DB 的包直接引用，无法注入替代 |
 | **Handler 直接依赖 database.GetDB()** | `pkg/handler/invoke.go`、`pkg/websocket/handler.go` | 绕过 Repository 接口，直接 GORM 查询 |
 | **ConfigService 通过 context 传递** | `main.go` 路由注册 | `/rpc-api/*` 路由通过 `c.Set("configService", ...)` 注入，类型不安全 |
-| **响应类型分裂** | `pkg/handler/response.go` | 三种响应格式（ApiResponse/RpcResponse/RpcExtraResponse）增加了前端适配复杂度 |
+| **响应类型分裂** ✅ 已解决 | `pkg/handler/response.go` | 已统一为单一 `Response` 信封 + `code` 字段 + 分段错误码, 详见 [`error-codes.md`](error-codes.md) |
 | **internal/config 与 pkg/config 并存** | 两个 config 包 | `internal/config` 负责 YAML 配置解析，`pkg/config` 负责 DB 运行时配置，命名容易混淆 |
 
 ---
@@ -652,26 +652,18 @@ stateDiagram-v2
 
 **风险与成本**：低风险，纯重构，不改行为。约 1-2 小时工作量。
 
-### 建议 4：统一响应格式与错误码体系
+### 建议 4：统一响应格式与错误码体系 ✅ 已实施
 
 **目标模块**：`pkg/handler/response.go`、前端 `web/src/utils/api.js`
 
-**当前问题**：
-- 三套响应格式（`ApiResponse` / `RpcResponse` / `RpcExtraResponse`），字段语义不同（`code` vs `status`）
-- 前端需要适配多种响应格式，`Login.jsx` 依赖 `status === 0` 判断成功
-- 错误码无统一文档，`-1` 被泛用为"任意错误"
+**已解决的问题**：
+- 三套响应格式（`ApiResponse` / `RpcResponse` / `RpcExtraResponse`）已收敛为单一 `Response` 信封
+- 字段统一为 `code`（旧 `status` 字段已删除），HTTP 状态码与业务码解耦
+- 错误码采用 `1xxx/2xxx/3xxx/5xxx` 分段，定义于 `pkg/handler/errorcode/errorcode.go`
+- 所有响应自动附带 `trace_id`，便于链路追踪
+- 前端统一拦截器识别业务错误码，`Login.jsx` / `Register.jsx` 已改为 `code === 0`
 
-**实施方案**：
-1. 设计统一的基础响应信封：`{code: int, message: string, data: T, trace_id: string}`
-2. `RpcExtraResponse` 的路由元数据放入 `data` 对象中而非顶层
-3. 定义错误码枚举：`0`=成功，`1xxx`=参数错误，`2xxx`=认证/授权错误，`3xxx`=业务错误，`5xxx`=服务端错误
-4. 前端统一拦截器只检查 `code === 0`
-
-**预期收益**：
-- 可维护性：前后端对接更简单，新开发者上手更快
-- 可扩展性：错误码有明确语义，便于定位问题
-
-**风险与成本**：中等风险，需要同步修改前端和已有的 SDK 消费方。约 4-6 小时工作量。
+**实施细节**：详见 [`error-codes.md`](error-codes.md)
 
 ### 建议 5：引入依赖注入容器替代手动装配
 
@@ -791,7 +783,8 @@ go-rpc/
 │   │   ├── stream.go          # SSE 流式响应
 │   │   ├── routes.go          # Web 管理路由注册
 │   │   ├── http_server.go     # HTTPServer 封装
-│   │   ├── response.go        # 响应类型（ApiResponse/RpcResponse/RpcExtraResponse）
+│   │   ├── response.go        # 统一响应信封 Response + 辅助函数 (OK/Fail/BadRequest/...)
+│   │   ├── errorcode/         # 业务错误码常量包 (1xxx/2xxx/3xxx/5xxx 分段)
 │   │   ├── websocket.go       # WebSocket 相关 handler
 │   │   ├── user.go            # 用户管理 handler
 │   │   ├── group.go           # 分组管理 handler

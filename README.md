@@ -350,13 +350,27 @@ func main() {
 
 ### 响应格式
 
+所有 `/api/*`、`/rpc-api/*`、`/business/*` 端点共用统一信封：
+
 ```json
 // 成功
-{ "status": 0, "message": "success", "data": { ... } }
+{ "code": 0, "message": "success", "data": { ... }, "trace_id": "abc123..." }
 
-// 失败
-{ "status": -1, "message": "error message" }
+// 失败 (业务错误码, 详见 docs/error-codes.md)
+{ "code": 1001, "message": "invalid parameters", "trace_id": "abc123..." }
+
+// invoke 响应额外携带路由元数据
+{ "code": 0, "message": "success", "group": "g1", "clientId": "c1", "data": { ... }, "trace_id": "abc123..." }
 ```
+
+错误码分段：
+- `0` 成功
+- `1xxx` 参数 / 请求错误（如 `1000` BadRequest、`1001` InvalidParams、`1004` NotFound）
+- `2xxx` 认证 / 授权错误（如 `2001` Unauthorized、`2003` Forbidden、`2004` RegisterDisabled）
+- `3xxx` 业务逻辑错误（如 `3001` NoClientAvailable、`3002` GroupAccessDenied、`3006` Timeout）
+- `5xxx` 服务端内部错误（如 `5001` InternalError、`5002` DatabaseError）
+
+完整对照表见 [`docs/error-codes.md`](docs/error-codes.md)。
 
 ## 前端管理界面
 

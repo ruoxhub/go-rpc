@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -100,6 +102,80 @@ func ExtractAuthTokenFromRequest(c *gin.Context) string {
 		return token
 	}
 	return ""
+}
+
+const wsAuthSubprotocolPrefix = "sekiro-auth."
+
+// ExtractTokenFromSubprotocol 从 Sec-WebSocket-Protocol 请求头中解析隐蔽鉴权 token。
+// 约定格式: "sekiro-auth.<token>"。多个子协议以逗号分隔时，返回首个匹配项的 token；
+// 无匹配时返回空串。URL 与常见访问日志均不暴露该值，比 query/header 更隐蔽。
+func ExtractTokenFromSubprotocol(c *gin.Context) string {
+	header := c.GetHeader("Sec-WebSocket-Protocol")
+	if header == "" {
+		return ""
+	}
+	for _, raw := range strings.Split(header, ",") {
+		proto := strings.TrimSpace(raw)
+		if strings.HasPrefix(proto, wsAuthSubprotocolPrefix) && len(proto) > len(wsAuthSubprotocolPrefix) {
+			return proto[len(wsAuthSubprotocolPrefix):]
+		}
+	}
+	return ""
+}
+
+// IPInList 判断 clientIP 是否命中逗号分隔的 IP/CIDR 白名单。
+// 空串或全空白 list 直接返回 false；遇到非法条目跳过继续解析。
+func IPInList(clientIP, list string) bool {
+	if clientIP == "" {
+		return false
+	}
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	if strings.TrimSpace(list) == "" {
+		return false
+	}
+	for _, raw := range strings.Split(list, ",") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, cidr, err := net.ParseCIDR(entry); err == nil && cidr.Contains(ip) {
+				return true
+			}
+			continue
+		}
+		if entryIP := net.ParseIP(entry); entryIP != nil && entryIP.Equal(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateIPList 校验逗号分隔的 IP/CIDR 白名单：每个非空条目必须是合法 IP 或 CIDR，
+// 否则返回首个非法条目的错误。用于 handler 在写入 allowed_ips 前拦截坏数据。
+func ValidateIPList(list string) error {
+	for _, raw := range strings.Split(list, ",") {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		if strings.Contains(entry, "/") {
+			if _, _, err := net.ParseCIDR(entry); err != nil {
+				return fmt.Errorf("invalid CIDR %q", entry)
+			}
+			continue
+		}
+		if net.ParseIP(entry) == nil {
+			return fmt.Errorf("invalid IP %q", entry)
+		}
+	}
+	return nil
 }
 
 // FindUserByToken 根据 api_token 查询用户。

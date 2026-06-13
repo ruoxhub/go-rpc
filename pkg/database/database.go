@@ -77,10 +77,13 @@ func AutoMigrate() error {
 		return fmt.Errorf("database not initialized")
 	}
 
-	// 仅检查核心表 user_info 是否存在，以判断是否已初始化
 	if !DB.Migrator().HasTable(&model.UserInfo{}) {
 		log.Println("WARNING: Database schema is not initialized. Please run migration.sql first!")
 		return fmt.Errorf("database schema not ready: user_info table not found")
+	}
+
+	if err := DB.AutoMigrate(&model.GroupConfig{}); err != nil {
+		return fmt.Errorf("failed to auto-migrate group_config: %w", err)
 	}
 
 	log.Println("Database schema validation passed")

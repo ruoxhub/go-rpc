@@ -474,6 +474,18 @@ func (s *Server) newHTTPConfig(mode string) *handler.HTTPConfig {
 	}
 }
 
+// negotiateSubprotocol 把客户端请求的 Sec-WebSocket-Protocol 原样回写到响应头，
+// 满足浏览器“服务器必须在响应中确认所选子协议”的强制约定；无请求时返回 nil，
+// 保持原有行为（不做子协议协商）。
+func negotiateSubprotocol(c *gin.Context) http.Header {
+	if proto := c.GetHeader("Sec-WebSocket-Protocol"); proto != "" {
+		h := http.Header{}
+		h.Set("Sec-WebSocket-Protocol", proto)
+		return h
+	}
+	return nil
+}
+
 func (s *Server) handleRegister(c *gin.Context) {
 	group := c.Query("group")
 	clientID := c.Query("clientId")
@@ -488,7 +500,7 @@ func (s *Server) handleRegister(c *gin.Context) {
 		return
 	}
 
-	wsConn, err := s.httpServer.WSUpgrader().Upgrade(c.Writer, c.Request, nil)
+	wsConn, err := s.httpServer.WSUpgrader().Upgrade(c.Writer, c.Request, negotiateSubprotocol(c))
 	if err != nil {
 		logger.Errorf("WebSocket upgrade error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -517,7 +529,24 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		return true
 	}
 
-	user, err := middleware.FindUserByToken(middleware.ExtractAuthTokenFromRequest(c))
+	// 1) IP 白名单优先：命中即放行，跳过一切 token/子协议校验。
+	if middleware.IPInList(c.ClientIP(), group.AllowedIPs) {
+		return true
+	}
+
+	// 2) 子协议鉴权（隐蔽）：Sec-WebSocket-Protocol: sekiro-auth.<token>。
+	// 3) 标准鉴权：Authorization Bearer / sekiro-token header / query / form。
+	token := middleware.ExtractTokenFromSubprotocol(c)
+	if token == "" {
+		token = middleware.ExtractAuthTokenFromRequest(c)
+	}
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error": "registered group requires a valid rpc token",
+		})
+		return false
+	}
+	user, err := middleware.FindUserByToken(token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "registered group requires a valid rpc token",
