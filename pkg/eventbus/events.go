@@ -81,7 +81,7 @@ type CircuitBreakerStateEvent struct {
 
 // ClientKickedEvent 客户端被踢除事件
 type ClientKickedEvent struct {
-	Group    string
-	ClientID string // 为空时表示整组踢除
-	Time     time.Time
+	Group     string
+	ClientID  string
+	Timestamp time.Time
 }

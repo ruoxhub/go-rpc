@@ -166,13 +166,13 @@ func (h *APIHandler) HandleKickClient(c *gin.Context) {
 		// 整组踢除：逐个 Unregister，避免 Close() 销毁 group goroutine
 		for _, cl := range rpcGroup.GetAllClients() {
 			rpcGroup.Unregister(cl.ClientID)
-		}
-		if h.eventBus != nil {
-			h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
-				Group:    groupName,
-				ClientID: "",
-				Time:     time.Now(),
-			})
+			if h.eventBus != nil {
+				h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
+					Group:     groupName,
+					ClientID:  cl.ClientID,
+					Timestamp: time.Now(),
+				})
+			}
 		}
 		OK(c, "all clients kicked from group")
 		return
@@ -187,9 +187,9 @@ func (h *APIHandler) HandleKickClient(c *gin.Context) {
 
 	if h.eventBus != nil {
 		h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
-			Group:    groupName,
-			ClientID: clientID,
-			Time:     time.Now(),
+			Group:     groupName,
+			ClientID:  clientID,
+			Timestamp: time.Now(),
 		})
 	}
 

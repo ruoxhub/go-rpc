@@ -394,3 +394,44 @@ func TestHandleKickClient_MissingGroup(t *testing.T) {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
 }
+
+func TestHandleKickClient_WholeGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	c1 := client.NewRpcClient("g1", "c1", nil)
+	c1.SetStatus(client.StatusOnline)
+	mockManager.AddClient("g1", c1)
+
+	c2 := client.NewRpcClient("g1", "c2", nil)
+	c2.SetStatus(client.StatusOnline)
+	mockManager.AddClient("g1", c2)
+
+	handler := newTestAPIHandler(mockManager)
+	handler.eventBus = eventbus.New()
+
+	router := gin.New()
+	router.DELETE("/business/kick", handler.HandleKickClient)
+
+	req, _ := http.NewRequest(http.MethodDelete, "/business/kick?group=g1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	// 所有客户端应被注销
+	if mockManager.GetClient("g1", "c1") != nil {
+		t.Error("expected c1 to be unregistered")
+	}
+	if mockManager.GetClient("g1", "c2") != nil {
+		t.Error("expected c2 to be unregistered")
+	}
+
+	// group 仍存在（goroutine 未销毁）
+	if mockManager.GetGroup("g1") == nil {
+		t.Error("expected group g1 to still exist")
+	}
+}
