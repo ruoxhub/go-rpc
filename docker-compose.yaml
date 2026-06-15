@@ -11,8 +11,47 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Asia/Shanghai
-    env_file:
-      - .env
+      # Server
+      - RPC_HOST=${RPC_HOST:-0.0.0.0}
+      - RPC_PORT=${RPC_PORT:-5612}
+      - RPC_MODE=${RPC_MODE:-release}
+      - RPC_TIMEOUT=${RPC_TIMEOUT:-30}
+      # Logging
+      - RPC_CLOSE_LOG=${RPC_CLOSE_LOG:-false}
+      - RPC_CLOSE_WEB_LOG=${RPC_CLOSE_WEB_LOG:-false}
+      - RPC_LOG_DIR=${RPC_LOG_DIR:-logs}
+      - RPC_LOG_FILENAME=${RPC_LOG_FILENAME:-rpc.log}
+      - RPC_LOG_MAX_SIZE=${RPC_LOG_MAX_SIZE:-100}
+      - RPC_LOG_MAX_BACKUPS=${RPC_LOG_MAX_BACKUPS:-7}
+      - RPC_LOG_MAX_AGE=${RPC_LOG_MAX_AGE:-30}
+      - RPC_LOG_COMPRESS=${RPC_LOG_COMPRESS:-true}
+      # CORS
+      - RPC_CORS=${RPC_CORS:-true}
+      # Feature toggles
+      - RPC_DISABLE_WEB_ADMIN=${RPC_DISABLE_WEB_ADMIN:-false}
+      - RPC_DISABLE_METRICS=${RPC_DISABLE_METRICS:-false}
+      - RPC_DISABLE_ALERT=${RPC_DISABLE_ALERT:-false}
+      - RPC_DISABLE_DATABASE=${RPC_DISABLE_DATABASE:-false}
+      # Route prefix replacement
+      - RPC_ROUTE_REPLACE_ENABLE=${RPC_ROUTE_REPLACE_ENABLE:-false}
+      # HTTPS
+      - RPC_HTTPS_ENABLE=${RPC_HTTPS_ENABLE:-false}
+      - RPC_HTTPS_LISTEN=${RPC_HTTPS_LISTEN:-:5643}
+      # Database
+      - RPC_DB_HOST=${RPC_DB_HOST:-localhost}
+      - RPC_DB_PORT=${RPC_DB_PORT:-5432}
+      - RPC_DB_USER=${RPC_DB_USER:-postgres}
+      - RPC_DB_PASSWORD=${RPC_DB_PASSWORD:-postgres}
+      - RPC_DB_NAME=${RPC_DB_NAME:-sekiro}
+      - RPC_DB_SSL_MODE=${RPC_DB_SSL_MODE:-disable}
+      # SMTP
+      - RPC_SMTP_HOST=${RPC_SMTP_HOST:-localhost}
+      - RPC_SMTP_PORT=${RPC_SMTP_PORT:-25}
+      - RPC_SMTP_FROM=${RPC_SMTP_FROM:-alert@sekiro.local}
+      - RPC_SMTP_USE_TLS=${RPC_SMTP_USE_TLS:-false}
+      # Provider
+      - RPC_PROVIDER_QWEN_TIMEOUT=${RPC_PROVIDER_QWEN_TIMEOUT:-120}
+      - RPC_PROVIDER_QWEN_LOG_CHUNKS=${RPC_PROVIDER_QWEN_LOG_CHUNKS:-false}
     volumes:
       - ./logs:/app/logs
     # depends_on:
