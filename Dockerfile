@@ -29,7 +29,6 @@ RUN apk add --no-cache ca-certificates tzdata wget
 
 # 从构建阶段复制二进制文件
 COPY --from=builder /build/rpc-server /app/rpc-server
-COPY --from=builder /build/config.yaml.example /app/config.yaml
 
 # 创建数据目录
 RUN mkdir -p /app/data

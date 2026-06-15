@@ -14,7 +14,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
       - ./logs:/app/logs
     # depends_on:
     #   postgres:
