@@ -13,6 +13,7 @@ const (
 	EventInvokerConnect               = "invoker.connect"
 	EventInvokerDisconnect            = "invoker.disconnect"
 	EventInvokerDestroy               = "invoker.destroy"
+	EventClientKicked                 = "client.kicked"
 )
 
 // ClientConnectEvent 客户端连接事件
@@ -76,4 +77,11 @@ type CircuitBreakerStateEvent struct {
 	From      string
 	To        string
 	Timestamp time.Time
+}
+
+// ClientKickedEvent 客户端被踢除事件
+type ClientKickedEvent struct {
+	Group    string
+	ClientID string // 为空时表示整组踢除
+	Time     time.Time
 }

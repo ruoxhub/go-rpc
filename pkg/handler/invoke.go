@@ -34,6 +34,7 @@ type APIHandler struct {
 	metricsCollector metrics.MetricCollector
 	configService    config.Service
 	groupRepo        repository.GroupRepository
+	eventBus         *eventbus.EventBus
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -85,6 +86,7 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 		metricsCollector: metricsCollector,
 		configService:    cfgSvc,
 		groupRepo:        groupRepo,
+		eventBus:         eventBus,
 	}
 
 	if eventBus != nil {
@@ -136,6 +138,62 @@ func (h *APIHandler) HandleClientQueue(c *gin.Context) {
 	}
 
 	OK(c, clientIDs)
+}
+
+// HandleKickClient handles DELETE /business/kick
+//
+// Query 参数:
+//   - group (required): 目标分组
+//   - clientId (optional): 目标客户端；为空时踢除整个分组的所有客户端
+func (h *APIHandler) HandleKickClient(c *gin.Context) {
+	groupName := c.Query("group")
+	if groupName == "" {
+		BadRequest(c, "group parameter required")
+		return
+	}
+	if !h.authorizeRegisteredGroupAccess(c, groupName) {
+		return
+	}
+
+	rpcGroup := h.clientManager.GetGroup(groupName)
+	if rpcGroup == nil {
+		NotFound(c, "group not found")
+		return
+	}
+
+	clientID := c.Query("clientId")
+	if clientID == "" {
+		// 整组踢除：逐个 Unregister，避免 Close() 销毁 group goroutine
+		for _, cl := range rpcGroup.GetAllClients() {
+			rpcGroup.Unregister(cl.ClientID)
+		}
+		if h.eventBus != nil {
+			h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
+				Group:    groupName,
+				ClientID: "",
+				Time:     time.Now(),
+			})
+		}
+		OK(c, "all clients kicked from group")
+		return
+	}
+
+	if !rpcGroup.HasClient(clientID) {
+		NotFound(c, "client not found")
+		return
+	}
+
+	rpcGroup.Unregister(clientID)
+
+	if h.eventBus != nil {
+		h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
+			Group:    groupName,
+			ClientID: clientID,
+			Time:     time.Now(),
+		})
+	}
+
+	OK(c, "client kicked")
 }
 
 // HandleInvoke handles /business/invoke request

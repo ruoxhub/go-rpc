@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/client"
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
@@ -330,4 +331,66 @@ func TestHandleGroupListAccessibleGroupsUsesContextUserWhenPresent(t *testing.T)
 
 func newDefaultTestRouter() *router.Router {
 	return router.NewRouter()
+}
+
+func TestHandleKickClient_Single(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	c := client.NewRpcClient("g1", "c1", nil)
+	c.SetStatus(client.StatusOnline)
+	mockManager.AddClient("g1", c)
+
+	handler := newTestAPIHandler(mockManager)
+	handler.eventBus = eventbus.New()
+
+	router := gin.New()
+	router.DELETE("/business/kick", handler.HandleKickClient)
+
+	req, _ := http.NewRequest(http.MethodDelete, "/business/kick?group=g1&clientId=c1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d, body=%s", w.Code, w.Body.String())
+	}
+
+	// 客户端应被注销
+	if mockManager.GetClient("g1", "c1") != nil {
+		t.Error("expected client to be unregistered after kick")
+	}
+}
+
+func TestHandleKickClient_GroupNotFound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestAPIHandler(newMockClientManager())
+	handler.eventBus = eventbus.New()
+
+	router := gin.New()
+	router.DELETE("/business/kick", handler.HandleKickClient)
+
+	req, _ := http.NewRequest(http.MethodDelete, "/business/kick?group=missing&clientId=c1", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestHandleKickClient_MissingGroup(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := newTestAPIHandler(newMockClientManager())
+
+	router := gin.New()
+	router.DELETE("/business/kick", handler.HandleKickClient)
+
+	req, _ := http.NewRequest(http.MethodDelete, "/business/kick", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
 }

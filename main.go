@@ -376,6 +376,7 @@ func (s *Server) registerRoutes() {
 		business.GET("/clientQueue", s.apiHandler.HandleClientQueue)
 		business.Any("/invoke", s.apiHandler.HandleInvoke)
 		business.GET("/register", s.handleRegister)
+		business.DELETE("/kick", s.apiHandler.HandleKickClient)
 	}
 
 	if !disableWebAdmin {
