@@ -329,10 +329,82 @@ sekiro_protocol:
 
 **来源**：Sekiro 的 `ActionHandler` + JsRpc 的 `_registerActions`
 
+**核心思路**：客户端已定义 `getActionSchemas` action（返回结构化 schema），服务端在客户端连接后**主动调用**该 action 获取 schema，而非被动等客户端 bind 上报。
+
 **改动文件**：
 - DB migration：`group_actions` 表新增 `description` 和 `params_schema` 列
+- `pkg/websocket/handler.go` — `HandleConnection` 中新增 schema 拉取逻辑
 - `pkg/handler/` — 新增 action 查询 API
-- `pkg/websocket/handler.go` — `handleBind` 扩展持久化 schema
+
+**详细设计**：
+
+**连接后自动拉取 schema**：
+
+在 `HandleConnection` 完成客户端注册后，如果该分组是已注册分组（`isRegistered == true`），服务端主动发起一次内部 invoke 调用客户端的 `getActionSchemas` action：
+
+```go
+// HandleConnection 中，客户端注册成功后：
+if isRegistered {
+    go h.fetchActionSchemas(ctx, sekiroClient, group)
+}
+
+func (h *Handler) fetchActionSchemas(ctx context.Context, client *client.RpcClient, group string) {
+    sequence := fmt.Sprintf("__schema_fetch_%s_%d", client.ClientID, time.Now().UnixNano())
+    reqData, _ := json.Marshal(map[string]interface{}{
+        "action": "getActionSchemas",
+    })
+
+    record := h.timeoutManager.Add(sequence, group, client.ClientID, reqData)
+    record.Timeout = 10 * time.Second
+
+    if err := h.SendInvokeRequest(client, sequence, group, client.ClientID, reqData, ""); err != nil {
+        logger.Warnf("Failed to fetch action schemas: group=%s, clientId=%s, err=%v", group, client.ClientID, err)
+        h.timeoutManager.Remove(sequence)
+        return
+    }
+
+    resp, err := h.timeoutManager.Wait(sequence)
+    if err != nil {
+        logger.Warnf("Action schema fetch timeout/error: group=%s, err=%v", group, err)
+        return
+    }
+
+    h.persistActionSchemas(group, resp.Data)
+}
+```
+
+**Schema 格式**（基于浏览器扩展客户端约定）：
+
+```json
+[
+    {
+        "name": "getUserInfo",
+        "description": "获取用户信息",
+        "params": [
+            { "name": "user_id", "type": "string", "required": true, "description": "用户 MID" }
+        ]
+    },
+    {
+        "name": "getUserContents",
+        "description": "获取用户内容",
+        "params": [
+            { "name": "user_id", "type": "string", "required": true, "description": "用户 MID" },
+            { "name": "order", "type": "string", "required": false, "default": "pubdate", "description": "排序方式" }
+        ]
+    }
+]
+```
+
+**持久化逻辑**（`persistActionSchemas`）：
+- 解析响应中的 JSON 数组
+- 对每个 schema，检查 `group_actions` 表是否已存在
+- 存在则更新 `description` 和 `params_schema`
+- 不存在则插入新记录
+- 不在本次返回列表中的旧 action 不删除（可能是其他客户端注册的不同 action）
+
+**客户端未实现 `getActionSchemas` 时的兼容**：
+- 客户端不识别该 action 会返回错误，服务端静默忽略（只记 warn 日志）
+- 同时保留现有的 `handleBind` 被动上报作为兜底
 
 **新增 API**：
 ```
