@@ -205,31 +205,22 @@ func TestRpcGroup_AllocateClient_SkipsUnhealthy(t *testing.T) {
 	}
 }
 
-func TestRpcGroup_AllocateClient_FallbackToUnhealthy(t *testing.T) {
+func TestRpcGroup_AllocateClient_AllOffline(t *testing.T) {
 	group := NewRpcGroup("test-group")
 	defer group.Close()
 
 	c1 := NewRpcClient("test-group", "A", nil)
-	c1.SetStatus(StatusOnline)
-	for i := 0; i < 3; i++ {
-		c1.MarkFailure()
-	}
+	c1.SetStatus(StatusOffline)
 	group.Register(c1)
 
 	c2 := NewRpcClient("test-group", "B", nil)
-	c2.SetStatus(StatusOnline)
-	for i := 0; i < 3; i++ {
-		c2.MarkFailure()
-	}
+	c2.SetStatus(StatusOffline)
 	group.Register(c2)
 
-	// 所有客户端都不健康，但仍能分配（兜底行为）
+	// 所有客户端都离线，应返回 nil
 	got := group.AllocateClient()
-	if got == nil {
-		t.Fatal("expected a fallback client, got nil")
-	}
-	if got.ClientID != "A" && got.ClientID != "B" {
-		t.Fatalf("unexpected client: %s", got.ClientID)
+	if got != nil {
+		t.Fatalf("expected nil when all clients offline, got %s", got.ClientID)
 	}
 }
 

@@ -25,6 +25,18 @@ func (w *WSConnection) Send(data []byte) error {
 	return w.conn.WriteMessage(websocket.TextMessage, data)
 }
 
+// PingProbe sends a WebSocket Ping control frame to quickly detect a dead TCP connection.
+// Unlike Send (which writes data into OS buffers that may succeed on half-open connections),
+// PingProbe uses a short 3s deadline and a control frame, making it a fast liveness check.
+func (w *WSConnection) PingProbe() error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	return w.conn.WriteControl(
+		websocket.PingMessage, nil,
+		time.Now().Add(3*time.Second),
+	)
+}
+
 func (w *WSConnection) Close() error {
 	return w.conn.Close()
 }

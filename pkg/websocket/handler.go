@@ -3,6 +3,7 @@ package websocket
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"sync"
@@ -230,6 +231,16 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				// Read deadline 超时：主动发 Ping 探测连接活性。
+				// TCP 半死状态（对端静默断开、NAT 超时等）下 WriteMessage 可能仍成功（OS 缓冲），
+				// 但 WriteControl(Ping) 使用独立帧缓冲且 deadline 短，能更快暴露死连接。
+				if pingErr := conn.WriteControl(
+					websocket.PingMessage, nil,
+					time.Now().Add(5*time.Second),
+				); pingErr != nil {
+					logger.Warnf("Ping probe failed, connection likely dead: group=%s, clientId=%s, err=%v", group, clientID, pingErr)
+					return
+				}
 				continue
 			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
@@ -525,6 +536,16 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 
 	if sekiroClient == nil || sekiroClient.Connection == nil {
 		return errors.New("invalid client connection")
+	}
+
+	// Pre-send liveness probe: catch zombie connections (TCP half-open) before committing to the send.
+	// Without this, Send() may succeed (OS TCP buffer) but the client never receives the message,
+	// causing a 30s invoke timeout. The PingProbe fails fast (~3s) on dead connections.
+	if wsConn, ok := sekiroClient.Connection.(*transport.WSConnection); ok {
+		if err := wsConn.PingProbe(); err != nil {
+			logger.Warnf("Pre-send ping probe failed: group=%s, clientId=%s, err=%v", group, clientID, err)
+			return fmt.Errorf("connection probe failed: %w", err)
+		}
 	}
 
 	return sekiroClient.Connection.Send(msgDataJSON)

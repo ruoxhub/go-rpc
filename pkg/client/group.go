@@ -150,8 +150,8 @@ func (g *RpcGroup) allocate() *RpcClient {
 		}
 	}
 
-	// 兜底：返回队列第一个客户端
-	return g.clients[g.order[0]]
+	// 无可用客户端（全部离线），返回 nil 让调用方报错
+	return nil
 }
 
 // fuzzyFind 按 ClientID 子串匹配候选客户端：健康且在线优先，多个候选时随机选择。
