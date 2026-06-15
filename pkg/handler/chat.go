@@ -594,3 +594,5 @@ func (r *ChatCompletionRequest) GetConstantInvoke() string {
 func (r *ChatCompletionRequest) IsStream() bool {
 	return r.Stream
 }
+
+func (r *ChatCompletionRequest) IsFuzzy() bool { return false }
