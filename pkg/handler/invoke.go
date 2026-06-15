@@ -60,6 +60,7 @@ type RequestBuilder interface {
 	GetClientID() string
 	GetConstantInvoke() string
 	IsStream() bool
+	IsFuzzy() bool
 }
 
 // InvokeRequest represents the invoke request body
@@ -71,6 +72,7 @@ type InvokeRequest struct {
 	Action         string      `json:"action"`
 	Params         interface{} `json:"params,omitempty"`
 	Stream         bool        `json:"stream,omitempty"`
+	Fuzzy          bool        `json:"fuzzy,omitempty"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -173,6 +175,11 @@ func bindInvokeRequest(c *gin.Context) InvokeRequest {
 			req.Stream = parseBoolQuery(v)
 		}
 	}
+	if !req.Fuzzy {
+		if v := c.Query("fuzzy"); v != "" {
+			req.Fuzzy = parseBoolQuery(v)
+		}
+	}
 	return req
 }
 
@@ -183,6 +190,7 @@ func invokeRequestFromQuery(c *gin.Context) InvokeRequest {
 		ConstantInvoke: c.Query("constantInvoke"),
 		Action:         c.Query("action"),
 		Stream:         parseBoolQuery(c.Query("stream")),
+		Fuzzy:          parseBoolQuery(c.Query("fuzzy")),
 	}
 }
 
@@ -195,7 +203,7 @@ func parseBoolQuery(v string) bool {
 	return false
 }
 
-func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
+func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
 	group := h.clientManager.GetGroup(groupName)
 	if group == nil {
 		if clientID != "" {
@@ -204,10 +212,7 @@ func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, act
 		return nil, nil
 	}
 
-	// Delegate strategy selection (specified / consistent hash / round-robin) to the Router.
-	// When ClientID is set, Router routes to that specific client; otherwise it auto-detects
-	// ConstantInvoke and builds the hash key from Action + Payload, falling back to round-robin.
-	params := router.RouteParams{GroupName: groupName, ClientID: clientID}
+	params := router.RouteParams{GroupName: groupName, ClientID: clientID, Fuzzy: fuzzy}
 	if clientID == "" {
 		params.ConstantInvoke = constantInvoke
 		params.Action = action
@@ -223,7 +228,7 @@ func (h *APIHandler) selectTargetClient(groupName, clientID, constantInvoke, act
 	}
 
 	if clientID != "" {
-		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s", groupName, selected.ClientID)
+		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
 	} else {
 		logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
 	}
@@ -244,6 +249,7 @@ type InvokeBuilder struct {
 	Params         interface{}
 	Timeout        time.Duration
 	Stream         bool
+	Fuzzy          bool
 }
 
 func newInvokeBuilder(req *InvokeRequest) *InvokeBuilder {
@@ -255,6 +261,7 @@ func newInvokeBuilder(req *InvokeRequest) *InvokeBuilder {
 		Params:         req.Params,
 		Timeout:        time.Duration(req.Timeout) * time.Second,
 		Stream:         req.Stream,
+		Fuzzy:          req.Fuzzy,
 	}
 }
 
@@ -288,6 +295,7 @@ func (b *InvokeBuilder) GetGroup() string          { return b.Group }
 func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *InvokeBuilder) IsStream() bool            { return b.Stream }
+func (b *InvokeBuilder) IsFuzzy() bool             { return b.Fuzzy }
 
 // handleForwardRequest 把 RequestBuilder 描述的请求转发到 Rpc 客户端。
 //
@@ -320,7 +328,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(group, clientID, constantInvoke, reqAction, reqParams)
+	targetClient, err := h.selectTargetClient(group, clientID, builder.IsFuzzy(), constantInvoke, reqAction, reqParams)
 	if err != nil {
 		Fail(c, errorcode.NoClientAvailable, err.Error())
 		return

@@ -116,7 +116,7 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(qwenGroup, "", "", qwenActionChat, rawMap)
+	targetClient, err := h.selectTargetClient(qwenGroup, "", false, "", qwenActionChat, rawMap)
 	if err != nil {
 		writeChatError(c, http.StatusOK, err.Error())
 		return

@@ -2,6 +2,8 @@ package client
 
 import (
 	"errors"
+	"math/rand"
+	"strings"
 	"sync"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
@@ -16,6 +18,7 @@ const (
 	cmdGetClient
 	cmdGetAllClients
 	cmdAllocate
+	cmdFuzzyFind
 )
 
 // groupCommand represents a command to the group goroutine
@@ -107,6 +110,9 @@ func (g *RpcGroup) handleCommand(cmd groupCommand) {
 
 	case cmdAllocate:
 		cmd.callback <- commandResult{client: g.allocate()}
+
+	case cmdFuzzyFind:
+		cmd.callback <- commandResult{client: g.fuzzyFind(cmd.clientID)}
 	}
 }
 
@@ -146,6 +152,34 @@ func (g *RpcGroup) allocate() *RpcClient {
 
 	// 兜底：返回队列第一个客户端
 	return g.clients[g.order[0]]
+}
+
+// fuzzyFind 按 ClientID 子串匹配候选客户端：健康且在线优先，多个候选时随机选择。
+// 无健康候选时退化为任意在线候选；无在线候选时返回 nil。
+func (g *RpcGroup) fuzzyFind(substr string) *RpcClient {
+	var healthy []*RpcClient
+	var online []*RpcClient
+
+	for id, c := range g.clients {
+		if !strings.Contains(id, substr) {
+			continue
+		}
+		if c.GetStatus() != StatusOnline {
+			continue
+		}
+		online = append(online, c)
+		if c.GetHealthStatus() {
+			healthy = append(healthy, c)
+		}
+	}
+
+	if len(healthy) > 0 {
+		return healthy[rand.Intn(len(healthy))]
+	}
+	if len(online) > 0 {
+		return online[rand.Intn(len(online))]
+	}
+	return nil
 }
 
 // drainCommands 在 done 关闭后回填 commandChan 中残留命令的 callback，
@@ -303,3 +337,16 @@ func (g *RpcGroup) HasClient(clientID string) bool {
 
 // ErrNoClientAvailable is returned when no client is available
 var ErrNoClientAvailable = errors.New("no client available")
+
+// FindClientByFuzzy finds a client whose ClientID contains substr. 已关停时返回 nil。
+func (g *RpcGroup) FindClientByFuzzy(substr string) *RpcClient {
+	callback := make(chan commandResult, 1)
+	if !g.sendCommand(groupCommand{
+		typ:      cmdFuzzyFind,
+		clientID: substr,
+		callback: callback,
+	}) {
+		return nil
+	}
+	return g.waitCallback(callback).client
+}

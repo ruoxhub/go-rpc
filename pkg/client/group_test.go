@@ -232,3 +232,66 @@ func TestRpcGroup_AllocateClient_FallbackToUnhealthy(t *testing.T) {
 		t.Fatalf("unexpected client: %s", got.ClientID)
 	}
 }
+
+func TestRpcGroup_FindClientByFuzzy_HealthFirst(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	abcUnhealthy := NewRpcClient("test-group", "client-abc-1", nil)
+	abcUnhealthy.SetStatus(StatusOnline)
+	for i := 0; i < 3; i++ {
+		abcUnhealthy.MarkFailure()
+	}
+	group.Register(abcUnhealthy)
+
+	abcHealthy := NewRpcClient("test-group", "client-abc-2", nil)
+	abcHealthy.SetStatus(StatusOnline)
+	group.Register(abcHealthy)
+
+	other := NewRpcClient("test-group", "client-def", nil)
+	other.SetStatus(StatusOnline)
+	group.Register(other)
+
+	// 模糊匹配 "abc" 应该命中 abc-1 和 abc-2，但优先返回健康的 abc-2
+	got := group.FindClientByFuzzy("abc")
+	if got == nil {
+		t.Fatal("expected a fuzzy match, got nil")
+	}
+	if got.ClientID != "client-abc-2" {
+		t.Errorf("expected healthy match client-abc-2, got %s", got.ClientID)
+	}
+
+	// 不匹配任何客户端
+	if group.FindClientByFuzzy("xyz") != nil {
+		t.Error("expected nil for non-matching substring")
+	}
+}
+
+func TestRpcGroup_FindClientByFuzzy_FallbackToUnhealthy(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	c := NewRpcClient("test-group", "only-unhealthy", nil)
+	c.SetStatus(StatusOnline)
+	for i := 0; i < 3; i++ {
+		c.MarkFailure()
+	}
+	group.Register(c)
+
+	got := group.FindClientByFuzzy("unhealthy")
+	if got == nil {
+		t.Fatal("expected fallback to unhealthy client, got nil")
+	}
+	if got.ClientID != "only-unhealthy" {
+		t.Errorf("expected only-unhealthy, got %s", got.ClientID)
+	}
+}
+
+func TestRpcGroup_FindClientByFuzzy_EmptyGroup(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	if group.FindClientByFuzzy("anything") != nil {
+		t.Error("expected nil for empty group")
+	}
+}

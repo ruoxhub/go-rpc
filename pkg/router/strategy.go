@@ -41,6 +41,9 @@ type RouteParams struct {
 	Action string
 	// Payload is the serializable request payload, used to build the hash key when ConstantInvoke is enabled.
 	Payload interface{}
+	// Fuzzy enables substring matching on ClientID when true.
+	// Only effective when ClientID is also non-empty.
+	Fuzzy bool
 }
 
 // cachedRing stores a hash ring alongside a fingerprint of the client list.
@@ -78,8 +81,11 @@ func (r *Router) Route(group *client.RpcGroup, params RouteParams) *client.RpcCl
 		return nil
 	}
 
-	// 1. If ClientID is specified, only try specified client (no fallback)
+	// 1. If ClientID is specified, choose between exact and fuzzy lookup.
 	if params.ClientID != "" {
+		if params.Fuzzy {
+			return group.FindClientByFuzzy(params.ClientID)
+		}
 		return r.routeBySpecifiedClient(group, params.ClientID)
 	}
 
