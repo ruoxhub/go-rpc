@@ -35,7 +35,6 @@ var (
 	host       string
 	debug      bool
 	localDebug bool
-	configPath string
 )
 
 func init() {
@@ -43,24 +42,22 @@ func init() {
 	flag.StringVar(&host, "host", "", "Server host")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.BoolVar(&localDebug, "local-debug", false, "Enable local debug mode")
-	flag.StringVar(&configPath, "c", "config.yaml", "Path to YAML config")
 }
 
 func main() {
 	flag.Parse()
 
-	config := &Config{
+	cfg := &Config{
 		Port:       port,
 		Host:       host,
 		Debug:      debug,
 		LocalDebug: localDebug,
-		ConfigPath: configPath,
 	}
 
-	srv := NewServer(config)
+	srv := NewServer(cfg)
 
 	fmt.Printf("Starting Rpc RPC Server...\n")
-	fmt.Printf("Host: %s, Port: %d\n", config.Host, config.Port)
+	fmt.Printf("Host: %s, Port: %d\n", cfg.Host, cfg.Port)
 
 	if err := srv.Start(); err != nil {
 		fmt.Printf("Server error: %v\n", err)
@@ -73,7 +70,6 @@ type Config struct {
 	Host       string
 	Debug      bool
 	LocalDebug bool
-	ConfigPath string
 }
 
 func DefaultConfig() *Config {
@@ -82,14 +78,13 @@ func DefaultConfig() *Config {
 		Host:       "0.0.0.0",
 		Debug:      false,
 		LocalDebug: false,
-		ConfigPath: "config.yaml",
 	}
 }
 
 // Server represents the Rpc server
 type Server struct {
 	config           *Config
-	yamlConfig       *config.ServerConfig
+	serverConfig       *config.ServerConfig
 	shutdown         chan struct{}
 	eventBus         *eventbus.EventBus
 	clientManager    *client.ClientManager
@@ -124,49 +119,14 @@ func NewServer(config *Config) *Server {
 	}
 }
 
-func (s *Server) loadYAMLConfig() error {
-	if s.config.ConfigPath == "" {
-		s.config.ConfigPath = "config.yaml"
-	}
-
-	var err error
-	s.yamlConfig, err = config.LoadServerConfig(s.config.ConfigPath)
-	if err != nil {
-		logger.Warningf("Failed to load YAML config: %v, using defaults", err)
-		s.yamlConfig = config.DefaultServerConfig()
-	}
-	return nil
-}
-
-func (s *Server) applyYAMLConfig() {
-	if s.yamlConfig == nil {
-		return
-	}
-	if s.config.Host == "" {
-		s.config.Host = s.yamlConfig.Host
-	}
-	if s.config.Port == 0 {
-		s.config.Port = s.yamlConfig.Port
-	}
-	if s.config.Host == "" {
-		s.config.Host = "0.0.0.0"
-	}
-	if s.config.Port == 0 {
-		s.config.Port = 5612
-	}
-	if s.yamlConfig.Mode == "debug" {
-		s.config.Debug = true
-	}
-}
-
 // logFileOptions maps config.LogConfig to logger.FileOptions.
-// Returns nil when yamlConfig is nil so that InitLogger falls back
+// Returns nil when serverConfig is nil so that InitLogger falls back
 // to console-only output.
-func logFileOptions(yc *config.ServerConfig) *logger.FileOptions {
-	if yc == nil {
+func logFileOptions(sc *config.ServerConfig) *logger.FileOptions {
+	if sc == nil {
 		return nil
 	}
-	lc := yc.Log
+	lc := sc.Log
 	return &logger.FileOptions{
 		Enabled:    lc.Dir != "" && lc.Filename != "",
 		Dir:        lc.Dir,
@@ -179,23 +139,36 @@ func logFileOptions(yc *config.ServerConfig) *logger.FileOptions {
 }
 
 func (s *Server) Start() error {
-	s.loadYAMLConfig()
-	s.applyYAMLConfig()
+	config.LoadDotEnv()
+	s.serverConfig = config.LoadServerConfigFromEnv()
 
-	logger.InitLogger(s.config.Debug, logFileOptions(s.yamlConfig))
+	if s.config.Host != "" {
+		s.serverConfig.Host = s.config.Host
+	}
+	if s.config.Port != 0 {
+		s.serverConfig.Port = s.config.Port
+	}
+	s.config.Host = s.serverConfig.Host
+	s.config.Port = s.serverConfig.Port
 
-	disableDB := s.yamlConfig.DisableDatabase
-	disableMetrics := s.yamlConfig.DisableMetrics
-	disableAlert := s.yamlConfig.DisableAlert
+	if s.config.Debug {
+		s.serverConfig.Mode = "debug"
+	}
+
+	logger.InitLogger(s.config.Debug, logFileOptions(s.serverConfig))
+
+	disableDB := s.serverConfig.DisableDatabase
+	disableMetrics := s.serverConfig.DisableMetrics
+	disableAlert := s.serverConfig.DisableAlert
 
 	if !disableDB {
 		if err := database.InitFromConfig(
-			s.yamlConfig.Database.Host,
-			s.yamlConfig.Database.Port,
-			s.yamlConfig.Database.User,
-			s.yamlConfig.Database.Password,
-			s.yamlConfig.Database.DBName,
-			s.yamlConfig.Database.SSLMode,
+			s.serverConfig.Database.Host,
+			s.serverConfig.Database.Port,
+			s.serverConfig.Database.User,
+			s.serverConfig.Database.Password,
+			s.serverConfig.Database.DBName,
+			s.serverConfig.Database.SSLMode,
 		); err != nil {
 			logger.Errorf("Failed to initialize database: %v", err)
 			return fmt.Errorf("failed to initialize database: %w", err)
@@ -275,7 +248,7 @@ func (s *Server) Start() error {
 			metricsReader.SetStore(alertQueryStore)
 		}
 
-		smtp := s.yamlConfig.Alert.SMTP
+		smtp := s.serverConfig.Alert.SMTP
 		s.alertEvaluator.SetSMTPConfig(alert.SMTPConfig{
 			Host:     smtp.Host,
 			Port:     smtp.Port,
@@ -295,10 +268,10 @@ func (s *Server) Start() error {
 
 	s.httpServer = handler.NewHTTPServer(s.newHTTPConfig(mode))
 
-	corsEnabled := s.yamlConfig.Cors
-	routeReplaceEnabled := s.yamlConfig.RouterReplace.IsEnable
-	routePrefix := s.yamlConfig.RouterReplace.ReplaceRoute
-	corsOrigins := s.yamlConfig.CorsOrigins
+	corsEnabled := s.serverConfig.Cors
+	routeReplaceEnabled := s.serverConfig.RouterReplace.IsEnable
+	routePrefix := s.serverConfig.RouterReplace.ReplaceRoute
+	corsOrigins := s.serverConfig.CorsOrigins
 
 	s.httpServer.Use(
 		middleware.CORSMiddleware(corsEnabled, corsOrigins),
@@ -334,10 +307,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) registerRoutes() {
-	// registerRoutes can be exercised by tests that bypass NewServer/loadYAMLConfig.
-	// In that case s.yamlConfig is nil; fall back to the default server config so
-	// yaml-driven toggles still resolve to a defined value.
-	yc := s.yamlConfig
+	// registerRoutes can be exercised by tests that bypass NewServer.
+	// In that case s.serverConfig is nil; fall back to the default server config.
+	yc := s.serverConfig
 	if yc == nil {
 		yc = config.DefaultServerConfig()
 	}
