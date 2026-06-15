@@ -171,7 +171,7 @@ func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatComp
 	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON, ""); err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send request: "+err.Error())
@@ -214,7 +214,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 	stream := h.timeoutManager.RegisterStream(sequence, req.Group, targetClient.ClientID, timeout)
 	defer h.timeoutManager.RemoveStream(sequence)
 
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON, ""); err != nil {
 		targetClient.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send request: "+err.Error())
 		return

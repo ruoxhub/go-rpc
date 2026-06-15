@@ -161,7 +161,7 @@ func (h *APIHandler) qwenCreateChat(ctx context.Context, target *client.RpcClien
 	rec := h.timeoutManager.Add(seq, qwenGroup, target.ClientID, reqJSON)
 	rec.Timeout = qwenUnaryTimeout
 
-	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON, ""); err != nil {
 		h.timeoutManager.Remove(seq)
 		return "", fmt.Errorf("send createChat: %w", err)
 	}
@@ -274,7 +274,7 @@ func (h *APIHandler) qwenStreamToOpenAI(
 	stream := h.timeoutManager.RegisterStream(seq, qwenGroup, target.ClientID, qwenStreamTimeout)
 	defer h.timeoutManager.RemoveStream(seq)
 
-	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON, ""); err != nil {
 		target.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send chatCompletions: "+err.Error())
 		return
@@ -410,7 +410,7 @@ func (h *APIHandler) qwenAggregateToOpenAI(
 	stream := h.timeoutManager.RegisterStream(seq, qwenGroup, target.ClientID, qwenStreamTimeout)
 	defer h.timeoutManager.RemoveStream(seq)
 
-	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON, ""); err != nil {
 		target.MarkFailure()
 		writeChatError(c, http.StatusOK, "Failed to send chatCompletions: "+err.Error())
 		return

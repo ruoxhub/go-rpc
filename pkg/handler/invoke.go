@@ -435,7 +435,7 @@ func (h *APIHandler) forwardStream(c *gin.Context, builder RequestBuilder, group
 
 	streamRec := h.timeoutManager.RegisterStream(sequence, group, targetClient.ClientID, timeout)
 
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, traceID(c)); err != nil {
 		h.timeoutManager.RemoveStream(sequence)
 		targetClient.MarkFailure()
 		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
@@ -450,7 +450,7 @@ func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group 
 	targetClient *client.RpcClient, sequence string, reqDataJSON []byte,
 	timeout time.Duration, startTime time.Time, reqAction string) {
 
-	resp, ok := h.dispatchInvokeRequest(c, group, targetClient, sequence, reqDataJSON, timeout)
+	resp, ok := h.dispatchInvokeRequest(c, group, targetClient, sequence, reqDataJSON, timeout, traceID(c))
 	if !ok {
 		return
 	}
@@ -473,12 +473,13 @@ func (h *APIHandler) dispatchInvokeRequest(
 	sequence string,
 	reqDataJSON []byte,
 	timeout time.Duration,
+	traceID string,
 ) (*forwarder.InvokeResponse, bool) {
 
 	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
 	invokeRecord.Timeout = timeout
 
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, traceID); err != nil {
 		h.timeoutManager.Remove(sequence)
 		targetClient.MarkFailure()
 		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())

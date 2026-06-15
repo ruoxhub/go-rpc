@@ -56,17 +56,18 @@ const (
 
 // RpcMessage represents a Rpc protocol message
 type RpcMessage struct {
-	Type      MessageType     `json:"type"`
-	Sequence  string          `json:"sequence,omitempty"`
-	RpcSeq    string          `json:"__sekiro_seq__,omitempty"`
-	Group     string          `json:"group,omitempty"`
-	ClientID  string          `json:"clientId,omitempty"`
-	Actions   []string        `json:"actions,omitempty"`
-	Data      json.RawMessage `json:"data,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Status    int             `json:"status,omitempty"`
-	Done      bool            `json:"done,omitempty"`
-	Timestamp int64           `json:"timestamp,omitempty"`
+	Type          MessageType     `json:"type"`
+	Sequence      string          `json:"sequence,omitempty"`
+	RpcSeq        string          `json:"__sekiro_seq__,omitempty"`
+	Group         string          `json:"group,omitempty"`
+	ClientID      string          `json:"clientId,omitempty"`
+	Actions       []string        `json:"actions,omitempty"`
+	Data          json.RawMessage `json:"data,omitempty"`
+	Error         string          `json:"error,omitempty"`
+	Status        int             `json:"status,omitempty"`
+	Done          bool            `json:"done,omitempty"`
+	Timestamp     int64           `json:"timestamp,omitempty"`
+	TraceID       string          `json:"trace_id,omitempty"`
 }
 
 // GetSequence 获取消息序列号，兼容两种字段格式
@@ -429,7 +430,11 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 		logger.Infof("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
 	}
 
-	logger.Infof("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
+	if msg.TraceID != "" {
+		logger.Infof("Invoke response received: trace=%s, sequence=%s, status=%d, Error=%s", msg.TraceID, sequence, msg.Status, errorMessage)
+	} else {
+		logger.Infof("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
+	}
 
 	response := &forwarder.InvokeResponse{
 		Data:   responseData,
@@ -481,7 +486,7 @@ func (h *Handler) sendError(sekiroClient *client.RpcClient, errorMsg, sequence s
 
 // SendInvokeRequest sends an invoke request to a client.
 // The transport connection is obtained from the RpcClient.
-func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, group, clientID string, data []byte) error {
+func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, group, clientID string, data []byte, traceID string) error {
 	var reqData map[string]interface{}
 	if err := json.Unmarshal(data, &reqData); err != nil {
 		logger.Errorf("Failed to parse request data: %v", err)
@@ -499,6 +504,9 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	fullMsg["group"] = group
 	fullMsg["clientId"] = clientID
 	fullMsg["timestamp"] = time.Now().UnixMilli()
+	if traceID != "" {
+		fullMsg["trace_id"] = traceID
+	}
 	for k, v := range msgData {
 		fullMsg[k] = v
 	}
@@ -509,7 +517,11 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 		return err
 	}
 
-	logger.Infof("Sending invoke message")
+	if traceID != "" {
+		logger.Infof("Sending invoke message: trace=%s", traceID)
+	} else {
+		logger.Infof("Sending invoke message")
+	}
 
 	if sekiroClient == nil || sekiroClient.Connection == nil {
 		return errors.New("invalid client connection")
