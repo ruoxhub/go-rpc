@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Card, Empty, Table, Space, Button, Popconfirm, message, Modal, Form, Input } from 'antd'
+import { Card, Table, Button, Popconfirm, message, Modal, Form, Input, Tag, Tooltip } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { groupApi } from '../utils/api'
 
@@ -14,7 +14,7 @@ function GroupAction({ groupName, onRefresh }) {
     setLoading(true)
     try {
       const result = await groupApi.getActions(groupName)
-      setActions(result.data || [])
+      setActions((result.data || []).map(normalizeAction))
     } catch (error) {
       message.error('加载 Action 列表失败：' + (error.message || '未知错误'))
     } finally {
@@ -64,27 +64,90 @@ function GroupAction({ groupName, onRefresh }) {
     }
   }
 
+  const normalizeAction = (action) => ({
+    ...action,
+    actionName: action.actionName || action.action_name || '',
+    groupName: action.groupName || action.group_name || groupName,
+    actionParams: action.actionParams || action.action_params || '',
+    createDate: action.createDate || action.create_date || ''
+  })
+
+  const parseActionParams = (value) => {
+    if (!value) return []
+    try {
+      const params = JSON.parse(value)
+      return Array.isArray(params) ? params : []
+    } catch (error) {
+      return []
+    }
+  }
+
+  const renderActionParams = (value) => {
+    const params = parseActionParams(value)
+    if (params.length === 0) return '-'
+
+    const summary = params.map((param) => {
+      const required = param.required ? '必填' : '可选'
+      const defaultText = param.default !== undefined && param.default !== null ? `，默认 ${param.default}` : ''
+      return `${param.name}: ${param.type || 'any'}，${required}${defaultText}${param.description ? `，${param.description}` : ''}`
+    }).join('\n')
+
+    return (
+      <Tooltip title={<pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{summary}</pre>}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 520 }}>
+          {params.slice(0, 5).map((param) => (
+            <Tag key={param.name} color={param.required ? 'red' : 'blue'} style={{ marginInlineEnd: 0 }}>
+              {param.name}
+            </Tag>
+          ))}
+          {params.length > 5 && <Tag style={{ marginInlineEnd: 0 }}>+{params.length - 5}</Tag>}
+        </div>
+      </Tooltip>
+    )
+  }
+
+  const renderCreateDate = (date) => {
+    if (!date) return '-'
+    const parsed = new Date(date)
+    if (Number.isNaN(parsed.getTime())) return date
+    return parsed.toLocaleString('zh-CN')
+  }
+
+  const getRowKey = (record) => {
+    if (record.id) return record.id
+    return `${record.groupName || groupName}:${record.actionName}`
+  }
+
   const columns = [
     {
       title: 'Action 名称',
       dataIndex: 'actionName',
-      key: 'actionName'
+      key: 'actionName',
+      width: 220
     },
     {
       title: '分组',
       dataIndex: 'groupName',
       key: 'groupName',
-      render: () => groupName
+      width: 180
+    },
+    {
+      title: '参数',
+      dataIndex: 'actionParams',
+      key: 'actionParams',
+      render: renderActionParams
     },
     {
       title: '创建时间',
       dataIndex: 'createDate',
       key: 'createDate',
-      render: (date) => date ? new Date(date).toLocaleString('zh-CN') : '-'
+      width: 220,
+      render: renderCreateDate
     },
     {
       title: '操作',
       key: 'action',
+      width: 160,
       render: (_, record) => (
         <Popconfirm
           title="确定删除该 Action 吗？"
@@ -112,10 +175,11 @@ function GroupAction({ groupName, onRefresh }) {
         <Table
           columns={columns}
           dataSource={actions}
-          rowKey="id"
+          rowKey={getRowKey}
           loading={loading}
+          size="middle"
+          scroll={{ x: 1000 }}
           pagination={{
-            current: 1,
             pageSize: 10,
             total: actions.length,
             showSizeChanger: false,

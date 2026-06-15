@@ -87,6 +87,7 @@ CREATE TABLE group_actions (
     id BIGSERIAL PRIMARY KEY,
     group_name VARCHAR(64) NOT NULL,
     action_name VARCHAR(64),
+    action_params TEXT DEFAULT '',
     create_date TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

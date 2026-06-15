@@ -71,6 +71,8 @@ type GroupRepository interface {
 	FindActionsByGroup(name string) ([]model.GroupAction, error)
 	FindAction(groupName, actionName string) (*model.GroupAction, error)
 	CreateAction(action *model.GroupAction) error
+	UpsertAction(action *model.GroupAction) error
+	UpdateActionParams(groupName, actionName, actionParams string) error
 	DeleteAction(groupName, actionName string) error
 	DeleteActionsByGroup(name string) error
 

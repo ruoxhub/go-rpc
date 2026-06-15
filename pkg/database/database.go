@@ -85,8 +85,10 @@ func AutoMigrate() error {
 	if err := DB.AutoMigrate(&model.GroupConfig{}); err != nil {
 		return fmt.Errorf("failed to auto-migrate group_config: %w", err)
 	}
+	if err := DB.AutoMigrate(&model.GroupAction{}); err != nil {
+		return fmt.Errorf("failed to auto-migrate group_actions: %w", err)
+	}
 
 	log.Println("Database schema validation passed")
 	return nil
 }
-

@@ -150,6 +150,7 @@ CREATE TABLE `group_actions` (
                                  `id` bigint(11) NOT NULL AUTO_INCREMENT COMMENT '自增主建',
                                  `group_name` varchar(64) NOT NULL COMMENT 'group名称',
                                  `action_name` varchar(64) DEFAULT NULL COMMENT 'action',
+                                 `action_params` text COMMENT 'action参数schema',
                                  `create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                  PRIMARY KEY (`id`),
                                  UNIQUE KEY `unq_record` (`group_name`,`action_name`) USING BTREE

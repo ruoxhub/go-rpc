@@ -12,11 +12,11 @@ type UserInfo struct {
 	LoginToken string    `json:"-" gorm:"size:64"`
 	// ApiToken 在 PostgreSQL 侧通过部分唯一索引保证非空唯一（见 migration.sql 中 uniq_user_info_api_token）。
 	// 这里只声明常规索引以避免 GORM AutoMigrate 生成冲突的全局唯一索引。
-	ApiToken   string    `json:"api_token" gorm:"size:64;default:'';index:idx_user_info_api_token"`
-	IsAdmin    bool      `json:"is_admin" gorm:"not null;default:false"`
+	ApiToken   string     `json:"api_token" gorm:"size:64;default:'';index:idx_user_info_api_token"`
+	IsAdmin    bool       `json:"is_admin" gorm:"not null;default:false"`
 	UpdateTime *time.Time `json:"update_time" gorm:"type:timestamp"`
-	Permission string    `json:"permission" gorm:"type:text;default:''"`
-	QuotaQps   float64   `json:"quota_qps" gorm:"not null;default:10"`
+	Permission string     `json:"permission" gorm:"type:text;default:''"`
+	QuotaQps   float64    `json:"quota_qps" gorm:"not null;default:10"`
 }
 
 func (UserInfo) TableName() string {
@@ -52,15 +52,15 @@ func (SysLog) TableName() string {
 
 // ServerNode 服务器节点
 type ServerNode struct {
-	ID             int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	ServerID       string    `json:"server_id" gorm:"size:64;not null;uniqueIndex"`
+	ID             int64      `json:"id" gorm:"primaryKey;autoIncrement"`
+	ServerID       string     `json:"server_id" gorm:"size:64;not null;uniqueIndex"`
 	LastActiveTime *time.Time `json:"last_active_time"`
-	CreateTime     time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
-	IP             string    `json:"ip" gorm:"size:512;not null;default:''"`
-	Port           int       `json:"port" gorm:"not null"`
-	Enable         bool      `json:"enable" gorm:"not null;default:true"`
-	LocalIP        string    `json:"local_ip" gorm:"size:512"`
-	OutIP          string    `json:"out_ip" gorm:"size:512"`
+	CreateTime     time.Time  `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
+	IP             string     `json:"ip" gorm:"size:512;not null;default:''"`
+	Port           int        `json:"port" gorm:"not null"`
+	Enable         bool       `json:"enable" gorm:"not null;default:true"`
+	LocalIP        string     `json:"local_ip" gorm:"size:512"`
+	OutIP          string     `json:"out_ip" gorm:"size:512"`
 }
 
 func (ServerNode) TableName() string {
@@ -84,10 +84,11 @@ func (GroupConfig) TableName() string {
 
 // GroupAction 分组 Action
 type GroupAction struct {
-	ID         int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	GroupName  string    `json:"group_name" gorm:"size:64;not null"`
-	ActionName string    `json:"action_name" gorm:"size:64"`
-	CreateDate time.Time `json:"create_date" gorm:"not null;default:CURRENT_TIMESTAMP"`
+	ID           int64     `json:"id" gorm:"primaryKey;autoIncrement"`
+	GroupName    string    `json:"group_name" gorm:"size:64;not null"`
+	ActionName   string    `json:"action_name" gorm:"size:64"`
+	ActionParams string    `json:"action_params" gorm:"type:text;default:''"`
+	CreateDate   time.Time `json:"create_date" gorm:"not null;default:CURRENT_TIMESTAMP"`
 }
 
 func (GroupAction) TableName() string {
@@ -110,13 +111,13 @@ func (GroupDevice) TableName() string {
 
 // MetricTag 指标标签
 type MetricTag struct {
-	ID        int64  `json:"id" gorm:"primaryKey;autoIncrement"`
-	Name      string `json:"name" gorm:"size:64;not null;uniqueIndex"`
-	Tag1Name  string `json:"tag1_name" gorm:"size:64"`
-	Tag2Name  string `json:"tag2_name" gorm:"size:64"`
-	Tag3Name  string `json:"tag3_name" gorm:"size:64"`
-	Tag4Name  string `json:"tag4_name" gorm:"size:64"`
-	Tag5Name  string `json:"tag5_name" gorm:"size:64"`
+	ID       int64  `json:"id" gorm:"primaryKey;autoIncrement"`
+	Name     string `json:"name" gorm:"size:64;not null;uniqueIndex"`
+	Tag1Name string `json:"tag1_name" gorm:"size:64"`
+	Tag2Name string `json:"tag2_name" gorm:"size:64"`
+	Tag3Name string `json:"tag3_name" gorm:"size:64"`
+	Tag4Name string `json:"tag4_name" gorm:"size:64"`
+	Tag5Name string `json:"tag5_name" gorm:"size:64"`
 }
 
 func (MetricTag) TableName() string {

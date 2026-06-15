@@ -7,6 +7,7 @@ import (
 
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type groupRepository struct {
@@ -252,6 +253,33 @@ func (r *groupRepository) CreateAction(action *model.GroupAction) error {
 	return nil
 }
 
+func (r *groupRepository) UpsertAction(action *model.GroupAction) error {
+	assignments := map[string]interface{}{}
+	if action.ActionParams != "" {
+		assignments["action_params"] = action.ActionParams
+	}
+	if len(assignments) == 0 {
+		return r.CreateAction(action)
+	}
+
+	if err := r.getDB().Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "group_name"}, {Name: "action_name"}},
+		DoUpdates: clause.Assignments(assignments),
+	}).Create(action).Error; err != nil {
+		return fmt.Errorf("failed to upsert action: %w", err)
+	}
+	return nil
+}
+
+func (r *groupRepository) UpdateActionParams(groupName, actionName, actionParams string) error {
+	if err := r.getDB().Model(&model.GroupAction{}).
+		Where("group_name = ? AND action_name = ?", groupName, actionName).
+		Update("action_params", actionParams).Error; err != nil {
+		return fmt.Errorf("failed to update action params: %w", err)
+	}
+	return nil
+}
+
 func (r *groupRepository) DeleteAction(groupName, actionName string) error {
 	if err := r.getDB().Where("group_name = ? AND action_name = ?", groupName, actionName).
 		Delete(&model.GroupAction{}).Error; err != nil {
@@ -271,10 +299,10 @@ func (r *groupRepository) DeleteActionsByGroup(name string) error {
 
 func (r *groupRepository) FindAnonymousDeviceGroups(activeThreshold string) ([]AnonymousGroupStats, error) {
 	type rawStat struct {
-		GroupName        string
-		Total            int64
-		Active           int64
-		Disabled         int64
+		GroupName string
+		Total     int64
+		Active    int64
+		Disabled  int64
 	}
 
 	var rawStats []rawStat
