@@ -155,40 +155,42 @@ Alert:
 
 ```
 go-rpc/
-├── main.go                     # 服务器入口
+├── main.go                     # 服务器入口（引导逻辑 + 路由注册）
 ├── config.yaml.example         # 配置模板
 ├── docker-compose.yaml         # Docker 编排
 ├── Dockerfile
 ├── deploy/postgres/migration.sql
-├── docs/                       # 设计文档（PRD、改进计划等）
+├── docs/                       # 设计文档与实施计划
 ├── internal/
 │   ├── config/                 # YAML 配置加载
+│   ├── prompt/                 # Prompt 模板
+│   ├── promptcompat/           # Prompt 兼容适配
+│   ├── toolcall/               # Tool Call 解析
+│   ├── util/                   # 通用工具
 │   └── utils/logger/           # zap 日志封装
 ├── pkg/
-│   ├── client/                 # 客户端 SDK（RpcClient + RpcInvoker）
-│   ├── compress/               # Gzip / Snappy / None
-│   ├── database/               # GORM 连接、迁移、repository
+│   ├── alert/                  # 告警评估引擎
+│   ├── client/                 # 客户端管理（RpcClient、RpcGroup、ClientManager）
+│   │   └── sdk/                # 客户端/调用端 SDK（供外部消费者使用）
+│   ├── compress/               # Gzip / Snappy / None 压缩
+│   ├── config/                 # 运行时配置服务（DB 缓存）
+│   ├── database/               # GORM 连接、迁移
+│   │   └── repository/         # Repository 接口与实现
 │   ├── eventbus/               # 进程内事件总线
+│   ├── flow/                   # 流量控制、限流退避
+│   ├── forwarder/              # 调用超时管理、流式帧处理
+│   ├── handler/                # HTTP 处理器（/api、/rpc-api、/business 统一入口）
+│   │   └── errorcode/          # 业务错误码定义
+│   ├── metrics/                # 指标采集与聚合
+│   ├── middleware/             # 认证、CORS、限流、追踪、路由替换
 │   ├── model/                  # GORM 数据模型
 │   ├── protocol/               # 二进制包编解码
-│   ├── server/
-│   │   ├── bootstrap.go        # 启动入口、路由注册
-│   │   ├── alert/              # 告警评估引擎
-│   │   ├── api/                # /business、/v1 处理器
-│   │   ├── client/             # 客户端管理、健康检查
-│   │   ├── config/             # 运行时配置服务
-│   │   ├── detector/           # 协议自动识别
-│   │   ├── flow/               # 流量控制、限流退避
-│   │   ├── forwarder/          # 调用超时管理
-│   │   ├── handlers/           # /api、/rpc-api 处理器
-│   │   ├── metrics/            # 指标采集
-│   │   ├── middleware/         # 认证、CORS、限流、追踪
-│   │   ├── router/             # 路由策略
-│   │   ├── transport/          # 传输层抽象
-│   │   └── websocket/          # WebSocket 消息处理
-│   └── utils/
+│   ├── router/                 # 路由策略（轮询、指定、一致性 Hash）
+│   ├── transport/              # 传输层抽象（TCP + WebSocket）
+│   ├── utils/                  # 工具函数（密码、TraceID、文件操作）
+│   └── websocket/              # WebSocket 消息处理（注册、心跳、调用分发）
 ├── web/                        # React 管理后台（//go:embed dist）
-└── sample/                     # 多语言示例（go、java、python、frida、xposed 等）
+└── sample/                     # 多语言示例（go、java、python、frida、xposed、web 等）
 ```
 
 ## 核心功能
@@ -196,10 +198,11 @@ go-rpc/
 | 类别 | 功能 |
 |------|------|
 | 通信 | 二进制协议 + WebSocket 双协议；自动识别；Gzip/Snappy 压缩 |
-| 客户端 | 注册、注销、心跳保活、连续 3 次失败标记不健康 |
-| 路由 | 轮询、指定客户端、一致性 Hash 三种策略 |
-| 安全 | Bearer Token 认证；管理员/普通用户分级；分组绑定用户 |
+| 客户端 | 注册、注销、心跳保活、连续 3 次失败标记不健康；三态熔断器自动容错 |
+| 路由 | 轮询（尾部旋转公平分配）、指定客户端、一致性 Hash、模糊匹配（ClientID 子串 + 健康优先） |
+| 安全 | Bearer Token 认证；管理员/普通用户分级；分组绑定用户；分组 IP 白名单 |
 | 限流 | 用户与 IP 维度的 QPS 限流（运行时可调） |
+| 调用 | 统一 Trace ID 贯穿 WebSocket 链路；客户端踢出（单客户端 / 整组）；僵尸连接自动清理 |
 | 监控 | 分钟/小时/天三档指标聚合（可选关闭） |
 | 追踪 | 完整的调用链路记录与详情查询 |
 | 告警 | 规则评估引擎，支持 SMTP/Webhook 通知 |
@@ -294,9 +297,7 @@ func main() {
 | `/business/clientQueue` | GET | 分组下客户端队列 |
 | `/business/invoke` | GET/POST/Any | RPC 调用 |
 | `/business/register` | GET → WebSocket | 客户端注册并升级到 WebSocket |
-| `/business/execjs` | GET/POST | 执行 JS 代码 |
-| `/business/cookie` | GET/POST | 获取 Cookie |
-| `/business/html` | GET | 获取 HTML |
+| `/business/kick` | DELETE | 踢出客户端（支持单客户端或整组） |
 | `/v1/chat/completions` | POST | OpenAI 兼容接口 |
 
 ### 用户与前端兼容接口（`/rpc-api`）
@@ -459,20 +460,23 @@ cd web && npm run build      # 输出到 web/dist/
 
 ## 路由策略
 
-服务器对同一分组下的多个客户端支持三种路由策略：
+服务器对同一分组下的多个客户端支持多种路由策略：
 
 ```go
-// 1. 轮询（默认）：不指定 ClientID
+// 1. 轮询（默认）：队列轮询 + 尾部旋转公平分配，不指定 ClientID
 invoker.Invoke(&client.InvokeRequest{Group: "g", Api: "a"})
 
-// 2. 指定客户端
+// 2. 指定客户端（精确匹配）
 invoker.Invoke(&client.InvokeRequest{Group: "g", ClientID: "node-1", Api: "a"})
 
-// 3. 一致性 Hash：URL 加 constantInvoke=true
+// 3. 模糊匹配：ClientID 为子串，优先选择健康客户端
+invoker.Invoke(&client.InvokeRequest{Group: "g", ClientID: "node", Api: "a"})
+
+// 4. 一致性 Hash：URL 加 constantInvoke=true
 // curl "http://localhost:5612/business/invoke?group=g&action=a&constantInvoke=true"
 ```
 
-健康检查会优先把请求路由到健康客户端（连续 3 次失败标记不健康）。
+健康检查会优先把请求路由到健康客户端（连续 3 次失败标记不健康；三态熔断器自动隔离故障节点）。
 
 ## 测试
 
@@ -485,7 +489,8 @@ go test -race ./...
 
 # 单包测试
 go test ./pkg/protocol/...
-go test ./pkg/server/...
+go test ./pkg/handler/...
+go test ./pkg/client/...
 
 # 单测试
 go test -run TestRpcPacket ./pkg/protocol/...
@@ -495,13 +500,13 @@ go test -run TestRpcPacket ./pkg/protocol/...
 
 ### 添加新的 `/api` 处理器
 
-1. 在 `pkg/server/handlers/` 新建处理器文件
-2. 在 `pkg/server/handlers/routes.go` 的 `SetupWebRoutes` 内注册路由
-3. 如需新仓储，扩展 `Deps` 与 `bootstrap.go` 的注入
+1. 在 `pkg/handler/` 新建处理器文件
+2. 在 `pkg/handler/routes.go` 的 `SetupWebRoutes` 内注册路由
+3. 如需新仓储，扩展 `Deps` 结构体与 `main.go` 的注入
 
 ### 添加 `/business` 端点
 
-直接在 `pkg/server/bootstrap.go::registerRoutes` 的 `business` 分组中追加，并在 `pkg/server/api/` 实现 handler。
+直接在 `main.go` 的 `registerRoutes` 中 `business` 分组追加路由，并在 `pkg/handler/invoke.go` 实现 handler。
 
 ### 添加新前端页面
 
