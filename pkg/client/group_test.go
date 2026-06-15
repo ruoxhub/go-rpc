@@ -154,3 +154,81 @@ func TestRpcGroup_HasClient(t *testing.T) {
 		t.Error("Expected true for existing client")
 	}
 }
+
+func TestRpcGroup_AllocateClient_RoundRobinOrder(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	for _, id := range []string{"A", "B", "C"} {
+		c := NewRpcClient("test-group", id, nil)
+		c.SetStatus(StatusOnline)
+		group.Register(c)
+	}
+
+	// 前 3 次：A → B → C（每次取队头、旋转到队尾）
+	for _, want := range []string{"A", "B", "C"} {
+		got := group.AllocateClient()
+		if got == nil || got.ClientID != want {
+			t.Fatalf("expected %s, got %v", want, got)
+		}
+	}
+	// 再来一轮验证循环：A → B → C
+	for _, want := range []string{"A", "B", "C"} {
+		got := group.AllocateClient()
+		if got == nil || got.ClientID != want {
+			t.Fatalf("second round: expected %s, got %v", want, got)
+		}
+	}
+}
+
+func TestRpcGroup_AllocateClient_SkipsUnhealthy(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	c1 := NewRpcClient("test-group", "A", nil)
+	c1.SetStatus(StatusOnline)
+	for i := 0; i < 3; i++ {
+		c1.MarkFailure() // 触发熔断器打开
+	}
+	group.Register(c1)
+
+	c2 := NewRpcClient("test-group", "B", nil)
+	c2.SetStatus(StatusOnline)
+	group.Register(c2)
+
+	// A 不健康，总是轮到 B
+	for i := 0; i < 3; i++ {
+		got := group.AllocateClient()
+		if got == nil || got.ClientID != "B" {
+			t.Fatalf("iteration %d: expected B, got %v", i, got)
+		}
+	}
+}
+
+func TestRpcGroup_AllocateClient_FallbackToUnhealthy(t *testing.T) {
+	group := NewRpcGroup("test-group")
+	defer group.Close()
+
+	c1 := NewRpcClient("test-group", "A", nil)
+	c1.SetStatus(StatusOnline)
+	for i := 0; i < 3; i++ {
+		c1.MarkFailure()
+	}
+	group.Register(c1)
+
+	c2 := NewRpcClient("test-group", "B", nil)
+	c2.SetStatus(StatusOnline)
+	for i := 0; i < 3; i++ {
+		c2.MarkFailure()
+	}
+	group.Register(c2)
+
+	// 所有客户端都不健康，但仍能分配（兜底行为）
+	got := group.AllocateClient()
+	if got == nil {
+		t.Fatal("expected a fallback client, got nil")
+	}
+	if got.ClientID != "A" && got.ClientID != "B" {
+		t.Fatalf("unexpected client: %s", got.ClientID)
+	}
+}

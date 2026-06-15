@@ -110,30 +110,42 @@ func (g *RpcGroup) handleCommand(cmd groupCommand) {
 	}
 }
 
-// allocate 健康优先 → 在线 → 任意，返回首个可分配客户端。
+// allocate 从 order 队头取可用客户端、用后旋转到队尾，实现队列轮询。
+// 三轮优先级：健康且在线 → 任意在线 → 任意客户端。
+// 每次分配后把已用客户端之前的元素（含自身）移到队尾，保持轮询公平。
 func (g *RpcGroup) allocate() *RpcClient {
-	var fallbackOnline *RpcClient
-	var fallbackAny *RpcClient
+	if len(g.order) == 0 {
+		return nil
+	}
 
-	for _, c := range g.clients {
-		if fallbackAny == nil {
-			fallbackAny = c
-		}
-		if c.GetStatus() != StatusOnline {
+	// 第一轮：健康且在线
+	for i := 0; i < len(g.order); i++ {
+		id := g.order[i]
+		client, ok := g.clients[id]
+		if !ok {
 			continue
 		}
-		if fallbackOnline == nil {
-			fallbackOnline = c
-		}
-		if c.GetHealthStatus() {
-			return c
+		if client.GetStatus() == StatusOnline && client.GetHealthStatus() {
+			g.order = append(g.order[i+1:], g.order[:i+1]...)
+			return client
 		}
 	}
 
-	if fallbackOnline != nil {
-		return fallbackOnline
+	// 第二轮：任意在线
+	for i := 0; i < len(g.order); i++ {
+		id := g.order[i]
+		client, ok := g.clients[id]
+		if !ok {
+			continue
+		}
+		if client.GetStatus() == StatusOnline {
+			g.order = append(g.order[i+1:], g.order[:i+1]...)
+			return client
+		}
 	}
-	return fallbackAny
+
+	// 兜底：返回队列第一个客户端
+	return g.clients[g.order[0]]
 }
 
 // drainCommands 在 done 关闭后回填 commandChan 中残留命令的 callback，
