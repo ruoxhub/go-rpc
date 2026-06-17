@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // 配置键常量定义
@@ -48,8 +48,8 @@ type Service interface {
 	GetConfigInt(key string, defaultVal int) int
 	// GetAllConfigs 获取所有配置
 	GetAllConfigs() map[string]string
-	// Refresh 从数据库刷新配置
-	Refresh() error
+	// Refresh 从数据库刷新配置。db 为 nil 时跳过刷新并返回 nil。
+	Refresh(db *gorm.DB) error
 }
 
 // service 配置服务实现
@@ -137,8 +137,7 @@ func (s *service) GetAllConfigs() map[string]string {
 }
 
 // Refresh 从数据库刷新配置
-func (s *service) Refresh() error {
-	db := database.GetDB()
+func (s *service) Refresh(db *gorm.DB) error {
 	if db == nil {
 		logger.Warn("数据库未初始化，跳过配置刷新")
 		return nil

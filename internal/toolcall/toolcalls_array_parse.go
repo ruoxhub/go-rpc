@@ -1,7 +1,7 @@
 package toolcall
 
 import (
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"html"
 	"strings"
 )

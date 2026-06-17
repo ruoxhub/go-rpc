@@ -261,8 +261,11 @@ func (c *collector) rollupLoop() {
 	ticker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
 
+	startupDelay := time.NewTimer(5 * time.Second)
+	defer startupDelay.Stop()
+
 	select {
-	case <-time.After(5 * time.Second):
+	case <-startupDelay.C:
 		c.runRollupAndRetention()
 	case <-c.stopChan:
 		return

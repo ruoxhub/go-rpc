@@ -192,10 +192,13 @@ func (c *invokerClient) waitForResponse(seq int32, timeout time.Duration) (*prot
 		c.conn.mu.Unlock()
 	}()
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case resp := <-respChan:
 		return resp, nil
-	case <-time.After(timeout):
+	case <-timer.C:
 		return nil, errors.New("timeout waiting for response")
 	}
 }

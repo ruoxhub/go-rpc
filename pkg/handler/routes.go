@@ -7,6 +7,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
+	"gorm.io/gorm"
 )
 
 // Deps holds all handler dependencies for injection.
@@ -20,6 +21,9 @@ type Deps struct {
 	TraceRepo      repository.TraceRepository
 	AlertRepo      repository.AlertRepository
 	MetricRepo     repository.MetricRepository
+	// DB is the shared *gorm.DB used by handlers that need direct access
+	// (e.g. SysConfigHandler for configService.Refresh). nil in DB-less mode.
+	DB *gorm.DB
 }
 
 // SetupWebRoutes 设置 Web 管理界面路由
@@ -30,7 +34,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 	// Create handler instances with injected repositories
 	userHandler := NewUserHandler(deps.UserRepo)
 	groupHandler := NewGroupHandler(deps.GroupRepo)
-	sysConfigHandler := NewSysConfigHandler(deps.SysConfigRepo, deps.ServerNodeRepo, deps.SysLogRepo, cfgSvc)
+	sysConfigHandler := NewSysConfigHandler(deps.SysConfigRepo, deps.ServerNodeRepo, deps.SysLogRepo, cfgSvc, deps.DB)
 	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo, deps.ClientManager)
 	metricHandler := NewMetricHandler(deps.MetricRepo)
 	traceHandler := NewTraceHandler(deps.TraceRepo)

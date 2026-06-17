@@ -14,18 +14,11 @@ type metricRepository struct {
 
 // NewMetricRepository creates a new MetricRepository backed by GORM.
 func NewMetricRepository(db *gorm.DB) MetricRepository {
-	return &metricRepository{db: db}
-}
-
-func (r *metricRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &metricRepository{db: mustDB(db)}
 }
 
 func (r *metricRepository) FindMetrics(table, name, startTime, endTime string, limit int) ([]model.MetricMinute, error) {
-	query := r.getDB().Table(table)
+	query := r.db.Table(table)
 	if name != "" {
 		query = query.Where("name = ?", name)
 	}
@@ -48,7 +41,7 @@ func (r *metricRepository) FindMetrics(table, name, startTime, endTime string, l
 
 func (r *metricRepository) FindMetricTags() ([]model.MetricTag, error) {
 	var tags []model.MetricTag
-	if err := r.getDB().Find(&tags).Error; err != nil {
+	if err := r.db.Find(&tags).Error; err != nil {
 		return nil, fmt.Errorf("failed to list metric tags: %w", err)
 	}
 	return tags, nil
@@ -57,16 +50,16 @@ func (r *metricRepository) FindMetricTags() ([]model.MetricTag, error) {
 func (r *metricRepository) GetDashboardData() (*DashboardData, error) {
 	data := &DashboardData{}
 
-	r.getDB().Table("metric_minute").Select("SUM(value)").Where("type = ?", "counter").Scan(&data.TotalCalls)
-	r.getDB().Table("group_device").Where("last_active_time > ?", time.Now().Add(-5*time.Minute)).Count(&data.OnlineDevices)
-	r.getDB().Table("group_config").Count(&data.TotalGroups)
-	r.getDB().Table("user_info").Count(&data.TotalUsers)
+	r.db.Table("metric_minute").Select("SUM(value)").Where("type = ?", "counter").Scan(&data.TotalCalls)
+	r.db.Table("group_device").Where("last_active_time > ?", time.Now().Add(-5*time.Minute)).Count(&data.OnlineDevices)
+	r.db.Table("group_config").Count(&data.TotalGroups)
+	r.db.Table("user_info").Count(&data.TotalUsers)
 
 	return data, nil
 }
 
 func (r *metricRepository) GetLatencyPercentiles(group, api, startTime, endTime string) ([]model.MetricMinute, error) {
-	query := r.getDB().Table("metric_minute").Where("type = ?", "latency")
+	query := r.db.Table("metric_minute").Where("type = ?", "latency")
 
 	if group != "" {
 		query = query.Where("tag1 = ?", group)

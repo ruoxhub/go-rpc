@@ -277,6 +277,9 @@ func (m *TimeoutManager) Wait(id string) (*InvokeResponse, error) {
 		return nil, ErrTimeout
 	}
 
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+
 	select {
 	case response, ok := <-record.ResponseChan:
 		if !ok {
@@ -284,7 +287,7 @@ func (m *TimeoutManager) Wait(id string) (*InvokeResponse, error) {
 		}
 		m.Remove(id)
 		return response, nil
-	case <-time.After(remaining):
+	case <-timer.C:
 		record.SetTimedOut()
 		m.Remove(id)
 		return nil, ErrTimeout

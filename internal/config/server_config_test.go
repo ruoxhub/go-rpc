@@ -38,6 +38,7 @@ func TestLoadServerConfigFromEnvReadsAllFields(t *testing.T) {
 	t.Setenv("RPC_DISABLE_METRICS", "true")
 	t.Setenv("RPC_DISABLE_ALERT", "true")
 	t.Setenv("RPC_DISABLE_DATABASE", "true")
+	t.Setenv("RPC_DISABLE_TRACE", "true")
 	t.Setenv("RPC_ROUTE_REPLACE_ENABLE", "true")
 	t.Setenv("RPC_ROUTE_REPLACE_PREFIX", "/api")
 	t.Setenv("RPC_HTTPS_ENABLE", "true")
@@ -102,6 +103,9 @@ func TestLoadServerConfigFromEnvReadsAllFields(t *testing.T) {
 	}
 	if !conf.DisableDatabase {
 		t.Fatal("DisableDatabase should be true")
+	}
+	if !conf.DisableTrace {
+		t.Fatal("DisableTrace should be true")
 	}
 	if !conf.RouterReplace.IsEnable {
 		t.Fatal("RouterReplace.IsEnable should be true")

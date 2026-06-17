@@ -28,13 +28,15 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 	webui "github.com/mrh30000/go-rpc/web"
+	"gorm.io/gorm"
 )
 
 var (
-	port       int
-	host       string
-	debug      bool
-	localDebug bool
+	port          int
+	host          string
+	debug         bool
+	localDebug    bool
+	resetMetrics  bool
 )
 
 func init() {
@@ -42,16 +44,18 @@ func init() {
 	flag.StringVar(&host, "host", "", "Server host")
 	flag.BoolVar(&debug, "debug", false, "Enable debug logging")
 	flag.BoolVar(&localDebug, "local-debug", false, "Enable local debug mode")
+	flag.BoolVar(&resetMetrics, "reset-metrics", false, "Drop all metric tables on startup (AutoMigrate will recreate them). TEST-ENV ONLY.")
 }
 
 func main() {
 	flag.Parse()
 
 	cfg := &Config{
-		Port:       port,
-		Host:       host,
-		Debug:      debug,
-		LocalDebug: localDebug,
+		Port:         port,
+		Host:         host,
+		Debug:        debug,
+		LocalDebug:   localDebug,
+		ResetMetrics: resetMetrics,
 	}
 
 	srv := NewServer(cfg)
@@ -66,18 +70,20 @@ func main() {
 
 // Config holds server configuration
 type Config struct {
-	Port       int
-	Host       string
-	Debug      bool
-	LocalDebug bool
+	Port         int
+	Host         string
+	Debug        bool
+	LocalDebug   bool
+	ResetMetrics bool
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Port:       5612,
-		Host:       "0.0.0.0",
-		Debug:      false,
-		LocalDebug: false,
+		Port:         5612,
+		Host:         "0.0.0.0",
+		Debug:        false,
+		LocalDebug:   false,
+		ResetMetrics: false,
 	}
 }
 
@@ -96,6 +102,7 @@ type Server struct {
 	alertEvaluator   *alert.Evaluator
 	configService    pkgconfig.Service
 	groupRepo        repository.GroupRepository
+	db               *gorm.DB
 	// wsCancel cancels all WebSocket handler goroutines on shutdown
 	wsCtx    context.Context
 	wsCancel context.CancelFunc
@@ -174,26 +181,51 @@ func (s *Server) Start() error {
 			return fmt.Errorf("failed to initialize database: %w", err)
 		}
 
+		if err := database.ConfigurePool(
+			s.serverConfig.Database.MaxOpenConns,
+			s.serverConfig.Database.MaxIdleConns,
+			s.serverConfig.Database.ConnMaxLifetime,
+		); err != nil {
+			logger.Errorf("Failed to configure database pool: %v", err)
+			return fmt.Errorf("failed to configure database pool: %w", err)
+		}
+
+		if s.config.ResetMetrics {
+			logger.Warn("-reset-metrics set: dropping metric tables (metric_minute, metric_hour, metric_day, metric_tag)")
+			if err := database.ResetMetricTables(); err != nil {
+				logger.Errorf("Failed to reset metric tables: %v", err)
+				return fmt.Errorf("failed to reset metric tables: %w", err)
+			}
+			logger.Warn("Metric tables dropped; AutoMigrate will recreate them below")
+		}
+
 		if err := database.AutoMigrate(); err != nil {
 			logger.Errorf("Failed to run database migration: %v", err)
 			return fmt.Errorf("failed to run database migration: %w", err)
 		}
 		logger.Info("Database migration completed successfully")
 		db := database.GetDB()
+		s.db = db
 		s.groupRepo = repository.NewGroupRepository(db)
 		userRepo := repository.NewUserRepository(db)
 		handler.SetUserRepository(userRepo)
 		handler.SetLoginGroupRepository(s.groupRepo)
 		middleware.SetTokenUserRepository(userRepo)
-		middleware.SetTraceRecorder(repository.NewTraceRepository(db))
+		if !s.serverConfig.DisableTrace {
+			middleware.StartBatchedTraceRecorder(
+				repository.NewTraceRepository(db),
+				s.serverConfig.TraceSampleRate,
+				s.serverConfig.TraceBatchSize,
+			)
+		} else {
+			logger.Info("Trace recording disabled (RPC_DISABLE_TRACE=true)")
+		}
+		if err := s.configService.Refresh(db); err != nil {
+			logger.Errorf("Failed to load config: %v", err)
+		}
 	} else {
 		logger.Info("Running in DB-less mode (DisableDatabase=true)")
-	}
-
-	// 启动配置服务（仅启动时加载一次，后续在配置更新时手动触发刷新）
-	if err := s.configService.Refresh(); err != nil {
-		logger.Errorf("Failed to load config: %v", err)
-		// 配置加载失败不影响服务器启动
+		logger.Warn("数据库未初始化，跳过配置刷新")
 	}
 	logger.Info("Config service started successfully")
 
@@ -202,7 +234,7 @@ func (s *Server) Start() error {
 	if !disableMetrics {
 		var metricStore repository.MetricStore
 		if !disableDB {
-			metricStore = repository.NewMetricStore(database.GetDB())
+			metricStore = repository.NewMetricStore(s.db)
 		}
 		s.metricsCollector = metrics.NewCollector(1*time.Minute, metricStore)
 	}
@@ -238,11 +270,10 @@ func (s *Server) Start() error {
 		s.alertEvaluator = alert.NewEvaluator(1*time.Minute, metricsReader)
 
 		if !disableDB {
-			db := database.GetDB()
-			alertRepo := repository.NewAlertRepository(db)
+			alertRepo := repository.NewAlertRepository(s.db)
 			s.alertEvaluator.SetAlertRepo(alertRepo)
 
-			metricQueryStore := repository.NewMetricStore(db)
+			metricQueryStore := repository.NewMetricStore(s.db)
 			alertQueryStore := &alert.RepoMetricQueryStore{Inner: metricQueryStore}
 			s.alertEvaluator.SetMetricStore(alertQueryStore)
 			metricsReader.SetStore(alertQueryStore)
@@ -277,8 +308,10 @@ func (s *Server) Start() error {
 		middleware.CORSMiddleware(corsEnabled, corsOrigins),
 		middleware.RouteReplaceMiddleware(routeReplaceEnabled, routePrefix),
 		middleware.LoggingMiddleware(),
-		middleware.TraceMiddleware(),
 	)
+	if !s.serverConfig.DisableTrace {
+		s.httpServer.Use(middleware.TraceMiddleware())
+	}
 
 	s.registerRoutes()
 
@@ -352,7 +385,7 @@ func (s *Server) registerRoutes() {
 	}
 
 	if !disableWebAdmin {
-		db := database.GetDB()
+		db := s.db
 		deps := handler.Deps{
 			UserRepo:       repository.NewUserRepository(db),
 			GroupRepo:      repository.NewGroupRepository(db),
@@ -363,6 +396,7 @@ func (s *Server) registerRoutes() {
 			TraceRepo:      repository.NewTraceRepository(db),
 			AlertRepo:      repository.NewAlertRepository(db),
 			MetricRepo:     repository.NewMetricRepository(db),
+			DB:             db,
 		}
 		handler.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
 	}
@@ -567,6 +601,8 @@ func (s *Server) Shutdown() {
 	if s.httpServer != nil {
 		s.httpServer.Shutdown()
 	}
+	// Flush any pending batched trace records after HTTP traffic has drained.
+	middleware.ShutdownTraceRecorder()
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
 	}

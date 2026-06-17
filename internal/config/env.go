@@ -38,6 +38,18 @@ func envBool(key string, defaultVal bool) bool {
 	return b
 }
 
+func envFloat(key string, defaultVal float64) float64 {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return defaultVal
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return defaultVal
+	}
+	return f
+}
+
 func envStringSlice(key string, defaultVal []string) []string {
 	v, ok := os.LookupEnv(key)
 	if !ok || v == "" {

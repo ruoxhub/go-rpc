@@ -22,11 +22,14 @@ type ServerConfig struct {
 	DisableMetrics  bool           `env:"RPC_DISABLE_METRICS"`
 	DisableAlert    bool           `env:"RPC_DISABLE_ALERT"`
 	DisableDatabase bool           `env:"RPC_DISABLE_DATABASE"`
+	DisableTrace    bool           `env:"RPC_DISABLE_TRACE"`
 	Database        DatabaseConfig `env:"RPC_DB_*"`
 	Log             LogConfig      `env:"RPC_LOG_*"`
 	Alert           AlertConfig    `env:"RPC_SMTP_*"`
 	Provider        ProviderConfig `env:"RPC_PROVIDER_*"`
 	CorsOrigins     []string       `env:"RPC_CORS_ORIGINS"`
+	TraceSampleRate float64        `env:"RPC_TRACE_SAMPLE_RATE"`
+	TraceBatchSize  int            `env:"RPC_TRACE_BATCH_SIZE"`
 }
 
 // ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
@@ -57,6 +60,15 @@ type DatabaseConfig struct {
 	Password string `env:"RPC_DB_PASSWORD"`
 	DBName   string `env:"RPC_DB_NAME"`
 	SSLMode  string `env:"RPC_DB_SSL_MODE"`
+
+	// Connection pool tuning (applied to the underlying *sql.DB).
+	// Defaults are tuned for a mid-traffic service: ~20 concurrent writers
+	// with a handful of idle connections kept warm, and a 30-minute max
+	// lifetime so Postgres-side state (prepared statements, temp tables) is
+	// periodically reclaimed.
+	MaxOpenConns    int `env:"RPC_DB_MAX_OPEN_CONNS"`
+	MaxIdleConns    int `env:"RPC_DB_MAX_IDLE_CONNS"`
+	ConnMaxLifetime int `env:"RPC_DB_CONN_MAX_LIFETIME_SECONDS"`
 }
 
 // LogConfig holds file log configuration
@@ -99,12 +111,15 @@ func DefaultServerConfig() *ServerConfig {
 			ReplaceRoute: "",
 		},
 		Database: DatabaseConfig{
-			Host:     "localhost",
-			Port:     5432,
-			User:     "postgres",
-			Password: "postgres",
-			DBName:   "sekiro",
-			SSLMode:  "disable",
+			Host:            "localhost",
+			Port:            5432,
+			User:            "postgres",
+			Password:        "postgres",
+			DBName:          "sekiro",
+			SSLMode:         "disable",
+			MaxOpenConns:    25,
+			MaxIdleConns:    10,
+			ConnMaxLifetime: 1800,
 		},
 		Cors: true,
 		Mode: "release",
@@ -130,6 +145,8 @@ func DefaultServerConfig() *ServerConfig {
 			QwenTimeoutSeconds: 120,
 			QwenLogChunks:      false,
 		},
+		TraceSampleRate: 0.1,
+		TraceBatchSize:  100,
 	}
 }
 
@@ -150,6 +167,7 @@ func LoadServerConfigFromEnv() *ServerConfig {
 		DisableMetrics:  envBool("RPC_DISABLE_METRICS", d.DisableMetrics),
 		DisableAlert:    envBool("RPC_DISABLE_ALERT", d.DisableAlert),
 		DisableDatabase: envBool("RPC_DISABLE_DATABASE", d.DisableDatabase),
+		DisableTrace:    envBool("RPC_DISABLE_TRACE", d.DisableTrace),
 		CorsOrigins:     envStringSlice("RPC_CORS_ORIGINS", d.CorsOrigins),
 
 		HttpsServices: HttpsConfig{
@@ -165,12 +183,15 @@ func LoadServerConfigFromEnv() *ServerConfig {
 		},
 
 		Database: DatabaseConfig{
-			Host:     envString("RPC_DB_HOST", d.Database.Host),
-			Port:     envInt("RPC_DB_PORT", d.Database.Port),
-			User:     envString("RPC_DB_USER", d.Database.User),
-			Password: envString("RPC_DB_PASSWORD", d.Database.Password),
-			DBName:   envString("RPC_DB_NAME", d.Database.DBName),
-			SSLMode:  envString("RPC_DB_SSL_MODE", d.Database.SSLMode),
+			Host:            envString("RPC_DB_HOST", d.Database.Host),
+			Port:            envInt("RPC_DB_PORT", d.Database.Port),
+			User:            envString("RPC_DB_USER", d.Database.User),
+			Password:        envString("RPC_DB_PASSWORD", d.Database.Password),
+			DBName:          envString("RPC_DB_NAME", d.Database.DBName),
+			SSLMode:         envString("RPC_DB_SSL_MODE", d.Database.SSLMode),
+			MaxOpenConns:    envInt("RPC_DB_MAX_OPEN_CONNS", d.Database.MaxOpenConns),
+			MaxIdleConns:    envInt("RPC_DB_MAX_IDLE_CONNS", d.Database.MaxIdleConns),
+			ConnMaxLifetime: envInt("RPC_DB_CONN_MAX_LIFETIME_SECONDS", d.Database.ConnMaxLifetime),
 		},
 
 		Log: LogConfig{
@@ -197,6 +218,9 @@ func LoadServerConfigFromEnv() *ServerConfig {
 			QwenTimeoutSeconds: envInt("RPC_PROVIDER_QWEN_TIMEOUT", d.Provider.QwenTimeoutSeconds),
 			QwenLogChunks:      envBool("RPC_PROVIDER_QWEN_LOG_CHUNKS", d.Provider.QwenLogChunks),
 		},
+
+		TraceSampleRate: envFloat("RPC_TRACE_SAMPLE_RATE", d.TraceSampleRate),
+		TraceBatchSize:  envInt("RPC_TRACE_BATCH_SIZE", d.TraceBatchSize),
 	}
 
 	DefaultTimeout = conf.DefaultTimeOut

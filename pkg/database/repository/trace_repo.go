@@ -13,18 +13,11 @@ type traceRepository struct {
 
 // NewTraceRepository creates a new TraceRepository backed by GORM.
 func NewTraceRepository(db *gorm.DB) TraceRepository {
-	return &traceRepository{db: db}
-}
-
-func (r *traceRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &traceRepository{db: mustDB(db)}
 }
 
 func (r *traceRepository) FindByQuery(query model.TraceQuery) ([]model.TraceRecord, int64, error) {
-	db := r.getDB().Table("trace_record")
+	db := r.db.Table("trace_record")
 
 	if query.TraceID != "" {
 		db = db.Where("trace_id = ?", query.TraceID)
@@ -74,7 +67,7 @@ func (r *traceRepository) FindByQuery(query model.TraceQuery) ([]model.TraceReco
 
 func (r *traceRepository) FindByTraceID(traceID string) ([]model.TraceRecord, error) {
 	var records []model.TraceRecord
-	if err := r.getDB().Where("trace_id = ?", traceID).Order("start_time ASC").Find(&records).Error; err != nil {
+	if err := r.db.Where("trace_id = ?", traceID).Order("start_time ASC").Find(&records).Error; err != nil {
 		return nil, fmt.Errorf("failed to find traces by traceID: %w", err)
 	}
 	return records, nil
@@ -82,14 +75,14 @@ func (r *traceRepository) FindByTraceID(traceID string) ([]model.TraceRecord, er
 
 func (r *traceRepository) FindFirstByTraceID(traceID string) (*model.TraceRecord, error) {
 	var record model.TraceRecord
-	if err := r.getDB().Where("trace_id = ?", traceID).First(&record).Error; err != nil {
+	if err := r.db.Where("trace_id = ?", traceID).First(&record).Error; err != nil {
 		return nil, fmt.Errorf("failed to find trace record: %w", err)
 	}
 	return &record, nil
 }
 
 func (r *traceRepository) GetStats(group, api, startTime, endTime string) (*TraceStats, error) {
-	query := r.getDB().Table("trace_record")
+	query := r.db.Table("trace_record")
 
 	if group != "" {
 		query = query.Where(`"group" = ?`, group)
@@ -108,7 +101,7 @@ func (r *traceRepository) GetStats(group, api, startTime, endTime string) (*Trac
 	var avgLatency float64
 	var maxLatency, minLatency int64
 
-	baseQuery := r.getDB().Table("trace_record")
+	baseQuery := r.db.Table("trace_record")
 	if group != "" {
 		baseQuery = baseQuery.Where(`"group" = ?`, group)
 	}
@@ -146,7 +139,7 @@ func (r *traceRepository) GetStats(group, api, startTime, endTime string) (*Trac
 }
 
 func (r *traceRepository) GetTimeline(group, api string, limit int) ([]model.TraceRecord, error) {
-	query := r.getDB().Table("trace_record")
+	query := r.db.Table("trace_record")
 
 	if group != "" {
 		query = query.Where(`"group" = ?`, group)
@@ -165,8 +158,18 @@ func (r *traceRepository) GetTimeline(group, api string, limit int) ([]model.Tra
 }
 
 func (r *traceRepository) Create(record *model.TraceRecord) error {
-	if err := r.getDB().Create(record).Error; err != nil {
+	if err := r.db.Create(record).Error; err != nil {
 		return fmt.Errorf("failed to create trace record: %w", err)
+	}
+	return nil
+}
+
+func (r *traceRepository) CreateBatch(records []*model.TraceRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	if err := r.db.CreateInBatches(records, len(records)).Error; err != nil {
+		return fmt.Errorf("failed to batch create trace records: %w", err)
 	}
 	return nil
 }

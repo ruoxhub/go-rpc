@@ -16,21 +16,14 @@ type groupRepository struct {
 
 // NewGroupRepository creates a new GroupRepository backed by GORM.
 func NewGroupRepository(db *gorm.DB) GroupRepository {
-	return &groupRepository{db: db}
-}
-
-func (r *groupRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &groupRepository{db: mustDB(db)}
 }
 
 // Group operations
 
 func (r *groupRepository) FindGroupByName(name string) (*model.GroupConfig, error) {
 	var group model.GroupConfig
-	if err := r.getDB().Where("group_name = ?", name).First(&group).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).First(&group).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -41,21 +34,21 @@ func (r *groupRepository) FindGroupByName(name string) (*model.GroupConfig, erro
 
 func (r *groupRepository) FindAllGroups() ([]model.GroupConfig, error) {
 	var groups []model.GroupConfig
-	if err := r.getDB().Find(&groups).Error; err != nil {
+	if err := r.db.Find(&groups).Error; err != nil {
 		return nil, fmt.Errorf("failed to list groups: %w", err)
 	}
 	return groups, nil
 }
 
 func (r *groupRepository) CreateGroup(group *model.GroupConfig) error {
-	if err := r.getDB().Create(group).Error; err != nil {
+	if err := r.db.Create(group).Error; err != nil {
 		return fmt.Errorf("failed to create group: %w", err)
 	}
 	return nil
 }
 
 func (r *groupRepository) UpdateGroup(name string, updates map[string]interface{}) error {
-	if err := r.getDB().Model(&model.GroupConfig{}).
+	if err := r.db.Model(&model.GroupConfig{}).
 		Where("group_name = ?", name).
 		Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to update group: %w", err)
@@ -64,7 +57,7 @@ func (r *groupRepository) UpdateGroup(name string, updates map[string]interface{
 }
 
 func (r *groupRepository) DeleteGroup(name string) error {
-	if err := r.getDB().Where("group_name = ?", name).Delete(&model.GroupConfig{}).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Delete(&model.GroupConfig{}).Error; err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 	return nil
@@ -72,7 +65,7 @@ func (r *groupRepository) DeleteGroup(name string) error {
 
 func (r *groupRepository) CountGroups() (int64, error) {
 	var count int64
-	if err := r.getDB().Table("group_config").Count(&count).Error; err != nil {
+	if err := r.db.Table("group_config").Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("failed to count groups: %w", err)
 	}
 	return count, nil
@@ -81,7 +74,7 @@ func (r *groupRepository) CountGroups() (int64, error) {
 // Group statistics
 
 func (r *groupRepository) GetGroupStats(userName string, isAdmin bool, activeThreshold string) ([]GroupStats, error) {
-	db := r.getDB()
+	db := r.db
 
 	type rawStat struct {
 		ID                int64
@@ -140,7 +133,7 @@ type groupDeviceStats struct {
 
 func (r *groupRepository) GetGroupDeviceStats(name string, activeThreshold string) (available, disabled int64, err error) {
 	var stats groupDeviceStats
-	err = r.getDB().Model(&model.GroupDevice{}).
+	err = r.db.Model(&model.GroupDevice{}).
 		Select(`
 			SUM(CASE WHEN last_active_time > ? THEN 1 ELSE 0 END) as available,
 			SUM(CASE WHEN last_active_time <= ? THEN 1 ELSE 0 END) as disabled
@@ -157,7 +150,7 @@ func (r *groupRepository) GetGroupDeviceStats(name string, activeThreshold strin
 
 func (r *groupRepository) FindDevicesByGroup(name string) ([]model.GroupDevice, error) {
 	var devices []model.GroupDevice
-	if err := r.getDB().Where("group_name = ?", name).Find(&devices).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Find(&devices).Error; err != nil {
 		return nil, fmt.Errorf("failed to list devices: %w", err)
 	}
 	return devices, nil
@@ -165,7 +158,7 @@ func (r *groupRepository) FindDevicesByGroup(name string) ([]model.GroupDevice, 
 
 func (r *groupRepository) FindDevice(groupName, deviceID string) (*model.GroupDevice, error) {
 	var device model.GroupDevice
-	if err := r.getDB().Where("group_name = ? AND device_id = ?", groupName, deviceID).First(&device).Error; err != nil {
+	if err := r.db.Where("group_name = ? AND device_id = ?", groupName, deviceID).First(&device).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -175,14 +168,14 @@ func (r *groupRepository) FindDevice(groupName, deviceID string) (*model.GroupDe
 }
 
 func (r *groupRepository) CreateDevice(device *model.GroupDevice) error {
-	if err := r.getDB().Create(device).Error; err != nil {
+	if err := r.db.Create(device).Error; err != nil {
 		return fmt.Errorf("failed to create device: %w", err)
 	}
 	return nil
 }
 
 func (r *groupRepository) UpdateDevice(groupName, deviceID string, updates map[string]interface{}) error {
-	if err := r.getDB().Model(&model.GroupDevice{}).
+	if err := r.db.Model(&model.GroupDevice{}).
 		Where("group_name = ? AND device_id = ?", groupName, deviceID).
 		Updates(updates).Error; err != nil {
 		return fmt.Errorf("failed to update device: %w", err)
@@ -191,7 +184,7 @@ func (r *groupRepository) UpdateDevice(groupName, deviceID string, updates map[s
 }
 
 func (r *groupRepository) DeleteDevice(groupName, deviceID string) error {
-	if err := r.getDB().Where("group_name = ? AND device_id = ?", groupName, deviceID).
+	if err := r.db.Where("group_name = ? AND device_id = ?", groupName, deviceID).
 		Delete(&model.GroupDevice{}).Error; err != nil {
 		return fmt.Errorf("failed to delete device: %w", err)
 	}
@@ -199,7 +192,7 @@ func (r *groupRepository) DeleteDevice(groupName, deviceID string) error {
 }
 
 func (r *groupRepository) DeleteDevicesByGroup(name string) error {
-	if err := r.getDB().Where("group_name = ?", name).Delete(&model.GroupDevice{}).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Delete(&model.GroupDevice{}).Error; err != nil {
 		return fmt.Errorf("failed to delete devices by group: %w", err)
 	}
 	return nil
@@ -207,7 +200,7 @@ func (r *groupRepository) DeleteDevicesByGroup(name string) error {
 
 func (r *groupRepository) CountOnlineDevices(since string) (int64, error) {
 	var count int64
-	if err := r.getDB().Table("group_device").
+	if err := r.db.Table("group_device").
 		Where("last_active_time > ?", since).
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("failed to count online devices: %w", err)
@@ -217,7 +210,7 @@ func (r *groupRepository) CountOnlineDevices(since string) (int64, error) {
 
 func (r *groupRepository) CountDevicesByGroup(name string) (int64, error) {
 	var count int64
-	if err := r.getDB().Table("group_device").
+	if err := r.db.Table("group_device").
 		Where("group_name = ?", name).
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("failed to count devices: %w", err)
@@ -229,7 +222,7 @@ func (r *groupRepository) CountDevicesByGroup(name string) (int64, error) {
 
 func (r *groupRepository) FindActionsByGroup(name string) ([]model.GroupAction, error) {
 	var actions []model.GroupAction
-	if err := r.getDB().Where("group_name = ?", name).Find(&actions).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Find(&actions).Error; err != nil {
 		return nil, fmt.Errorf("failed to list actions: %w", err)
 	}
 	return actions, nil
@@ -237,7 +230,7 @@ func (r *groupRepository) FindActionsByGroup(name string) ([]model.GroupAction, 
 
 func (r *groupRepository) FindAction(groupName, actionName string) (*model.GroupAction, error) {
 	var action model.GroupAction
-	if err := r.getDB().Where("group_name = ? AND action_name = ?", groupName, actionName).First(&action).Error; err != nil {
+	if err := r.db.Where("group_name = ? AND action_name = ?", groupName, actionName).First(&action).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -247,7 +240,7 @@ func (r *groupRepository) FindAction(groupName, actionName string) (*model.Group
 }
 
 func (r *groupRepository) CreateAction(action *model.GroupAction) error {
-	if err := r.getDB().Create(action).Error; err != nil {
+	if err := r.db.Create(action).Error; err != nil {
 		return fmt.Errorf("failed to create action: %w", err)
 	}
 	return nil
@@ -262,7 +255,7 @@ func (r *groupRepository) UpsertAction(action *model.GroupAction) error {
 		return r.CreateAction(action)
 	}
 
-	if err := r.getDB().Clauses(clause.OnConflict{
+	if err := r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "group_name"}, {Name: "action_name"}},
 		DoUpdates: clause.Assignments(assignments),
 	}).Create(action).Error; err != nil {
@@ -272,7 +265,7 @@ func (r *groupRepository) UpsertAction(action *model.GroupAction) error {
 }
 
 func (r *groupRepository) UpdateActionParams(groupName, actionName, actionParams string) error {
-	if err := r.getDB().Model(&model.GroupAction{}).
+	if err := r.db.Model(&model.GroupAction{}).
 		Where("group_name = ? AND action_name = ?", groupName, actionName).
 		Update("action_params", actionParams).Error; err != nil {
 		return fmt.Errorf("failed to update action params: %w", err)
@@ -281,7 +274,7 @@ func (r *groupRepository) UpdateActionParams(groupName, actionName, actionParams
 }
 
 func (r *groupRepository) DeleteAction(groupName, actionName string) error {
-	if err := r.getDB().Where("group_name = ? AND action_name = ?", groupName, actionName).
+	if err := r.db.Where("group_name = ? AND action_name = ?", groupName, actionName).
 		Delete(&model.GroupAction{}).Error; err != nil {
 		return fmt.Errorf("failed to delete action: %w", err)
 	}
@@ -289,7 +282,7 @@ func (r *groupRepository) DeleteAction(groupName, actionName string) error {
 }
 
 func (r *groupRepository) DeleteActionsByGroup(name string) error {
-	if err := r.getDB().Where("group_name = ?", name).Delete(&model.GroupAction{}).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Delete(&model.GroupAction{}).Error; err != nil {
 		return fmt.Errorf("failed to delete actions by group: %w", err)
 	}
 	return nil
@@ -306,7 +299,7 @@ func (r *groupRepository) FindAnonymousDeviceGroups(activeThreshold string) ([]A
 	}
 
 	var rawStats []rawStat
-	if err := r.getDB().Table("group_device gd").
+	if err := r.db.Table("group_device gd").
 		Select(`
 			gd.group_name,
 			COUNT(*) as total,
@@ -333,7 +326,7 @@ func (r *groupRepository) FindAnonymousDeviceGroups(activeThreshold string) ([]A
 
 func (r *groupRepository) IsAnonymousGroup(name string) (bool, error) {
 	var count int64
-	if err := r.getDB().Model(&model.GroupConfig{}).
+	if err := r.db.Model(&model.GroupConfig{}).
 		Where("group_name = ?", name).
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("failed to check anonymous group: %w", err)
@@ -342,7 +335,7 @@ func (r *groupRepository) IsAnonymousGroup(name string) (bool, error) {
 }
 
 func (r *groupRepository) DeleteAnonymousGroupDevices(name string) (int64, error) {
-	result := r.getDB().Where("group_name = ?", name).Delete(&model.GroupDevice{})
+	result := r.db.Where("group_name = ?", name).Delete(&model.GroupDevice{})
 	if result.Error != nil {
 		return 0, fmt.Errorf("failed to delete anonymous group devices: %w", result.Error)
 	}
@@ -353,7 +346,7 @@ func (r *groupRepository) DeleteAnonymousGroupDevices(name string) (int64, error
 
 func (r *groupRepository) IsGroupRegistered(name string) (bool, error) {
 	var count int64
-	if err := r.getDB().Model(&model.GroupConfig{}).
+	if err := r.db.Model(&model.GroupConfig{}).
 		Where("group_name = ?", name).
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("failed to check group registration: %w", err)
@@ -383,7 +376,7 @@ func (r *groupRepository) EnsureDefaultActions(groupName string) error {
 }
 
 func (r *groupRepository) UpsertDevice(device *model.GroupDevice) error {
-	if err := r.getDB().
+	if err := r.db.
 		Where("group_name = ? AND device_id = ?", device.GroupName, device.DeviceID).
 		FirstOrCreate(device).Error; err != nil {
 		return fmt.Errorf("failed to upsert device: %w", err)
@@ -392,7 +385,7 @@ func (r *groupRepository) UpsertDevice(device *model.GroupDevice) error {
 }
 
 func (r *groupRepository) UpdateDeviceLastActive(groupName, deviceID string, t time.Time) error {
-	if err := r.getDB().Model(&model.GroupDevice{}).
+	if err := r.db.Model(&model.GroupDevice{}).
 		Where("group_name = ? AND device_id = ?", groupName, deviceID).
 		Update("last_active_time", t).Error; err != nil {
 		return fmt.Errorf("failed to update device last_active_time: %w", err)
@@ -417,7 +410,7 @@ func (r *groupRepository) WithTx(tx interface{}) GroupRepository {
 }
 
 func (r *groupRepository) BeginTx() GroupRepository {
-	return &groupRepository{db: r.getDB().Begin()}
+	return &groupRepository{db: r.db.Begin()}
 }
 
 func (r *groupRepository) Commit() error {

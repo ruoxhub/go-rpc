@@ -127,9 +127,9 @@ func (MetricTag) TableName() string {
 // MetricMinute 分钟级指标
 type MetricMinute struct {
 	ID         int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	Name       string    `json:"name" gorm:"size:64;not null"`
-	TimeKey    string    `json:"time_key" gorm:"size:64;not null"`
-	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null"`
+	Name       string    `json:"name" gorm:"size:64;not null;uniqueIndex:uniq_metric_minute,priority:1"`
+	TimeKey    string    `json:"time_key" gorm:"size:64;not null;uniqueIndex:uniq_metric_minute,priority:3"`
+	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null;uniqueIndex:uniq_metric_minute,priority:2"`
 	Tag1       string    `json:"tag1" gorm:"size:64"`
 	Tag2       string    `json:"tag2" gorm:"size:64"`
 	Tag3       string    `json:"tag3" gorm:"size:64"`
@@ -137,7 +137,7 @@ type MetricMinute struct {
 	Tag5       string    `json:"tag5" gorm:"size:64"`
 	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
-	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
+	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP;index:idx_metric_minute_delete"`
 }
 
 func (MetricMinute) TableName() string {
@@ -147,9 +147,9 @@ func (MetricMinute) TableName() string {
 // MetricHour 小时级指标
 type MetricHour struct {
 	ID         int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	Name       string    `json:"name" gorm:"size:64;not null"`
-	TimeKey    string    `json:"time_key" gorm:"size:64;not null"`
-	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null"`
+	Name       string    `json:"name" gorm:"size:64;not null;uniqueIndex:uniq_metric_hour,priority:1"`
+	TimeKey    string    `json:"time_key" gorm:"size:64;not null;uniqueIndex:uniq_metric_hour,priority:3"`
+	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null;uniqueIndex:uniq_metric_hour,priority:2"`
 	Tag1       string    `json:"tag1" gorm:"size:64"`
 	Tag2       string    `json:"tag2" gorm:"size:64"`
 	Tag3       string    `json:"tag3" gorm:"size:64"`
@@ -157,7 +157,7 @@ type MetricHour struct {
 	Tag5       string    `json:"tag5" gorm:"size:64"`
 	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
-	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
+	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP;index:idx_metric_hour_delete"`
 }
 
 func (MetricHour) TableName() string {
@@ -167,9 +167,9 @@ func (MetricHour) TableName() string {
 // MetricDay 天级指标
 type MetricDay struct {
 	ID         int64     `json:"id" gorm:"primaryKey;autoIncrement"`
-	Name       string    `json:"name" gorm:"size:64;not null"`
-	TimeKey    string    `json:"time_key" gorm:"size:64;not null"`
-	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null"`
+	Name       string    `json:"name" gorm:"size:64;not null;uniqueIndex:uniq_metric_day,priority:1"`
+	TimeKey    string    `json:"time_key" gorm:"size:64;not null;uniqueIndex:uniq_metric_day,priority:3"`
+	TagsMD5    string    `json:"tags_md5" gorm:"size:64;not null;uniqueIndex:uniq_metric_day,priority:2"`
 	Tag1       string    `json:"tag1" gorm:"size:64"`
 	Tag2       string    `json:"tag2" gorm:"size:64"`
 	Tag3       string    `json:"tag3" gorm:"size:64"`
@@ -177,7 +177,7 @@ type MetricDay struct {
 	Tag5       string    `json:"tag5" gorm:"size:64"`
 	Type       string    `json:"type" gorm:"size:16;not null"`
 	Value      float64   `json:"value" gorm:"not null"`
-	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP"`
+	CreateTime time.Time `json:"create_time" gorm:"default:CURRENT_TIMESTAMP;index:idx_metric_day_delete"`
 }
 
 func (MetricDay) TableName() string {

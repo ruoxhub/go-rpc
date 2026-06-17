@@ -14,7 +14,7 @@ type metricStore struct {
 
 // NewMetricStore creates a new MetricStore backed by GORM.
 func NewMetricStore(db *gorm.DB) MetricStore {
-	return &metricStore{db: db}
+	return &metricStore{db: mustDB(db)}
 }
 
 func (s *metricStore) FlushMinutes(records []model.MetricMinute) error {

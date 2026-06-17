@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mrh30000/go-rpc/internal/config"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/handler"
@@ -31,6 +32,7 @@ func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
 	})
 
 	s := &Server{
+		serverConfig:   &config.ServerConfig{DisableWebAdmin: true, DisableDatabase: true},
 		httpServer:     httpServer,
 		clientManager:  clientManager,
 		wsHandler:      wsHandler,

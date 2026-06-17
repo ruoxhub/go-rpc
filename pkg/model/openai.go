@@ -6,7 +6,7 @@ package model
 // free so they can be reused inside server handlers, model layer and tests.
 
 import (
-	"encoding/json"
+	json "github.com/goccy/go-json"
 	"errors"
 )
 

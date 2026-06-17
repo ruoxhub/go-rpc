@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"gorm.io/gorm"
 )
 
 // SysConfigHandler 系统配置处理器
@@ -14,6 +15,7 @@ type SysConfigHandler struct {
 	serverNodeRepo repository.ServerNodeRepository
 	sysLogRepo     repository.SysLogRepository
 	configService  pkgconfig.Service
+	db             *gorm.DB
 }
 
 // NewSysConfigHandler 创建系统配置处理器
@@ -22,12 +24,14 @@ func NewSysConfigHandler(
 	serverNodeRepo repository.ServerNodeRepository,
 	sysLogRepo repository.SysLogRepository,
 	service pkgconfig.Service,
+	db *gorm.DB,
 ) *SysConfigHandler {
 	return &SysConfigHandler{
 		sysConfigRepo:  sysConfigRepo,
 		serverNodeRepo: serverNodeRepo,
 		sysLogRepo:     sysLogRepo,
 		configService:  service,
+		db:             db,
 	}
 }
 
@@ -97,7 +101,7 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 	}
 
 	if h.configService != nil {
-		if err := h.configService.Refresh(); err != nil {
+		if err := h.configService.Refresh(h.db); err != nil {
 			InternalError(c, "配置已保存，但刷新失败："+err.Error())
 			return
 		}
@@ -188,8 +192,8 @@ func (h *SysConfigHandler) GetAppLogs(c *gin.Context) {
 
 	var logs []AppLogEntry
 	// This is a complex analytics query spanning trace_record;
-	// use the global DB instance directly.
-	db := repository.GetDB()
+	// use the injected DB instance.
+	db := h.db
 	rawQuery := db.Table("trace_record").
 		Select("start_time as timestamp, 'INFO' as level, api as message, trace_id, \"group\", duration_ms, CASE WHEN status='SUCCESS' THEN 200 ELSE 500 END as status")
 

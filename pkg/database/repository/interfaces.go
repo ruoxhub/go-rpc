@@ -130,6 +130,7 @@ type TraceRepository interface {
 	GetStats(group, api, startTime, endTime string) (*TraceStats, error)
 	GetTimeline(group, api string, limit int) ([]model.TraceRecord, error)
 	Create(record *model.TraceRecord) error
+	CreateBatch(records []*model.TraceRecord) error
 }
 
 // TraceStats holds trace statistics.

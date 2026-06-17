@@ -13,19 +13,12 @@ type sysConfigRepository struct {
 
 // NewSysConfigRepository creates a new SysConfigRepository backed by GORM.
 func NewSysConfigRepository(db *gorm.DB) SysConfigRepository {
-	return &sysConfigRepository{db: db}
-}
-
-func (r *sysConfigRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &sysConfigRepository{db: mustDB(db)}
 }
 
 func (r *sysConfigRepository) FindAll() ([]model.SysConfig, error) {
 	var configs []model.SysConfig
-	if err := r.getDB().Find(&configs).Error; err != nil {
+	if err := r.db.Find(&configs).Error; err != nil {
 		return nil, fmt.Errorf("failed to list sys configs: %w", err)
 	}
 	return configs, nil
@@ -33,14 +26,14 @@ func (r *sysConfigRepository) FindAll() ([]model.SysConfig, error) {
 
 func (r *sysConfigRepository) FindByKey(key string) (*model.SysConfig, error) {
 	var config model.SysConfig
-	if err := r.getDB().Where("config_key = ?", key).First(&config).Error; err != nil {
+	if err := r.db.Where("config_key = ?", key).First(&config).Error; err != nil {
 		return nil, fmt.Errorf("failed to find sys config: %w", err)
 	}
 	return &config, nil
 }
 
 func (r *sysConfigRepository) Upsert(key, value string) error {
-	if err := r.getDB().Model(&model.SysConfig{}).
+	if err := r.db.Model(&model.SysConfig{}).
 		Where("config_key = ?", key).
 		Update("config_value", value).Error; err != nil {
 		return fmt.Errorf("failed to update sys config: %w", err)
@@ -56,19 +49,12 @@ type serverNodeRepository struct {
 
 // NewServerNodeRepository creates a new ServerNodeRepository backed by GORM.
 func NewServerNodeRepository(db *gorm.DB) ServerNodeRepository {
-	return &serverNodeRepository{db: db}
-}
-
-func (r *serverNodeRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &serverNodeRepository{db: mustDB(db)}
 }
 
 func (r *serverNodeRepository) FindAll() ([]model.ServerNode, error) {
 	var nodes []model.ServerNode
-	if err := r.getDB().Find(&nodes).Error; err != nil {
+	if err := r.db.Find(&nodes).Error; err != nil {
 		return nil, fmt.Errorf("failed to list server nodes: %w", err)
 	}
 	return nodes, nil
@@ -82,25 +68,18 @@ type sysLogRepository struct {
 
 // NewSysLogRepository creates a new SysLogRepository backed by GORM.
 func NewSysLogRepository(db *gorm.DB) SysLogRepository {
-	return &sysLogRepository{db: db}
-}
-
-func (r *sysLogRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &sysLogRepository{db: mustDB(db)}
 }
 
 func (r *sysLogRepository) Create(log *model.SysLog) error {
-	if err := r.getDB().Create(log).Error; err != nil {
+	if err := r.db.Create(log).Error; err != nil {
 		return fmt.Errorf("failed to create sys log: %w", err)
 	}
 	return nil
 }
 
 func (r *sysLogRepository) FindAll(query SysLogQuery) ([]model.SysLog, int64, error) {
-	db := r.getDB().Table("sys_log")
+	db := r.db.Table("sys_log")
 
 	if query.Level != "" {
 		db = db.Where("level = ?", query.Level)

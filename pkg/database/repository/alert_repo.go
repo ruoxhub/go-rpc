@@ -15,21 +15,14 @@ type alertRepository struct {
 
 // NewAlertRepository creates a new AlertRepository backed by GORM.
 func NewAlertRepository(db *gorm.DB) AlertRepository {
-	return &alertRepository{db: db}
-}
-
-func (r *alertRepository) getDB() *gorm.DB {
-	if r.db != nil {
-		return r.db
-	}
-	return GetDB()
+	return &alertRepository{db: mustDB(db)}
 }
 
 // Rules
 
 func (r *alertRepository) FindRuleByID(id int64) (*model.AlertRule, error) {
 	var rule model.AlertRule
-	if err := r.getDB().First(&rule, id).Error; err != nil {
+	if err := r.db.First(&rule, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -39,7 +32,7 @@ func (r *alertRepository) FindRuleByID(id int64) (*model.AlertRule, error) {
 }
 
 func (r *alertRepository) FindRulesByQuery(query model.AlertRuleQuery) ([]model.AlertRule, int64, error) {
-	db := r.getDB().Table("alert_rule")
+	db := r.db.Table("alert_rule")
 
 	if query.Group != "" {
 		db = db.Where(`"group" = ?`, query.Group)
@@ -68,21 +61,21 @@ func (r *alertRepository) FindRulesByQuery(query model.AlertRuleQuery) ([]model.
 
 func (r *alertRepository) FindAllEnabledRules() ([]model.AlertRule, error) {
 	var rules []model.AlertRule
-	if err := r.getDB().Where("enabled = ?", true).Find(&rules).Error; err != nil {
+	if err := r.db.Where("enabled = ?", true).Find(&rules).Error; err != nil {
 		return nil, fmt.Errorf("failed to find enabled alert rules: %w", err)
 	}
 	return rules, nil
 }
 
 func (r *alertRepository) CreateRule(rule *model.AlertRule) error {
-	if err := r.getDB().Create(rule).Error; err != nil {
+	if err := r.db.Create(rule).Error; err != nil {
 		return fmt.Errorf("failed to create alert rule: %w", err)
 	}
 	return nil
 }
 
 func (r *alertRepository) UpdateRule(rule *model.AlertRule) error {
-	if err := r.getDB().Save(rule).Error; err != nil {
+	if err := r.db.Save(rule).Error; err != nil {
 		return fmt.Errorf("failed to update alert rule: %w", err)
 	}
 	return nil
@@ -90,13 +83,13 @@ func (r *alertRepository) UpdateRule(rule *model.AlertRule) error {
 
 func (r *alertRepository) DeleteRule(id int64) error {
 	var rule model.AlertRule
-	if err := r.getDB().First(&rule, id).Error; err != nil {
+	if err := r.db.First(&rule, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("alert rule not found: %w", err)
 		}
 		return fmt.Errorf("failed to find alert rule: %w", err)
 	}
-	if err := r.getDB().Delete(&rule).Error; err != nil {
+	if err := r.db.Delete(&rule).Error; err != nil {
 		return fmt.Errorf("failed to delete alert rule: %w", err)
 	}
 	return nil
@@ -105,7 +98,7 @@ func (r *alertRepository) DeleteRule(id int64) error {
 // History
 
 func (r *alertRepository) FindHistoryByQuery(query model.AlertHistoryQuery) ([]model.AlertHistory, int64, error) {
-	db := r.getDB().Table("alert_history")
+	db := r.db.Table("alert_history")
 
 	if query.RuleID > 0 {
 		db = db.Where("rule_id = ?", query.RuleID)
@@ -142,7 +135,7 @@ func (r *alertRepository) FindHistoryByQuery(query model.AlertHistoryQuery) ([]m
 }
 
 func (r *alertRepository) CreateHistory(history *model.AlertHistory) error {
-	if err := r.getDB().Create(history).Error; err != nil {
+	if err := r.db.Create(history).Error; err != nil {
 		return fmt.Errorf("failed to create alert history: %w", err)
 	}
 	return nil
@@ -150,7 +143,7 @@ func (r *alertRepository) CreateHistory(history *model.AlertHistory) error {
 
 func (r *alertRepository) CountRecentHistory(ruleID int64, since time.Time) (int64, error) {
 	var count int64
-	if err := r.getDB().Table("alert_history").
+	if err := r.db.Table("alert_history").
 		Where("rule_id = ? AND triggered_at > ?", ruleID, since).
 		Count(&count).Error; err != nil {
 		return 0, fmt.Errorf("failed to count recent alert history: %w", err)
