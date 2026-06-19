@@ -21,11 +21,13 @@ const (
 // cache 是带 TTL + singleflight 的 string → *T 通用缓存。
 // value == nil 表示负缓存（条目不存在）。
 type cache[T any] struct {
-	mu     sync.RWMutex
-	items  map[string]cacheEntry[T]
-	sf     singleflight.Group
-	posTTL time.Duration
-	negTTL time.Duration
+	mu       sync.RWMutex
+	items    map[string]cacheEntry[T]
+	sf       singleflight.Group
+	posTTL   time.Duration
+	negTTL   time.Duration
+	stopChan chan struct{}
+	stopOnce sync.Once
 }
 
 type cacheEntry[T any] struct {
@@ -35,9 +37,10 @@ type cacheEntry[T any] struct {
 
 func newCache[T any](positiveTTL, negativeTTL time.Duration) *cache[T] {
 	c := &cache[T]{
-		items:  make(map[string]cacheEntry[T]),
-		posTTL: positiveTTL,
-		negTTL: negativeTTL,
+		items:    make(map[string]cacheEntry[T]),
+		posTTL:   positiveTTL,
+		negTTL:   negativeTTL,
+		stopChan: make(chan struct{}),
 	}
 	go c.gcLoop()
 	return c
@@ -87,11 +90,27 @@ func (c *cache[T]) purgeExpiredLocked() {
 func (c *cache[T]) gcLoop() {
 	t := time.NewTicker(cacheGCInterval)
 	defer t.Stop()
-	for range t.C {
-		c.mu.Lock()
-		c.purgeExpiredLocked()
-		c.mu.Unlock()
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		case <-t.C:
+			c.mu.Lock()
+			c.purgeExpiredLocked()
+			c.mu.Unlock()
+		}
 	}
+}
+
+// Stop 终止该缓存的 GC 协程。可安全多次调用。
+func (c *cache[T]) Stop() {
+	c.stopOnce.Do(func() { close(c.stopChan) })
+}
+
+// ShutdownCaches 停止包级默认缓存（token + group）的 GC 协程，在进程退出时调用以避免协程泄漏。
+func ShutdownCaches() {
+	defaultTokenCache.Stop()
+	defaultGroupCache.Stop()
 }
 
 // 包级单例。保留原构造函数名以兼容既有调用与测试。

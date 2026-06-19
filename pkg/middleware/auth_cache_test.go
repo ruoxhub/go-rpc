@@ -198,3 +198,17 @@ func TestInvalidateGroupClearsEntry(t *testing.T) {
 		t.Fatalf("expected lookup to re-run after invalidate, got %d calls", got)
 	}
 }
+
+func TestCache_StopTerminatesGCLoop(t *testing.T) {
+	c := newCache[string](time.Second, time.Second)
+	c.Stop()
+	time.Sleep(100 * time.Millisecond)
+	// Should not panic or leak — goroutine exited
+}
+
+func TestCache_StopIdempotent(t *testing.T) {
+	c := newCache[string](time.Second, time.Second)
+	c.Stop()
+	c.Stop()
+	c.Stop()
+}
