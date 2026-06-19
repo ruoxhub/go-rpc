@@ -145,6 +145,7 @@ type TimeoutManager struct {
 	cleanupInterval time.Duration
 	stopChan        chan struct{}
 	wg              sync.WaitGroup
+	shutdownOnce    sync.Once
 }
 
 // TimeoutManagerConfig holds configuration for TimeoutManager.
@@ -306,19 +307,20 @@ func (m *TimeoutManager) Wait(id string) (*InvokeResponse, error) {
 }
 
 func (m *TimeoutManager) Shutdown() {
-	close(m.stopChan)
-	m.wg.Wait()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for _, record := range m.records {
-		record.Close()
-	}
-	for _, stream := range m.streams {
-		stream.Close()
-	}
-	m.records = make(map[string]*InvokeRecord)
-	m.streams = make(map[string]*StreamRecord)
+	m.shutdownOnce.Do(func() {
+		close(m.stopChan)
+		m.wg.Wait()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, record := range m.records {
+			record.Close()
+		}
+		for _, stream := range m.streams {
+			stream.Close()
+		}
+		m.records = make(map[string]*InvokeRecord)
+		m.streams = make(map[string]*StreamRecord)
+	})
 }
 
 func (m *TimeoutManager) Count() int {

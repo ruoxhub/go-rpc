@@ -1,8 +1,11 @@
 package forwarder
 
 import (
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestInvokeRecord_IsExpired(t *testing.T) {
@@ -308,4 +311,26 @@ func TestTimeoutManager_Count(t *testing.T) {
 	if manager.Count() != 3 {
 		t.Errorf("Expected 3 records, got %d", manager.Count())
 	}
+}
+
+func TestTimeoutManager_ShutdownConcurrent(t *testing.T) {
+	m := NewTimeoutManager(nil)
+	m.Add("1", "g", "c", []byte("data"))
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			m.Shutdown()
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, 0, m.Count())
+}
+
+func TestTimeoutManager_ShutdownIdempotent(t *testing.T) {
+	m := NewTimeoutManager(nil)
+	m.Shutdown()
+	m.Shutdown()
+	m.Shutdown()
 }
