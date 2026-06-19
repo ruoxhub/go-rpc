@@ -78,7 +78,7 @@ func HandleLogin(c *gin.Context) {
 
 // HandleGetUserInfo 获取当前用户信息
 func HandleGetUserInfo(c *gin.Context) {
-	token := middleware.ExtractAuthTokenFromRequest(c)
+	token := middleware.ExtractAuthTokenFromRequest(c, false)
 	if token == "" {
 		Unauthorized(c, "请重新登录")
 		return

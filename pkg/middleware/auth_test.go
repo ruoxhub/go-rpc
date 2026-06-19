@@ -48,7 +48,7 @@ func TestExtractAuthTokenFromRequest(t *testing.T) {
 			tt.setup(req)
 			c.Request = req
 
-			if got := ExtractAuthTokenFromRequest(c); got != tt.want {
+			if got := ExtractAuthTokenFromRequest(c, true); got != tt.want {
 				t.Fatalf("ExtractAuthTokenFromRequest() = %q, want %q", got, tt.want)
 			}
 		})
@@ -64,7 +64,7 @@ func TestExtractAuthTokenFromRequestAuthorizationTakesPriority(t *testing.T) {
 	req.Header.Set("sekiro-token", "header-token")
 	c.Request = req
 
-	if got := ExtractAuthTokenFromRequest(c); got != "auth-token" {
+	if got := ExtractAuthTokenFromRequest(c, true); got != "auth-token" {
 		t.Fatalf("ExtractAuthTokenFromRequest() = %q, want %q", got, "auth-token")
 	}
 }
@@ -123,6 +123,43 @@ func TestValidateIPList(t *testing.T) {
 				t.Fatalf("ValidateIPList(%q) err=%v, wantErr=%v", tt.list, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestExtractAuthTokenFromQueryDisabled(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=mytoken", nil)
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, false)
+	if token != "" {
+		t.Fatalf("query token should be ignored when disabled, got %q", token)
+	}
+}
+
+func TestExtractAuthTokenFromQueryEnabled(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=mytoken", nil)
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, true)
+	if token != "mytoken" {
+		t.Fatalf("expected %q, got %q", "mytoken", token)
+	}
+}
+
+func TestExtractAuthTokenHeaderTakesPrecedenceOverQuery(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=querytoken", nil)
+	req.Header.Set("Authorization", "Bearer headertoken")
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, true)
+	if token != "headertoken" {
+		t.Fatalf("header token should take precedence over query, got %q", token)
 	}
 }
 

@@ -652,7 +652,7 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 		return groups, nil
 	}
 
-	token := middleware.ExtractAuthTokenFromRequest(c)
+	token := middleware.ExtractAuthTokenFromRequest(c, false)
 	var user *model.UserInfo
 	if token != "" {
 		resolved, err := middleware.FindUserByToken(token)

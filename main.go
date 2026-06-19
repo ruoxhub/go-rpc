@@ -545,7 +545,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 	// 3) 标准鉴权：Authorization Bearer / sekiro-token header / query / form。
 	token := middleware.ExtractTokenFromSubprotocol(c)
 	if token == "" {
-		token = middleware.ExtractAuthTokenFromRequest(c)
+		token = middleware.ExtractAuthTokenFromRequest(c, false)
 	}
 	if token == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
