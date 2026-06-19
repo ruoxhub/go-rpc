@@ -1,6 +1,9 @@
 package flow
 
-import "testing"
+import (
+	"sync"
+	"testing"
+)
 
 func TestRateLimiterRebuildsLimiterWhenQPSChanges(t *testing.T) {
 	rl := NewRateLimiter()
@@ -27,4 +30,24 @@ func TestRateLimiterAllowUnlimitedForNonPositiveQPS(t *testing.T) {
 	if !rl.Allow("user:1", -1) {
 		t.Fatal("expected allow with negative qps")
 	}
+}
+
+func TestRateLimiter_StopConcurrent(t *testing.T) {
+	rl := NewRateLimiter()
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rl.Stop()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestRateLimiter_StopIdempotent(t *testing.T) {
+	rl := NewRateLimiter()
+	rl.Stop()
+	rl.Stop()
+	rl.Stop()
 }
