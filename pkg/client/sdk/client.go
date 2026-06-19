@@ -134,26 +134,27 @@ func (c *RpcClient) handleDisconnect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.Connection != nil {
-		c.Connection.close()
+	conn := c.Connection
+	if conn != nil {
+		conn.close()
 		c.Connection = nil
 	}
 
-	c.notifyDisconnect()
+	c.notifyDisconnect(conn)
 }
 
-// notifyDisconnect notifies all waiting responses
-func (c *RpcClient) notifyDisconnect() {
-	if c.Connection == nil {
+// notifyDisconnect notifies all waiting responses using the saved connection reference.
+func (c *RpcClient) notifyDisconnect(conn *clientConnection) {
+	if conn == nil {
 		return
 	}
 
-	c.Connection.mu.Lock()
-	defer c.Connection.mu.Unlock()
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
 
-	for seq, ch := range c.Connection.respWaiters {
+	for seq, ch := range conn.respWaiters {
 		close(ch)
-		delete(c.Connection.respWaiters, seq)
+		delete(conn.respWaiters, seq)
 	}
 }
 

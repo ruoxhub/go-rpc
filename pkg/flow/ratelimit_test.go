@@ -4,6 +4,7 @@ import "testing"
 
 func TestRateLimiterRebuildsLimiterWhenQPSChanges(t *testing.T) {
 	rl := NewRateLimiter()
+	defer rl.Stop()
 
 	first := rl.getLimiter("user:1", 10)
 	second := rl.getLimiter("user:1", 10)
@@ -19,6 +20,7 @@ func TestRateLimiterRebuildsLimiterWhenQPSChanges(t *testing.T) {
 
 func TestRateLimiterAllowUnlimitedForNonPositiveQPS(t *testing.T) {
 	rl := NewRateLimiter()
+	defer rl.Stop()
 	if !rl.Allow("user:1", 0) {
 		t.Fatal("expected allow with zero qps")
 	}

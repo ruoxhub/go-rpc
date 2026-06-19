@@ -76,11 +76,19 @@ func (s *HTTPServer) Start() error {
 	}
 	s.addr = ln.Addr().String()
 
+	serveErr := make(chan error, 1)
 	go func() {
-		_ = s.server.Serve(ln)
+		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+		}
 	}()
 
-	return nil
+	select {
+	case err := <-serveErr:
+		return err
+	default:
+		return nil
+	}
 }
 
 // Addr returns the server address
@@ -88,9 +96,11 @@ func (s *HTTPServer) Addr() string {
 	return s.addr
 }
 
-// Shutdown gracefully shuts down the server
+// Shutdown gracefully shuts down the server with a 30-second timeout
 func (s *HTTPServer) Shutdown() error {
-	return s.server.Shutdown(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return s.server.Shutdown(ctx)
 }
 
 // RegisterHandler registers an HTTP handler (for backward compatibility)

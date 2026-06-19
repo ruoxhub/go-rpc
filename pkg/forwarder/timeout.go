@@ -43,6 +43,7 @@ type StreamRecord struct {
 	CreatedAt time.Time
 	Timeout   time.Duration
 	ChunkChan chan *StreamChunk
+	done      chan struct{}
 	timedOut  bool
 	closed    bool
 	closeErr  string
@@ -71,6 +72,7 @@ func (r *StreamRecord) CloseWithError(err string) {
 	}
 	r.closed = true
 	r.closeErr = err
+	close(r.done)
 	close(r.ChunkChan)
 }
 
@@ -80,21 +82,30 @@ func (r *StreamRecord) TerminalError() string {
 	return r.closeErr
 }
 
-func (r *StreamRecord) Push(chunk *StreamChunk) bool {
+func (r *StreamRecord) Push(chunk *StreamChunk) (ok bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
+		r.mu.Unlock()
 		return false
 	}
+	r.mu.Unlock()
+
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+
 	timer := time.NewTimer(streamPushTimeout)
 	defer timer.Stop()
 	select {
 	case r.ChunkChan <- chunk:
 		return true
+	case <-r.done:
+		return false
 	case <-timer.C:
-		r.closed = true
-		r.closeErr = "stream backpressure timeout"
-		close(r.ChunkChan)
+		r.SetTimedOut()
+		r.CloseWithError("stream backpressure timeout")
 		return false
 	}
 }
@@ -331,6 +342,7 @@ func (m *TimeoutManager) RegisterStream(id, group, clientID string, timeout time
 		CreatedAt: time.Now(),
 		Timeout:   timeout,
 		ChunkChan: make(chan *StreamChunk, 16),
+		done:      make(chan struct{}),
 	}
 	m.streams[id] = record
 	return record

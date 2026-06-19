@@ -25,28 +25,45 @@ type limiterEntry struct {
 type RateLimiter struct {
 	mu       sync.RWMutex
 	limiters map[string]*limiterEntry
+	stopChan chan struct{}
 }
 
 func NewRateLimiter() *RateLimiter {
 	rl := &RateLimiter{
 		limiters: make(map[string]*limiterEntry),
+		stopChan: make(chan struct{}),
 	}
 	go rl.startCleanupLoop(cleanupInterval, cleanupTTL)
 	return rl
 }
 
+// Stop terminates the background cleanup goroutine. Safe to call multiple times.
+func (rl *RateLimiter) Stop() {
+	select {
+	case <-rl.stopChan:
+	default:
+		close(rl.stopChan)
+	}
+}
+
 func (rl *RateLimiter) startCleanupLoop(interval, ttl time.Duration) {
 	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
 	ttlSec := int64(ttl.Seconds())
-	for range ticker.C {
-		rl.mu.Lock()
-		nowUnix := time.Now().Unix()
-		for key, entry := range rl.limiters {
-			if nowUnix-atomic.LoadInt64(&entry.lastActiveUnix) > ttlSec {
-				delete(rl.limiters, key)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			nowUnix := time.Now().Unix()
+			for key, entry := range rl.limiters {
+				if nowUnix-atomic.LoadInt64(&entry.lastActiveUnix) > ttlSec {
+					delete(rl.limiters, key)
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopChan:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 

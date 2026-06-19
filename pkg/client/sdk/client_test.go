@@ -154,7 +154,7 @@ func TestNotifyDisconnect(t *testing.T) {
 		Connection: conn,
 	}
 
-	client.notifyDisconnect()
+	client.notifyDisconnect(conn)
 
 	_, ok := <-ch1
 	if ok {
@@ -183,7 +183,7 @@ func TestNotifyDisconnectNilConnection(t *testing.T) {
 	client := &RpcClient{
 		Connection: nil,
 	}
-	client.notifyDisconnect()
+	client.notifyDisconnect(nil)
 }
 
 func TestBufWriter(t *testing.T) {
