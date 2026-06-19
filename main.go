@@ -21,6 +21,7 @@ import (
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/deps"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/handler"
@@ -208,9 +209,22 @@ func (s *Server) Start() error {
 		s.db = db
 		s.groupRepo = repository.NewGroupRepository(db)
 		userRepo := repository.NewUserRepository(db)
-		handler.SetUserRepository(userRepo)
-		handler.SetLoginGroupRepository(s.groupRepo)
-		middleware.SetTokenUserRepository(userRepo)
+
+		appDeps := &deps.AppDependencies{
+			DB:            db,
+			UserRepo:      userRepo,
+			GroupRepo:     s.groupRepo,
+			ConfigService: s.configService,
+			EventBus:      s.eventBus,
+		}
+
+		// Wire via AppDependencies (new DI pattern)
+		handler.SetUserRepository(appDeps.UserRepo)
+		handler.SetLoginGroupRepository(appDeps.GroupRepo)
+		middleware.SetTokenUserRepository(appDeps.UserRepo)
+
+		// Verify LoginHandler constructor works with AppDependencies
+		_ = handler.NewLoginHandler(appDeps.UserRepo)
 		if !s.serverConfig.DisableTrace {
 			middleware.StartBatchedTraceRecorder(
 				repository.NewTraceRepository(db),
