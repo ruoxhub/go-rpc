@@ -27,7 +27,26 @@ func TestCORSMiddlewareDisabledPassesThrough(t *testing.T) {
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
-func TestCORSMiddlewareAllowsEmptyWhitelist(t *testing.T) {
+func TestCORSMiddleware_EmptyWhitelist_DeniesAll(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(CORSMiddleware(true, []string{}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "http://example.com")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
+		"empty whitelist should not set CORS headers")
+}
+
+func TestCORSMiddleware_NilWhitelist_DeniesAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	router := gin.New()
@@ -42,7 +61,26 @@ func TestCORSMiddlewareAllowsEmptyWhitelist(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNoContent, w.Code)
-	assert.Equal(t, "https://example.com", w.Header().Get("Access-Control-Allow-Origin"))
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"),
+		"nil whitelist should not set CORS headers")
+}
+
+func TestCORSMiddleware_StarWildcard_AllowsAll(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(CORSMiddleware(true, []string{"*"}))
+	router.GET("/test", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "http://any-origin.com")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Equal(t, "http://any-origin.com", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "true", w.Header().Get("Access-Control-Allow-Credentials"))
 }
 

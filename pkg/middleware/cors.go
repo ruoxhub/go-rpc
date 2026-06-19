@@ -34,13 +34,13 @@ func CORSMiddleware(enabled bool, whitelist []string) gin.HandlerFunc {
 }
 
 // isOriginAllowed checks if the origin is allowed by the whitelist.
-// An empty whitelist allows all origins.
+// An empty whitelist denies all origins. Use ["*"] to explicitly allow all.
 func isOriginAllowed(origin string, whitelist []string) bool {
 	if len(whitelist) == 0 {
-		return true
+		return false
 	}
 	for _, w := range whitelist {
-		if w == origin {
+		if w == "*" || w == origin {
 			return true
 		}
 	}
