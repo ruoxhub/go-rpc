@@ -36,7 +36,7 @@ const (
 // 从 Authorization header 中提取 Bearer token，查询用户信息并存入 context
 func Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := ExtractAuthTokenFromRequest(c)
+		token := ExtractAuthTokenFromRequest(c, false)
 		if token == "" {
 			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
 			return
@@ -61,7 +61,7 @@ func Authenticate() gin.HandlerFunc {
 // 如果提供了有效的 token 则设置用户信息，否则继续但不设置用户
 func OptionalAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := ExtractAuthTokenFromRequest(c)
+		token := ExtractAuthTokenFromRequest(c, false)
 		if token == "" {
 			c.Next()
 			return
@@ -88,15 +88,17 @@ func ExtractBearerToken(authHeader string) string {
 	return parts[1]
 }
 
-func ExtractAuthTokenFromRequest(c *gin.Context) string {
+func ExtractAuthTokenFromRequest(c *gin.Context, allowQueryToken bool) string {
 	if token := ExtractBearerToken(c.GetHeader("Authorization")); token != "" {
 		return token
 	}
 	if token := c.GetHeader("sekiro-token"); token != "" {
 		return token
 	}
-	if token := c.Query("sekiro_token"); token != "" {
-		return token
+	if allowQueryToken {
+		if token := c.Query("sekiro_token"); token != "" {
+			return token
+		}
 	}
 	if token := c.PostForm("sekiro_token"); token != "" {
 		return token
@@ -268,4 +270,81 @@ func RequireAdmin() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// AuthMiddleware holds dependencies for authentication middleware,
+// enabling proper dependency injection without package-level globals.
+type AuthMiddleware struct {
+	userRepo   TokenUserLookup
+	tokenCache *cache[model.UserInfo]
+	groupCache *cache[model.GroupConfig]
+}
+
+// NewAuthMiddleware creates an AuthMiddleware with explicit dependencies.
+func NewAuthMiddleware(userRepo TokenUserLookup, tokenCache *cache[model.UserInfo], groupCache *cache[model.GroupConfig]) *AuthMiddleware {
+	return &AuthMiddleware{
+		userRepo:   userRepo,
+		tokenCache: tokenCache,
+		groupCache: groupCache,
+	}
+}
+
+// Authenticate returns a gin middleware that requires valid authentication.
+func (am *AuthMiddleware) Authenticate() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := ExtractAuthTokenFromRequest(c, false)
+		if token == "" {
+			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
+			return
+		}
+		user, err := am.findUserByToken(token)
+		if err != nil {
+			abortJSON(c, http.StatusUnauthorized, "无效的认证 token")
+			return
+		}
+		c.Set(ContextUserKey, user)
+		c.Next()
+	}
+}
+
+// OptionalAuth returns a gin middleware that optionally authenticates.
+func (am *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		token := ExtractAuthTokenFromRequest(c, false)
+		if token == "" {
+			c.Next()
+			return
+		}
+		if user, err := am.findUserByToken(token); err == nil {
+			c.Set(ContextUserKey, user)
+		}
+		c.Next()
+	}
+}
+
+func (am *AuthMiddleware) findUserByToken(token string) (*model.UserInfo, error) {
+	if u, ok := am.tokenCache.get(token); ok {
+		if u == nil {
+			return nil, fmt.Errorf("user not found (cached)")
+		}
+		return u, nil
+	}
+	v, err, _ := am.tokenCache.sf.Do(token, func() (interface{}, error) {
+		if u, ok := am.tokenCache.get(token); ok {
+			return u, nil
+		}
+		u, err := am.userRepo.FindByToken(token)
+		if err != nil {
+			return nil, err
+		}
+		am.tokenCache.set(token, u)
+		return u, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return nil, fmt.Errorf("user not found")
+	}
+	return v.(*model.UserInfo), nil
 }

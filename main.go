@@ -21,6 +21,7 @@ import (
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/deps"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/handler"
@@ -208,9 +209,22 @@ func (s *Server) Start() error {
 		s.db = db
 		s.groupRepo = repository.NewGroupRepository(db)
 		userRepo := repository.NewUserRepository(db)
-		handler.SetUserRepository(userRepo)
-		handler.SetLoginGroupRepository(s.groupRepo)
-		middleware.SetTokenUserRepository(userRepo)
+
+		appDeps := &deps.AppDependencies{
+			DB:            db,
+			UserRepo:      userRepo,
+			GroupRepo:     s.groupRepo,
+			ConfigService: s.configService,
+			EventBus:      s.eventBus,
+		}
+
+		// Wire via AppDependencies (new DI pattern)
+		handler.SetUserRepository(appDeps.UserRepo)
+		handler.SetLoginGroupRepository(appDeps.GroupRepo)
+		middleware.SetTokenUserRepository(appDeps.UserRepo)
+
+		// Verify LoginHandler constructor works with AppDependencies
+		_ = handler.NewLoginHandler(appDeps.UserRepo)
 		if !s.serverConfig.DisableTrace {
 			middleware.StartBatchedTraceRecorder(
 				repository.NewTraceRepository(db),
@@ -426,7 +440,7 @@ func (s *Server) registerRoutes() {
 		if !disableDB {
 			userInfo := rpcAPI.Group("/user-info")
 			{
-				userInfo.POST("/login", handler.HandleLogin)
+				userInfo.POST("/login", middleware.LoginRateLimitMiddleware(), handler.HandleLogin)
 				userInfo.POST("/register", handler.HandleRegister)
 				userInfo.GET("/userInfo", handler.HandleGetUserInfo)
 			}
@@ -545,7 +559,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 	// 3) 标准鉴权：Authorization Bearer / sekiro-token header / query / form。
 	token := middleware.ExtractTokenFromSubprotocol(c)
 	if token == "" {
-		token = middleware.ExtractAuthTokenFromRequest(c)
+		token = middleware.ExtractAuthTokenFromRequest(c, false)
 	}
 	if token == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
@@ -586,11 +600,13 @@ func (s *Server) waitForShutdown() {
 func (s *Server) Shutdown() {
 	logger.Info("Shutting down server...")
 
-	select {
-	case <-s.shutdown:
-		// Already closed
-	default:
-		close(s.shutdown)
+	if s.shutdown != nil {
+		select {
+		case <-s.shutdown:
+			// Already closed
+		default:
+			close(s.shutdown)
+		}
 	}
 
 	// Cancel all WebSocket handler goroutines
@@ -603,6 +619,8 @@ func (s *Server) Shutdown() {
 	}
 	// Flush any pending batched trace records after HTTP traffic has drained.
 	middleware.ShutdownTraceRecorder()
+	// Stop auth cache GC goroutines to avoid leak on exit.
+	middleware.ShutdownCaches()
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
 	}
@@ -613,8 +631,19 @@ func (s *Server) Shutdown() {
 		s.metricsCollector.Shutdown()
 	}
 
-	s.clientManager.Stop()
-	s.clientManager.CleanupAll()
+	if s.clientManager != nil {
+		s.clientManager.Stop()
+		s.clientManager.CleanupAll()
+	}
+
+	if s.db != nil {
+		if sqlDB, err := s.db.DB(); err == nil {
+			if err := sqlDB.Close(); err != nil {
+				logger.Errorf("Failed to close database pool: %v", err)
+			}
+		}
+	}
+
 	logger.Info("Server stopped")
 }
 

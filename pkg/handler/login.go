@@ -78,7 +78,7 @@ func HandleLogin(c *gin.Context) {
 
 // HandleGetUserInfo 获取当前用户信息
 func HandleGetUserInfo(c *gin.Context) {
-	token := middleware.ExtractAuthTokenFromRequest(c)
+	token := middleware.ExtractAuthTokenFromRequest(c, false)
 	if token == "" {
 		Unauthorized(c, "请重新登录")
 		return
@@ -350,4 +350,97 @@ func HandleUserAdd(c *gin.Context) {
 	}
 
 	OK(c, user.ID)
+}
+
+// LoginHandler handles login and registration requests with injected dependencies.
+type LoginHandler struct {
+	userRepo repository.UserRepository
+}
+
+// NewLoginHandler creates a LoginHandler with explicit dependency injection.
+func NewLoginHandler(userRepo repository.UserRepository) *LoginHandler {
+	return &LoginHandler{userRepo: userRepo}
+}
+
+// HandleLogin handles login requests.
+func (h *LoginHandler) HandleLogin(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBind(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	if h.userRepo == nil {
+		InternalError(c, "user repository not available")
+		return
+	}
+	user, err := h.userRepo.FindByUserName(req.UserName)
+	if err != nil || user == nil {
+		Unauthorized(c, "用户名或密码错误")
+		return
+	}
+	if !password.CheckPassword(req.Password, user.Password) {
+		Unauthorized(c, "用户名或密码错误")
+		return
+	}
+	h.userRepo.UpdateFields(user.ID, map[string]interface{}{"last_active": time.Now()})
+	updateTime := ""
+	if user.UpdateTime != nil {
+		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
+	}
+	OK(c, gin.H{
+		"id":         user.ID,
+		"userName":   user.UserName,
+		"lastActive": user.LastActive.Format("2006-01-02T15:04:05"),
+		"createTime": user.CreateTime.Format("2006-01-02T15:04:05"),
+		"loginToken": user.LoginToken,
+		"apiToken":   user.ApiToken,
+		"isAdmin":    user.IsAdmin,
+		"updateTime": updateTime,
+		"permission": user.Permission,
+		"quotaQps":   user.QuotaQps,
+	})
+}
+
+// HandleRegister handles user registration requests.
+func (h *LoginHandler) HandleRegister(c *gin.Context) {
+	var req RegisterRequest
+	if err := c.ShouldBind(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	if h.userRepo == nil {
+		InternalError(c, "user repository not available")
+		return
+	}
+	existing, err := h.userRepo.FindByUserName(req.UserName)
+	if err == nil && existing != nil {
+		BadRequest(c, "用户名已存在")
+		return
+	}
+	now := time.Now()
+	hashedPassword, err := password.HashPassword(req.Password)
+	if err != nil {
+		Fail(c, errorcode.EncryptFailed, "密码加密失败")
+		return
+	}
+	var defaultQps float64 = 100
+	user := model.UserInfo{
+		UserName:   req.UserName,
+		Password:   hashedPassword,
+		QuotaQps:   defaultQps,
+		IsAdmin:    false,
+		ApiToken:   uuid.New().String(),
+		LoginToken: uuid.New().String(),
+		CreateTime: now,
+		LastActive: now,
+		UpdateTime: &now,
+	}
+	if err := h.userRepo.Create(&user); err != nil {
+		InternalError(c, err.Error())
+		return
+	}
+	OK(c, gin.H{
+		"id":       user.ID,
+		"userName": user.UserName,
+	})
 }

@@ -2,8 +2,11 @@ package handler
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func startTestHTTPServer(t *testing.T, server *HTTPServer) {
@@ -114,4 +117,31 @@ func TestSameOriginOrNoOrigin(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckOrigin_SameOrigin(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com:5612"
+	req.Header.Set("Origin", "http://example.com:5612")
+	assert.True(t, sameOriginOrNoOrigin(req))
+}
+
+func TestCheckOrigin_CrossOrigin(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com:5612"
+	req.Header.Set("Origin", "http://evil.com")
+	assert.False(t, sameOriginOrNoOrigin(req))
+}
+
+func TestCheckOrigin_NoOrigin(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com:5612"
+	assert.True(t, sameOriginOrNoOrigin(req))
+}
+
+func TestCheckOrigin_SameHostDifferentPort(t *testing.T) {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "example.com:5612"
+	req.Header.Set("Origin", "http://example.com:3000")
+	assert.True(t, sameOriginOrNoOrigin(req), "same host different port should be allowed")
 }

@@ -2,7 +2,6 @@ package database
 
 import (
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
@@ -12,6 +11,8 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
+// Deprecated: DB is a package-level global. New code should receive *gorm.DB
+// via constructor injection through deps.AppDependencies.
 var DB *gorm.DB
 
 // Config 数据库配置
@@ -112,7 +113,7 @@ func ResetMetricTables() error {
 		if err := DB.Migrator().DropTable(t); err != nil {
 			return fmt.Errorf("failed to drop table %s: %w", t, err)
 		}
-		log.Printf("Dropped metric table: %s", t)
+		logger.Infof("Dropped metric table: %s", t)
 	}
 	return nil
 }
@@ -124,7 +125,7 @@ func AutoMigrate() error {
 	}
 
 	if !DB.Migrator().HasTable(&model.UserInfo{}) {
-		log.Println("WARNING: Database schema is not initialized. Please run migration.sql first!")
+		logger.Warnf("Database schema is not initialized. Please run migration.sql first!")
 		return fmt.Errorf("database schema not ready: user_info table not found")
 	}
 
@@ -143,6 +144,6 @@ func AutoMigrate() error {
 		return fmt.Errorf("failed to auto-migrate metric tables: %w", err)
 	}
 
-	log.Println("Database schema validation passed")
+	logger.Info("Database schema validation passed")
 	return nil
 }

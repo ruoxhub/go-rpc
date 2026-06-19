@@ -1,11 +1,14 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestExtractAuthTokenFromRequest(t *testing.T) {
@@ -48,7 +51,7 @@ func TestExtractAuthTokenFromRequest(t *testing.T) {
 			tt.setup(req)
 			c.Request = req
 
-			if got := ExtractAuthTokenFromRequest(c); got != tt.want {
+			if got := ExtractAuthTokenFromRequest(c, true); got != tt.want {
 				t.Fatalf("ExtractAuthTokenFromRequest() = %q, want %q", got, tt.want)
 			}
 		})
@@ -64,7 +67,7 @@ func TestExtractAuthTokenFromRequestAuthorizationTakesPriority(t *testing.T) {
 	req.Header.Set("sekiro-token", "header-token")
 	c.Request = req
 
-	if got := ExtractAuthTokenFromRequest(c); got != "auth-token" {
+	if got := ExtractAuthTokenFromRequest(c, true); got != "auth-token" {
 		t.Fatalf("ExtractAuthTokenFromRequest() = %q, want %q", got, "auth-token")
 	}
 }
@@ -126,6 +129,43 @@ func TestValidateIPList(t *testing.T) {
 	}
 }
 
+func TestExtractAuthTokenFromQueryDisabled(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=mytoken", nil)
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, false)
+	if token != "" {
+		t.Fatalf("query token should be ignored when disabled, got %q", token)
+	}
+}
+
+func TestExtractAuthTokenFromQueryEnabled(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=mytoken", nil)
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, true)
+	if token != "mytoken" {
+		t.Fatalf("expected %q, got %q", "mytoken", token)
+	}
+}
+
+func TestExtractAuthTokenHeaderTakesPrecedenceOverQuery(t *testing.T) {
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest("GET", "/test?sekiro_token=querytoken", nil)
+	req.Header.Set("Authorization", "Bearer headertoken")
+	c.Request = req
+
+	token := ExtractAuthTokenFromRequest(c, true)
+	if token != "headertoken" {
+		t.Fatalf("header token should take precedence over query, got %q", token)
+	}
+}
+
 func TestExtractTokenFromSubprotocol(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -154,4 +194,129 @@ func TestExtractTokenFromSubprotocol(t *testing.T) {
 			}
 		})
 	}
+}
+
+type mockTokenRepo struct {
+	user *model.UserInfo
+	err  error
+}
+
+func (m *mockTokenRepo) FindByToken(token string) (*model.UserInfo, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	if m.user != nil && m.user.ApiToken == token {
+		return m.user, nil
+	}
+	return nil, fmt.Errorf("user not found")
+}
+
+func TestAuthMiddleware_StructAuthenticate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &mockTokenRepo{user: &model.UserInfo{ID: 1, UserName: "admin", ApiToken: "struct-token"}}
+	tc := newCache[model.UserInfo](defaultTokenPositiveTTL, defaultTokenNegativeTTL)
+	defer tc.Stop()
+	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
+	defer gc.Stop()
+	am := NewAuthMiddleware(repo, tc, gc)
+
+	router := gin.New()
+	router.Use(am.Authenticate())
+	router.GET("/test", func(c *gin.Context) {
+		user, exists := GetCurrentUser(c)
+		assert.True(t, exists)
+		assert.Equal(t, "admin", user.UserName)
+		c.String(http.StatusOK, "OK")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer struct-token")
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAuthMiddleware_StructAuthenticateNoToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &mockTokenRepo{user: &model.UserInfo{ID: 1, UserName: "admin", ApiToken: "struct-token"}}
+	tc := newCache[model.UserInfo](defaultTokenPositiveTTL, defaultTokenNegativeTTL)
+	defer tc.Stop()
+	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
+	defer gc.Stop()
+	am := NewAuthMiddleware(repo, tc, gc)
+
+	router := gin.New()
+	router.Use(am.Authenticate())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "OK")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthMiddleware_StructAuthenticateInvalidToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &mockTokenRepo{user: &model.UserInfo{ID: 1, UserName: "admin", ApiToken: "struct-token"}}
+	tc := newCache[model.UserInfo](defaultTokenPositiveTTL, defaultTokenNegativeTTL)
+	defer tc.Stop()
+	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
+	defer gc.Stop()
+	am := NewAuthMiddleware(repo, tc, gc)
+
+	router := gin.New()
+	router.Use(am.Authenticate())
+	router.GET("/test", func(c *gin.Context) {
+		c.String(http.StatusOK, "OK")
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestAuthMiddleware_StructOptionalAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &mockTokenRepo{user: &model.UserInfo{ID: 1, UserName: "admin", ApiToken: "opt-token"}}
+	tc := newCache[model.UserInfo](defaultTokenPositiveTTL, defaultTokenNegativeTTL)
+	defer tc.Stop()
+	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
+	defer gc.Stop()
+	am := NewAuthMiddleware(repo, tc, gc)
+
+	t.Run("with valid token", func(t *testing.T) {
+		router := gin.New()
+		router.Use(am.OptionalAuth())
+		router.GET("/test", func(c *gin.Context) {
+			user, exists := GetCurrentUser(c)
+			assert.True(t, exists)
+			assert.Equal(t, "admin", user.UserName)
+			c.String(http.StatusOK, "OK")
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Header.Set("Authorization", "Bearer opt-token")
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+
+	t.Run("without token", func(t *testing.T) {
+		router := gin.New()
+		router.Use(am.OptionalAuth())
+		router.GET("/test", func(c *gin.Context) {
+			_, exists := GetCurrentUser(c)
+			assert.False(t, exists)
+			c.String(http.StatusOK, "OK")
+		})
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "/test", nil)
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
 }

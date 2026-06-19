@@ -119,6 +119,7 @@ web/           → React SPA frontend (embedded via //go:embed dist)
 - **Alert evaluator runs on a 1-minute interval**: Rules are loaded from DB at start and refreshed periodically. SMTP config comes from `config.yaml`.
 - **QPS rate limiting**: `pkg/middleware/ratelimit.go` uses `flow.RateLimiter` with per-user and per-IP keys. Anonymous users get lower limits configured via `sys_config` table.
 - **Response type split**: `pkg/handler/response.go` defines three response types — `ApiResponse` (admin `/api/*`), `RpcResponse` (external `/rpc-api/*` and `/business/*`), `RpcExtraResponse` (with routing metadata). Frontend `Login.jsx` depends on `status === 0` for success.
+- **`database.DB` is deprecated**: New code should receive `*gorm.DB` via constructor injection through `deps.AppDependencies`. Direct references to `database.DB` in new code will be flagged in review.
 
 ## Testing Notes
 
@@ -132,7 +133,7 @@ web/           → React SPA frontend (embedded via //go:embed dist)
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **go-rpc** (8280 symbols, 20839 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **go-rpc** (8522 symbols, 21503 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

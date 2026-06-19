@@ -25,6 +25,7 @@ type limiterEntry struct {
 type RateLimiter struct {
 	mu       sync.RWMutex
 	limiters map[string]*limiterEntry
+	stopOnce sync.Once
 	stopChan chan struct{}
 }
 
@@ -37,13 +38,10 @@ func NewRateLimiter() *RateLimiter {
 	return rl
 }
 
-// Stop terminates the background cleanup goroutine. Safe to call multiple times.
+// Stop terminates the background cleanup goroutine. Safe to call multiple times
+// and from concurrent goroutines — guaranteed to close stopChan exactly once.
 func (rl *RateLimiter) Stop() {
-	select {
-	case <-rl.stopChan:
-	default:
-		close(rl.stopChan)
-	}
+	rl.stopOnce.Do(func() { close(rl.stopChan) })
 }
 
 func (rl *RateLimiter) startCleanupLoop(interval, ttl time.Duration) {
