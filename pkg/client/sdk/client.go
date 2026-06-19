@@ -99,7 +99,7 @@ func (c *RpcClient) readLoop() {
 			return
 		}
 
-		go c.handlePacket(packet)
+		c.handlePacket(packet)
 	}
 }
 
