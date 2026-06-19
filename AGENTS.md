@@ -119,6 +119,7 @@ web/           → React SPA frontend (embedded via //go:embed dist)
 - **Alert evaluator runs on a 1-minute interval**: Rules are loaded from DB at start and refreshed periodically. SMTP config comes from `config.yaml`.
 - **QPS rate limiting**: `pkg/middleware/ratelimit.go` uses `flow.RateLimiter` with per-user and per-IP keys. Anonymous users get lower limits configured via `sys_config` table.
 - **Response type split**: `pkg/handler/response.go` defines three response types — `ApiResponse` (admin `/api/*`), `RpcResponse` (external `/rpc-api/*` and `/business/*`), `RpcExtraResponse` (with routing metadata). Frontend `Login.jsx` depends on `status === 0` for success.
+- **`database.DB` is deprecated**: New code should receive `*gorm.DB` via constructor injection through `deps.AppDependencies`. Direct references to `database.DB` in new code will be flagged in review.
 
 ## Testing Notes
 

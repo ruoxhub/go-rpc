@@ -11,6 +11,8 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
+// Deprecated: DB is a package-level global. New code should receive *gorm.DB
+// via constructor injection through deps.AppDependencies.
 var DB *gorm.DB
 
 // Config 数据库配置
