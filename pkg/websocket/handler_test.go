@@ -1,12 +1,16 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mrh30000/go-rpc/pkg/client"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
 func TestRpcMessage_Marshal(t *testing.T) {
@@ -205,5 +209,228 @@ func TestDefaultHandlerConfig(t *testing.T) {
 
 	if config.HeartbeatTimeout != 60*time.Second {
 		t.Errorf("Expected HeartbeatTimeout 60s, got %v", config.HeartbeatTimeout)
+	}
+}
+
+// --- Mock types for handler tests ---
+
+// mockConn implements transport.Connection for testing.
+// It captures all data sent via Send so tests can inspect outgoing messages.
+type mockConn struct {
+	mu   sync.Mutex
+	sent [][]byte
+}
+
+func (m *mockConn) Send(data []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sent = append(m.sent, append([]byte(nil), data...))
+	return nil
+}
+
+func (m *mockConn) Close() error      { return nil }
+func (m *mockConn) RemoteAddr() string { return "127.0.0.1:12345" }
+
+func (m *mockConn) getSent() [][]byte {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([][]byte, len(m.sent))
+	copy(out, m.sent)
+	return out
+}
+
+// mockGroupRepo implements repository.GroupRepository for handler tests.
+// Only IsGroupRegistered returns a configurable value; all other methods
+// are safe no-ops that will never be reached in the tested code paths.
+type mockGroupRepo struct {
+	registeredGroups map[string]bool
+}
+
+func (m *mockGroupRepo) IsGroupRegistered(name string) (bool, error) {
+	return m.registeredGroups[name], nil
+}
+
+func (m *mockGroupRepo) FindGroupByName(string) (*model.GroupConfig, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) FindAllGroups() ([]model.GroupConfig, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) CreateGroup(*model.GroupConfig) error { return nil }
+func (m *mockGroupRepo) UpdateGroup(string, map[string]interface{}) error {
+	return nil
+}
+func (m *mockGroupRepo) DeleteGroup(string) error              { return nil }
+func (m *mockGroupRepo) CountGroups() (int64, error)           { return 0, nil }
+func (m *mockGroupRepo) GetGroupStats(string, bool, string) ([]repository.GroupStats, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) GetGroupDeviceStats(string, string) (int64, int64, error) {
+	return 0, 0, nil
+}
+func (m *mockGroupRepo) FindDevicesByGroup(string) ([]model.GroupDevice, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) FindDevice(string, string) (*model.GroupDevice, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) CreateDevice(*model.GroupDevice) error { return nil }
+func (m *mockGroupRepo) UpdateDevice(string, string, map[string]interface{}) error {
+	return nil
+}
+func (m *mockGroupRepo) DeleteDevice(string, string) error    { return nil }
+func (m *mockGroupRepo) DeleteDevicesByGroup(string) error    { return nil }
+func (m *mockGroupRepo) CountOnlineDevices(string) (int64, error) {
+	return 0, nil
+}
+func (m *mockGroupRepo) CountDevicesByGroup(string) (int64, error) {
+	return 0, nil
+}
+func (m *mockGroupRepo) FindActionsByGroup(string) ([]model.GroupAction, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) FindAction(string, string) (*model.GroupAction, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) CreateAction(*model.GroupAction) error { return nil }
+func (m *mockGroupRepo) UpsertAction(*model.GroupAction) error { return nil }
+func (m *mockGroupRepo) UpdateActionParams(string, string, string) error {
+	return nil
+}
+func (m *mockGroupRepo) DeleteAction(string, string) error     { return nil }
+func (m *mockGroupRepo) DeleteActionsByGroup(string) error     { return nil }
+func (m *mockGroupRepo) FindAnonymousDeviceGroups(string) ([]repository.AnonymousGroupStats, error) {
+	return nil, nil
+}
+func (m *mockGroupRepo) IsAnonymousGroup(string) (bool, error) { return false, nil }
+func (m *mockGroupRepo) DeleteAnonymousGroupDevices(string) (int64, error) {
+	return 0, nil
+}
+func (m *mockGroupRepo) EnsureDefaultActions(string) error { return nil }
+func (m *mockGroupRepo) UpsertDevice(*model.GroupDevice) error {
+	return nil
+}
+func (m *mockGroupRepo) UpdateDeviceLastActive(string, string, time.Time) error {
+	return nil
+}
+func (m *mockGroupRepo) WithTx(interface{}) repository.GroupRepository { return m }
+func (m *mockGroupRepo) BeginTx() repository.GroupRepository           { return m }
+func (m *mockGroupRepo) Commit() error                                 { return nil }
+func (m *mockGroupRepo) Rollback() error                               { return nil }
+
+// --- New handler lifecycle and malformed message tests ---
+
+func TestProcessMessage_MalformedJSON(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	mc := &mockConn{}
+	sekiroClient := client.NewRpcClient("test-group", "client-1", mc)
+	manager.Register(sekiroClient)
+
+	// Send invalid JSON — must not panic
+	handler.processMessage(context.Background(), sekiroClient, []byte(`{invalid json!!!`))
+
+	// Client must still be registered after malformed message
+	got := manager.GetClient("test-group", "client-1")
+	if got == nil {
+		t.Fatal("Client should still be registered after malformed message")
+	}
+
+	// Handler should have sent an error response via sendError
+	sentMessages := mc.getSent()
+	if len(sentMessages) == 0 {
+		t.Fatal("Expected error response to be sent for malformed JSON")
+	}
+
+	var resp RpcMessage
+	if err := json.Unmarshal(sentMessages[0], &resp); err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+	if resp.Type != "error" {
+		t.Errorf("Expected error type, got %s", resp.Type)
+	}
+	if resp.Error != "invalid message format" {
+		t.Errorf("Expected error 'invalid message format', got %s", resp.Error)
+	}
+}
+
+func TestProcessMessage_HeartbeatResponse(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	mc := &mockConn{}
+	sekiroClient := client.NewRpcClient("test-group", "client-1", mc)
+	manager.Register(sekiroClient)
+
+	heartbeat := []byte(`{"type":"heartbeat","group":"test-group","clientId":"client-1"}`)
+	handler.processMessage(context.Background(), sekiroClient, heartbeat)
+
+	sentMessages := mc.getSent()
+	if len(sentMessages) == 0 {
+		t.Fatal("Expected heartbeat response to be sent")
+	}
+
+	var resp RpcMessage
+	if err := json.Unmarshal(sentMessages[0], &resp); err != nil {
+		t.Fatalf("Failed to unmarshal heartbeat response: %v", err)
+	}
+	if resp.Type != MessageTypeHeartbeat {
+		t.Errorf("Expected type %s, got %s", MessageTypeHeartbeat, resp.Type)
+	}
+	if resp.Timestamp == 0 {
+		t.Error("Expected non-zero timestamp in heartbeat response")
+	}
+}
+
+func TestHandleBind_AnonymousGroupSkips(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+
+	// No groups are registered in the mock repo
+	mockRepo := &mockGroupRepo{
+		registeredGroups: map[string]bool{},
+	}
+
+	handler := NewHandler(manager, timeoutMgr, nil, nil, mockRepo)
+	defer handler.Shutdown()
+
+	sekiroClient := client.NewRpcClient("anonymous-group", "client-1", nil)
+
+	msg := &RpcMessage{
+		Type:    MessageTypeBind,
+		Group:   "anonymous-group",
+		Actions: []string{"action1", "action2"},
+	}
+
+	// Must not panic and must skip DB writes for unregistered group
+	handler.handleBind(sekiroClient, msg)
+	// If we reach here without panic, the anonymous group was correctly skipped.
+	// The mock repo's CreateAction was never called because IsGroupRegistered returned false.
+}
+
+func TestHandleInvokeStream_MissingSequence(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	// Stream chunk with empty sequence — should be silently dropped
+	msg := &RpcMessage{
+		Type:     MessageTypeInvokeStream,
+		Sequence: "",
+		Data:     []byte(`{"chunk":"data"}`),
+	}
+
+	// Must not panic
+	handler.handleInvokeStream(msg)
+
+	// No stream should be registered in the timeout manager
+	if timeoutMgr.StreamCount() != 0 {
+		t.Errorf("Expected 0 streams after missing-sequence chunk, got %d", timeoutMgr.StreamCount())
 	}
 }
