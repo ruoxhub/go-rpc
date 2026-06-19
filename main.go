@@ -426,7 +426,7 @@ func (s *Server) registerRoutes() {
 		if !disableDB {
 			userInfo := rpcAPI.Group("/user-info")
 			{
-				userInfo.POST("/login", handler.HandleLogin)
+				userInfo.POST("/login", middleware.LoginRateLimitMiddleware(), handler.HandleLogin)
 				userInfo.POST("/register", handler.HandleRegister)
 				userInfo.GET("/userInfo", handler.HandleGetUserInfo)
 			}
