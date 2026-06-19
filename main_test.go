@@ -72,3 +72,8 @@ func TestNewHTTPConfigPreservesGlobalWriteTimeout(t *testing.T) {
 		t.Fatalf("ReadTimeout = %v, want 30s", cfg.ReadTimeout)
 	}
 }
+
+func TestShutdown_NilDatabaseNoPanic(t *testing.T) {
+	s := &Server{}
+	s.Shutdown()
+}

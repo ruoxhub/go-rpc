@@ -586,11 +586,13 @@ func (s *Server) waitForShutdown() {
 func (s *Server) Shutdown() {
 	logger.Info("Shutting down server...")
 
-	select {
-	case <-s.shutdown:
-		// Already closed
-	default:
-		close(s.shutdown)
+	if s.shutdown != nil {
+		select {
+		case <-s.shutdown:
+			// Already closed
+		default:
+			close(s.shutdown)
+		}
 	}
 
 	// Cancel all WebSocket handler goroutines
@@ -603,6 +605,8 @@ func (s *Server) Shutdown() {
 	}
 	// Flush any pending batched trace records after HTTP traffic has drained.
 	middleware.ShutdownTraceRecorder()
+	// Stop auth cache GC goroutines to avoid leak on exit.
+	middleware.ShutdownCaches()
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
 	}
@@ -613,8 +617,19 @@ func (s *Server) Shutdown() {
 		s.metricsCollector.Shutdown()
 	}
 
-	s.clientManager.Stop()
-	s.clientManager.CleanupAll()
+	if s.clientManager != nil {
+		s.clientManager.Stop()
+		s.clientManager.CleanupAll()
+	}
+
+	if s.db != nil {
+		if sqlDB, err := s.db.DB(); err == nil {
+			if err := sqlDB.Close(); err != nil {
+				logger.Errorf("Failed to close database pool: %v", err)
+			}
+		}
+	}
+
 	logger.Info("Server stopped")
 }
 
