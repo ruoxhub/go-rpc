@@ -61,7 +61,9 @@ func (h *WebSocketHandler) upgradeWebSocket(w http.ResponseWriter, r *http.Reque
 	upgrader := &websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
-		CheckOrigin:     sameOriginOrNoOrigin,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
 	}
 
 	// WebSocket 升级

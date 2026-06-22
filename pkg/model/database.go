@@ -74,7 +74,6 @@ type GroupConfig struct {
 	UserName          string    `json:"user_name" gorm:"size:64"`
 	QuotaQpsGroup     float64   `json:"quota_qps_group" gorm:"not null;default:100"`
 	QuotaQpsPerDevice float64   `json:"quota_qps_per_device" gorm:"not null;default:-1"`
-	AllowedIPs        string    `json:"allowed_ips" gorm:"column:allowed_ips;type:text"`
 	CreateDate        time.Time `json:"create_date" gorm:"not null;default:CURRENT_TIMESTAMP"`
 }
 

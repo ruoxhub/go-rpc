@@ -29,7 +29,6 @@ type GroupStats struct {
 	UserName          string
 	QuotaQpsGroup     float64
 	QuotaQpsPerDevice float64
-	AllowedIPs        string
 	CreateDate        string
 	AvailableClients  int64
 	DisabledClients   int64

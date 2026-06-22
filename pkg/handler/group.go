@@ -26,7 +26,6 @@ type GroupInfoVO struct {
 	UserName          string  `json:"userName"`
 	QuotaQpsGroup     float64 `json:"quotaQpsGroup"`
 	QuotaQpsPerDevice float64 `json:"quotaQpsPerDevice"`
-	AllowedIPs        string  `json:"allowedIps"`
 	CreateTime        string  `json:"createTime"`
 	AvailableClients  int64   `json:"availableClients"`
 	DisabledClients   int64   `json:"disabledClients"`
@@ -58,7 +57,6 @@ func (h *GroupHandler) List(c *gin.Context) {
 			UserName:            s.UserName,
 			QuotaQpsGroup:       s.QuotaQpsGroup,
 			QuotaQpsPerDevice:   s.QuotaQpsPerDevice,
-			AllowedIPs:          s.AllowedIPs,
 			CreateTime:          s.CreateDate,
 			AvailableClients:    s.AvailableClients,
 			DisabledClients:     s.DisabledClients,
@@ -75,7 +73,6 @@ type CreateGroupRequest struct {
 	GroupName         string  `json:"groupName" binding:"required"`
 	QuotaQpsGroup     float64 `json:"quotaQpsGroup"`
 	QuotaQpsPerDevice float64 `json:"quotaQpsPerDevice"`
-	AllowedIPs        string  `json:"allowedIps"`
 }
 
 // Create 创建分组
@@ -102,19 +99,11 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		}
 	}
 
-	if req.AllowedIPs != "" {
-		if err := middleware.ValidateIPList(req.AllowedIPs); err != nil {
-			BadRequest(c, "allowedIps: "+err.Error())
-			return
-		}
-	}
-
 	group := model.GroupConfig{
 		GroupName:         req.GroupName,
 		UserName:          user.UserName,
 		QuotaQpsGroup:     req.QuotaQpsGroup,
 		QuotaQpsPerDevice: req.QuotaQpsPerDevice,
-		AllowedIPs:        req.AllowedIPs,
 		CreateDate:        time.Now(),
 	}
 
@@ -208,7 +197,6 @@ func (h *GroupHandler) GetDetail(c *gin.Context) {
 		"createTime":        group.CreateDate.Format("2006-01-02 15:04:05"),
 		"quotaQpsGroup":     group.QuotaQpsGroup,
 		"quotaQpsPerDevice": group.QuotaQpsPerDevice,
-		"allowedIps":        group.AllowedIPs,
 		"availableClients":  available,
 		"disabledClients":   disabled,
 	})
@@ -219,7 +207,6 @@ type UpdateGroupQpsRequest struct {
 	GroupName         string  `json:"groupName" binding:"required"`
 	QuotaQpsGroup     float64 `json:"quotaQpsGroup"`
 	QuotaQpsPerDevice float64 `json:"quotaQpsPerDevice"`
-	AllowedIPs        *string `json:"allowedIps"`
 }
 
 // UpdateQps 更新分组 QPS
@@ -239,15 +226,6 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 	}
 	if req.QuotaQpsPerDevice > 0 {
 		updates["quota_qps_per_device"] = req.QuotaQpsPerDevice
-	}
-	if req.AllowedIPs != nil {
-		if *req.AllowedIPs != "" {
-			if err := middleware.ValidateIPList(*req.AllowedIPs); err != nil {
-				BadRequest(c, "allowedIps: "+err.Error())
-				return
-			}
-		}
-		updates["allowed_ips"] = *req.AllowedIPs
 	}
 
 	if err := h.groupRepo.UpdateGroup(req.GroupName, updates); err != nil {

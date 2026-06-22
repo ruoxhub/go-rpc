@@ -34,6 +34,9 @@ const (
 	ConfigKeyUseCustomSSL    = "sekiro.useCustomSSLCertificate"
 	ConfigKeyAutoGenSSLHosts = "sekiro.autoGenSSLCertificateHostList"
 	ConfigKeyOpen443Website  = "sekiro.open443Website"
+
+	// 全局 IP 白名单
+	ConfigKeyAllowedIPs = "sekiro.allowedIPs"
 )
 
 // Service 配置服务接口

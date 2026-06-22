@@ -147,6 +147,7 @@ func DefaultServerConfig() *ServerConfig {
 		},
 		TraceSampleRate: 0.1,
 		TraceBatchSize:  100,
+		CorsOrigins:     []string{"*"},
 	}
 }
 

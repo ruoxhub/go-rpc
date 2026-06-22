@@ -534,6 +534,15 @@ func (s *Server) handleRegister(c *gin.Context) {
 }
 
 func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool {
+	// 1) 全局 IP 白名单优先：命中即放行，跳过一切 DB 查询与 token/子协议校验。
+	if s.configService != nil {
+		if globalIPs := s.configService.GetConfig(pkgconfig.ConfigKeyAllowedIPs); globalIPs != "" {
+			if middleware.IPInList(c.ClientIP(), globalIPs) {
+				return true
+			}
+		}
+	}
+
 	if s.groupRepo == nil {
 		return true
 	}
@@ -547,11 +556,6 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 	}
 	if group == nil {
 		// 未找到分组则视为公开分组，允许任意注册
-		return true
-	}
-
-	// 1) IP 白名单优先：命中即放行，跳过一切 token/子协议校验。
-	if middleware.IPInList(c.ClientIP(), group.AllowedIPs) {
 		return true
 	}
 

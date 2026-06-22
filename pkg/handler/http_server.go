@@ -55,10 +55,7 @@ func NewHTTPServer(cfg *HTTPConfig) *HTTPServer {
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				if cfg.LocalDebug {
-					return true
-				}
-				return sameOriginOrNoOrigin(r)
+				return true
 			},
 		},
 	}

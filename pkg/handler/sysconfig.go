@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"gorm.io/gorm"
 )
 
@@ -63,6 +64,7 @@ func (h *SysConfigHandler) List(c *gin.Context) {
 		"sekiro.autoGenSSLCertificateHostList": "为配置的 host 自动生成 ssl 证书",
 		"sekiro.open443Website":                "开启 443 服务端口",
 		"sekiro.defendIdleInvoke":              "空转调用保护",
+		"sekiro.allowedIPs":                    "全局 IP 白名单",
 	}
 
 	var vos []ConfigVO
@@ -93,6 +95,13 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		BadRequest(c, err.Error())
 		return
+	}
+
+	if req.Key == pkgconfig.ConfigKeyAllowedIPs && req.Value != "" {
+		if err := middleware.ValidateIPList(req.Value); err != nil {
+			BadRequest(c, "allowedIPs: "+err.Error())
+			return
+		}
 	}
 
 	if err := h.sysConfigRepo.Upsert(req.Key, req.Value); err != nil {

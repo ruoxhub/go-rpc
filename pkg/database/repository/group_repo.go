@@ -82,7 +82,6 @@ func (r *groupRepository) GetGroupStats(userName string, isAdmin bool, activeThr
 		UserName          string
 		QuotaQpsGroup     float64
 		QuotaQpsPerDevice float64
-		AllowedIPs        string
 		CreateDate        time.Time
 		AvailableClients  int64
 		DisabledClients   int64
@@ -91,13 +90,13 @@ func (r *groupRepository) GetGroupStats(userName string, isAdmin bool, activeThr
 	query := db.Table("group_config gc").
 		Select(`
 			gc.id, gc.group_name, gc.user_name,
-			gc.quota_qps_group, gc.quota_qps_per_device, gc.allowed_ips, gc.create_date,
+			gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date,
 			COUNT(gd.id) as total_clients,
 			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as available_clients,
 			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled_clients
 		`, activeThreshold, activeThreshold).
 		Joins("LEFT JOIN group_device gd ON gc.group_name = gd.group_name").
-		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.allowed_ips, gc.create_date").
+		Group("gc.id, gc.group_name, gc.user_name, gc.quota_qps_group, gc.quota_qps_per_device, gc.create_date").
 		Order("gc.create_date DESC")
 
 	if !isAdmin {
@@ -117,7 +116,6 @@ func (r *groupRepository) GetGroupStats(userName string, isAdmin bool, activeThr
 			UserName:          s.UserName,
 			QuotaQpsGroup:     s.QuotaQpsGroup,
 			QuotaQpsPerDevice: s.QuotaQpsPerDevice,
-			AllowedIPs:        s.AllowedIPs,
 			CreateDate:        s.CreateDate.Format("2006-01-02 15:04:05"),
 			AvailableClients:  s.AvailableClients,
 			DisabledClients:   s.DisabledClients,

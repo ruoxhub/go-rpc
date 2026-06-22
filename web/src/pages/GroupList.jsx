@@ -1,10 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Table, Input, Button, Space, Popconfirm, message, Tag, Modal, Form, InputNumber } from 'antd'
-import { SearchOutlined, PlusOutlined, EyeOutlined, DeleteOutlined, LockOutlined } from '@ant-design/icons'
+import { SearchOutlined, PlusOutlined, EyeOutlined, DeleteOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { groupApi } from '../utils/api'
-
-const { TextArea } = Input
 
 function GroupList() {
   const navigate = useNavigate()
@@ -51,28 +49,6 @@ function GroupList() {
       title: '设备 qps 限制',
       dataIndex: 'quotaQpsPerDevice',
       key: 'quotaQpsPerDevice'
-    },
-    {
-      title: 'IP 白名单',
-      dataIndex: 'allowedIps',
-      key: 'allowedIps',
-      render: (raw) => {
-        const list = (raw || '').split(',').map((s) => s.trim()).filter(Boolean)
-        if (list.length === 0) return <Tag>公开</Tag>
-        if (list.length <= 2) {
-          return (
-            <Space wrap size={[4, 4]}>
-              {list.map((ip) => <Tag key={ip} color="blue">{ip}</Tag>)}
-            </Space>
-          )
-        }
-        return (
-          <Space wrap size={[4, 4]}>
-            <Tag color="blue">{list[0]}</Tag>
-            <Tag color="blue">+{list.length - 1}</Tag>
-          </Space>
-        )
-      }
     },
     {
       title: '创建时间',
@@ -144,8 +120,7 @@ function GroupList() {
       await groupApi.create({
         groupName: values.groupName,
         quotaQpsGroup: values.quotaQpsGroup || 100,
-        quotaQpsPerDevice: values.quotaQpsPerDevice || -1,
-        allowedIps: (values.allowedIps || '').trim()
+        quotaQpsPerDevice: values.quotaQpsPerDevice || -1
       })
       message.success('分组创建成功')
       toggleCreateModal(false)
@@ -224,28 +199,6 @@ function GroupList() {
             tooltip="设置为 -1 表示不限制"
           >
             <InputNumber min={-1} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item
-            name="allowedIps"
-            label={<Space size={4}><LockOutlined />IP 白名单（可选）</Space>}
-            extra="留空表示不启用；精确 IP 或 CIDR，多项逗号分隔"
-            rules={[
-              {
-                validator: (_, value) => {
-                  const entries = (value || '').split(',').map((s) => s.trim()).filter(Boolean)
-                  const ipRe = /^[\da-fA-F.:]+$/
-                  const cidrRe = /^[\da-fA-F.:]+\/\d+$/
-                  for (const e of entries) {
-                    if (!ipRe.test(e) && !cidrRe.test(e)) {
-                      return Promise.reject(new Error(`非法条目：${e}`))
-                    }
-                  }
-                  return Promise.resolve()
-                }
-              }
-            ]}
-          >
-            <TextArea rows={2} placeholder="例如：10.0.0.0/8, 203.0.113.5" />
           </Form.Item>
         </Form>
       </Modal>
