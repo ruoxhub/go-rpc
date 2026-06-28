@@ -43,7 +43,9 @@ func (eb *EventBus) Unsubscribe(eventType string, handler EventHandler) {
 	}
 }
 
-// Publish 向所有注册的处理器发布事件（异步，不阻塞调用方）
+// Publish 向所有注册的处理器发布事件。
+// 当前为同步派发：在调用方 goroutine 内顺序调用所有 handler，
+// 慢订阅者会阻塞发布者。如需异步语义，由订阅方自行启动 goroutine。
 func (eb *EventBus) Publish(eventType string, event interface{}) {
 	eb.mu.RLock()
 	handlers := make([]EventHandler, len(eb.handlers[eventType]))
