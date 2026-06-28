@@ -16,7 +16,7 @@ type SysConfigHandler struct {
 	serverNodeRepo repository.ServerNodeRepository
 	sysLogRepo     repository.SysLogRepository
 	configService  pkgconfig.Service
-	db             *gorm.DB
+	db             *gorm.DB // retained for GetAppLogs raw SQL
 }
 
 // NewSysConfigHandler 创建系统配置处理器
@@ -110,7 +110,7 @@ func (h *SysConfigHandler) Update(c *gin.Context) {
 	}
 
 	if h.configService != nil {
-		if err := h.configService.Refresh(h.db); err != nil {
+		if err := h.configService.Refresh(); err != nil {
 			InternalError(c, "配置已保存，但刷新失败："+err.Error())
 			return
 		}

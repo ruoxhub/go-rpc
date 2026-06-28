@@ -7,9 +7,9 @@ import (
 	"sync"
 
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 // 配置键常量定义
@@ -51,8 +51,10 @@ type Service interface {
 	GetConfigInt(key string, defaultVal int) int
 	// GetAllConfigs 获取所有配置
 	GetAllConfigs() map[string]string
-	// Refresh 从数据库刷新配置。db 为 nil 时跳过刷新并返回 nil。
-	Refresh(db *gorm.DB) error
+	// SetDependencies 注入 repository 和 eventBus（DB 就绪后调用）
+	SetDependencies(repo repository.SysConfigRepository, eb *eventbus.EventBus)
+	// Refresh 从数据库刷新配置。repo 为 nil 时跳过刷新并返回 nil。
+	Refresh() error
 }
 
 // service 配置服务实现
@@ -60,6 +62,8 @@ type service struct {
 	configs         sync.Map // 内存缓存 key=ConfigKey, value=string
 	mu              sync.RWMutex
 	lastConfigsHash uint64 // 上一次配置的哈希值，用于检测变化
+	repo            repository.SysConfigRepository
+	eventBus        *eventbus.EventBus
 }
 
 // NewService 创建配置服务实例
@@ -67,6 +71,12 @@ func NewService() Service {
 	return &service{
 		configs: sync.Map{},
 	}
+}
+
+// SetDependencies 注入 repository 和 eventBus（DB 就绪后调用）
+func (s *service) SetDependencies(repo repository.SysConfigRepository, eb *eventbus.EventBus) {
+	s.repo = repo
+	s.eventBus = eb
 }
 
 // GetConfig 获取配置值
@@ -140,14 +150,14 @@ func (s *service) GetAllConfigs() map[string]string {
 }
 
 // Refresh 从数据库刷新配置
-func (s *service) Refresh(db *gorm.DB) error {
-	if db == nil {
-		logger.Warn("数据库未初始化，跳过配置刷新")
+func (s *service) Refresh() error {
+	if s.repo == nil {
+		logger.Warn("配置仓库未初始化，跳过配置刷新")
 		return nil
 	}
 
-	var configs []model.SysConfig
-	if err := db.Find(&configs).Error; err != nil {
+	configs, err := s.repo.FindAll()
+	if err != nil {
 		logger.Error("查询配置失败", zap.Error(err))
 		return err
 	}
@@ -165,18 +175,28 @@ func (s *service) Refresh(db *gorm.DB) error {
 	s.mu.Lock()
 	hasChanged := s.lastConfigsHash != newHash
 	if hasChanged {
+		// 计算变更 key 集合（需要在替换前对比）
+		changedKeys := s.diffConfigKeys(newConfigs)
+
 		// 原子性替换所有配置
 		s.configs = sync.Map{}
 		for key, val := range newConfigs {
 			s.configs.Store(key, val)
 		}
 		s.lastConfigsHash = newHash
-	}
-	s.mu.Unlock()
+		s.mu.Unlock()
 
-	// 仅在配置变化时记录日志
-	if hasChanged {
 		logger.Info("配置已更新", zap.Int("count", len(configs)))
+
+		// 发布配置变更事件
+		if s.eventBus != nil && len(changedKeys) > 0 {
+			s.eventBus.Publish(eventbus.EventConfigChanged, eventbus.ConfigChangedEvent{
+				Keys: changedKeys,
+			})
+			logger.Info("发布配置变更事件", zap.Strings("keys", changedKeys))
+		}
+	} else {
+		s.mu.Unlock()
 	}
 
 	return nil
@@ -199,6 +219,30 @@ func (s *service) computeConfigsHash(configs map[string]string) uint64 {
 		h.Write([]byte("\n"))
 	}
 	return h.Sum64()
+}
+
+// diffConfigKeys 对比新旧配置，返回变更 key 集合
+func (s *service) diffConfigKeys(newConfigs map[string]string) []string {
+	var changed []string
+	oldKeys := make(map[string]bool)
+
+	s.configs.Range(func(key, value interface{}) bool {
+		if k, ok := key.(string); ok {
+			oldKeys[k] = true
+			if newVal, exists := newConfigs[k]; !exists || newVal != value.(string) {
+				changed = append(changed, k)
+			}
+		}
+		return true
+	})
+
+	for k := range newConfigs {
+		if !oldKeys[k] {
+			changed = append(changed, k)
+		}
+	}
+
+	return changed
 }
 
 // 确保 service 实现 Service 接口

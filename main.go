@@ -234,7 +234,12 @@ func (s *Server) Start() error {
 		} else {
 			logger.Info("Trace recording disabled (RPC_DISABLE_TRACE=true)")
 		}
-		if err := s.configService.Refresh(db); err != nil {
+		// 注入 repository 和 eventBus，然后刷新配置
+		s.configService.SetDependencies(
+			repository.NewSysConfigRepository(db),
+			s.eventBus,
+		)
+		if err := s.configService.Refresh(); err != nil {
 			logger.Errorf("Failed to load config: %v", err)
 		}
 	} else {
