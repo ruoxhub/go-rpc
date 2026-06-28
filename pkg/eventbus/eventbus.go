@@ -29,20 +29,6 @@ func (eb *EventBus) Subscribe(eventType string, handler EventHandler) {
 	eb.handlers[eventType] = append(eb.handlers[eventType], handler)
 }
 
-// Unsubscribe 取消订阅指定事件类型
-func (eb *EventBus) Unsubscribe(eventType string, handler EventHandler) {
-	eb.mu.Lock()
-	defer eb.mu.Unlock()
-
-	handlers := eb.handlers[eventType]
-	for i, h := range handlers {
-		if sameHandler(h, handler) {
-			eb.handlers[eventType] = append(handlers[:i], handlers[i+1:]...)
-			return
-		}
-	}
-}
-
 // Publish 向所有注册的处理器发布事件。
 // 当前为同步派发：在调用方 goroutine 内顺序调用所有 handler，
 // 慢订阅者会阻塞发布者。如需异步语义，由订阅方自行启动 goroutine。
@@ -93,9 +79,4 @@ func SubscribeTyped[T any](eb *EventBus, eventType string, handler func(T)) {
 // PublishTyped 泛型发布：编译期绑定事件类型 T。
 func PublishTyped[T any](eb *EventBus, eventType string, event T) {
 	eb.Publish(eventType, event)
-}
-
-// sameHandler 比较两个处理函数是否为同一个（通过地址）
-func sameHandler(a, b EventHandler) bool {
-	return funcEqual(a, b)
 }

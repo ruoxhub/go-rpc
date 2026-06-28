@@ -36,22 +36,6 @@ func TestEventBusSubscribeAndPublish(t *testing.T) {
 	}
 }
 
-func TestEventBusUnsubscribe(t *testing.T) {
-	bus := New()
-	called := false
-	handler := func(event interface{}) {
-		called = true
-	}
-
-	bus.Subscribe("test.event", handler)
-	bus.Unsubscribe("test.event", handler)
-	bus.Publish("test.event", "test data")
-
-	if called {
-		t.Error("Event handler should not be called after unsubscribe")
-	}
-}
-
 func TestEventBusMultipleHandlers(t *testing.T) {
 	bus := New()
 	count := 0
@@ -114,9 +98,6 @@ func TestEventBusUnknownEventType(t *testing.T) {
 
 	// Publishing to unknown event type should not panic
 	bus.Publish("unknown.event", "data")
-
-	// Unsubscribing unknown handler should not panic
-	bus.Unsubscribe("unknown.event", func(event interface{}) {})
 
 	// Clear unknown event type should not panic
 	bus.Clear("unknown.event")
