@@ -13,18 +13,6 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/client"
 )
 
-// RoutingStrategy defines the routing strategy type
-type RoutingStrategy int
-
-const (
-	// RoundRobin routes to clients in round-robin order
-	RoundRobin RoutingStrategy = iota
-	// SpecifiedClient routes to a specific client by ID
-	SpecifiedClient
-	// ConsistentHash routes based on consistent hash of a key
-	ConsistentHash
-)
-
 // RouteParams holds parameters for routing decisions
 type RouteParams struct {
 	// GroupName is the target group name
