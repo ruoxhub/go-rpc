@@ -34,6 +34,19 @@ type RouteParams struct {
 	Fuzzy bool
 }
 
+// Strategy 路由策略接口
+type Strategy interface {
+	Select(group *client.RpcGroup, params RouteParams) *client.RpcClient
+}
+
+// StrategyType 策略类型
+type StrategyType string
+
+const (
+	StrategyRoundRobin     StrategyType = "round_robin"
+	StrategyConsistentHash StrategyType = "consistent_hash"
+)
+
 // cachedRing stores a hash ring alongside a fingerprint of the client list.
 // The ring is reused as long as the client list fingerprint matches.
 type cachedRing struct {
