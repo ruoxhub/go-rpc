@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, Card, Input, InputNumber, Switch, Table, Tabs, Tag, message } from 'antd'
+import { Button, Card, Input, InputNumber, Select, Switch, Table, Tabs, Tag, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { sysConfigApi } from '../utils/api'
 
@@ -80,6 +80,12 @@ const CONFIG_DEFINITIONS = [
     label: '空转调用保护',
     type: 'boolean',
     description: 'https://github.com/yint-tech/sekiro-open/blob/master/src/main/java/cn/iinti/sekiro3/open/core/client/NettyRpcGroup.java#L178'
+  },
+  {
+    key: 'sekiro.allowedIPs',
+    label: '全局 IP 白名单',
+    type: 'iplist',
+    description: '允许访问的 IP 或 CIDR 列表，逗号分隔。为空时不限制，loopback 始终放行'
   }
 ]
 
@@ -213,6 +219,21 @@ function SystemPanel() {
                         min={0}
                         step={1}
                         style={{ width: 150 }}
+                      />
+                    )
+                  }
+                  if (record.type === 'iplist') {
+                    const tags = record.value
+                      ? record.value.split(',').map(s => s.trim()).filter(Boolean)
+                      : []
+                    return (
+                      <Select
+                        mode="tags"
+                        value={tags}
+                        onChange={(vals) => setConfigValues(prev => ({ ...prev, [record.key]: vals.join(',') }))}
+                        tokenSeparators={[',', ' ', '\n']}
+                        placeholder="输入 IP 或 CIDR 后回车，如 192.168.1.0/24"
+                        style={{ minWidth: 300 }}
                       />
                     )
                   }

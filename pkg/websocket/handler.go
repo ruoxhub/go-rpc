@@ -134,8 +134,6 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 
 // HandleConnection handles a WebSocket connection
 func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, group, clientID string) {
-	logger.Infof("WebSocket connection established: group=%s, clientId=%s", group, clientID)
-
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Warnf("WebSocket handler recovered from panic: group=%s, clientId=%s, error=%v", group, clientID, r)
@@ -172,10 +170,9 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	isRegistered := h.isGroupRegistered(group)
 	sekiroClient.SetRegisteredGroup(isRegistered)
 	if isRegistered {
-		logger.Infof("Connected to registered group: group=%s", group)
 		h.ensureDefaultActions(group)
 	} else {
-		logger.Infof("Connected to anonymous group (not registered): group=%s", group)
+		logger.Debugf("Connected to anonymous group (not registered): group=%s", group)
 	}
 
 	if isRegistered {
@@ -191,8 +188,6 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 
 			if err := h.groupRepo.UpsertDevice(&device); err != nil {
 				logger.Warnf("Failed to create device record: %v", err)
-			} else {
-				logger.Infof("Device record created/updated: group=%s, deviceId=%s, remoteIP=%s", group, clientID, remoteIP)
 			}
 		}
 	}
@@ -206,7 +201,6 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		sekiroClient.SetStatus(client.StatusOffline)
 		h.clientManager.Unregister(group, clientID)
 		wsTransport.Close()
-		logger.Infof("WebSocket connection closed: group=%s, clientId=%s", group, clientID)
 	}()
 
 	for {
@@ -216,7 +210,6 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 
 		select {
 		case <-ctx.Done():
-			logger.Infof("WebSocket handler context cancelled: group=%s, clientId=%s", group, clientID)
 			return
 		default:
 		}
@@ -305,7 +298,7 @@ func (h *Handler) handleBind(sekiroClient *client.RpcClient, msg *RpcMessage) {
 		return
 	}
 	if !h.isGroupRegistered(groupName) {
-		logger.Infof("Skipping action sync for anonymous group: group=%s", groupName)
+		logger.Debugf("Skipping action sync for anonymous group: group=%s", groupName)
 		return
 	}
 
@@ -342,7 +335,7 @@ func (h *Handler) handleBind(sekiroClient *client.RpcClient, msg *RpcMessage) {
 			logger.Warnf("Failed to create reported action: group=%s, action=%s, err=%v", groupName, actionName, err)
 			continue
 		}
-		logger.Infof("Reported action created: group=%s, action=%s", groupName, actionName)
+		logger.Debugf("Reported action created: group=%s, action=%s", groupName, actionName)
 	}
 }
 
@@ -438,13 +431,13 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 		} else {
 			responseData = []byte("{}")
 		}
-		logger.Infof("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
+		logger.Debugf("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
 	}
 
 	if msg.TraceID != "" {
-		logger.Infof("Invoke response received: trace=%s, sequence=%s, status=%d, Error=%s", msg.TraceID, sequence, msg.Status, errorMessage)
+		logger.Debugf("Invoke response received: trace=%s, sequence=%s, status=%d, Error=%s", msg.TraceID, sequence, msg.Status, errorMessage)
 	} else {
-		logger.Infof("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
+		logger.Debugf("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
 	}
 
 	response := &forwarder.InvokeResponse{
@@ -529,9 +522,9 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	}
 
 	if traceID != "" {
-		logger.Infof("Sending invoke message: trace=%s", traceID)
+		logger.Debugf("Sending invoke message: trace=%s", traceID)
 	} else {
-		logger.Infof("Sending invoke message")
+		logger.Debugf("Sending invoke message")
 	}
 
 	if sekiroClient == nil || sekiroClient.Connection == nil {

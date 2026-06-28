@@ -286,7 +286,7 @@ func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, 
 	}
 
 	if clientID != "" {
-		logger.Infof("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
+		logger.Debugf("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
 	} else {
 		logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
 	}
@@ -365,7 +365,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	constantInvoke := builder.GetConstantInvoke()
 
 	reqAction, reqParams, buildErr := builder.BuildRequestData()
-	logger.Infof("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
+	logger.Debugf("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
 
 	if group == "" {
 		BadRequest(c, "group parameter required")
@@ -441,7 +441,7 @@ func (h *APIHandler) forwardStream(c *gin.Context, builder RequestBuilder, group
 		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
 		return
 	}
-	logger.Infof("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+	logger.Debugf("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 	h.streamSSEResponse(c, streamRec, group, targetClient, builder, startTime, reqAction)
 }
 
@@ -485,7 +485,7 @@ func (h *APIHandler) dispatchInvokeRequest(
 		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
 		return nil, false
 	}
-	logger.Infof("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+	logger.Debugf("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 	defer cancel()

@@ -132,7 +132,7 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 		writeChatError(c, http.StatusOK, "createChat failed: "+err.Error())
 		return
 	}
-	logger.Infof("chat completions: chatId=%s, model=%s, group=%s, clientId=%s, stream=%v",
+	logger.Debugf("chat completions: chatId=%s, model=%s, group=%s, clientId=%s, stream=%v",
 		chatID, openAiReq.Model, qwenGroup, targetClient.ClientID, openAiReq.Stream)
 
 	chatReqParams := map[string]interface{}{

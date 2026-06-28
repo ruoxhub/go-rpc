@@ -264,11 +264,7 @@ func (s *Server) Start() error {
 		s.eventBus.Subscribe(eventbus.EventClientDisconnect, func(event interface{}) {
 			e := event.(*eventbus.ClientDisconnectEvent)
 			current := s.clientManager.GetClientsByGroup(e.Group)
-			count := float64(0)
-			if current != nil {
-				count = float64(len(current))
-			}
-			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, count)
+			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, float64(len(current)))
 		})
 	}
 

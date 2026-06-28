@@ -36,7 +36,7 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 		return
 	}
 
-	logger.Infof("WebSocket register: group=%s, clientId=%s", group, clientID)
+	logger.Debugf("WebSocket register: group=%s, clientId=%s", group, clientID)
 
 	// WebSocket 升级
 	wsConn, err := h.upgradeWebSocket(c.Writer, c.Request)
@@ -48,7 +48,7 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 		return
 	}
 
-	logger.Infof("WebSocket upgrade successful: %s", c.ClientIP())
+	logger.Debugf("WebSocket upgrade successful: %s", c.ClientIP())
 
 	// 使用完整的 Rpc WebSocket 处理器处理连接
 	ctx := context.Background()

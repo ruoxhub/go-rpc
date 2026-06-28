@@ -99,7 +99,7 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 		writeChatError(c, http.StatusOK, "createChat failed: "+err.Error())
 		return
 	}
-	logger.Infof("qwen chat created: chatId=%s, model=%s, group=%s, clientId=%s", chatID, model, qwenGroup, targetClient.ClientID)
+	logger.Debugf("qwen chat created: chatId=%s, model=%s, group=%s, clientId=%s", chatID, model, qwenGroup, targetClient.ClientID)
 
 	chatReqParams := map[string]interface{}{
 		"messages": prompt,

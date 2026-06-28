@@ -290,7 +290,7 @@ func (c *collector) runRollupAndRetention() {
 	prevHour := now.Add(-1 * time.Hour)
 	prevHourKey := prevHour.Format(hourFormat)
 
-	logger.Infof("Starting metrics hourly rollup for time_keyPrefix: %s", prevHourKey)
+	logger.Debugf("Starting metrics hourly rollup for time_keyPrefix: %s", prevHourKey)
 
 	if err := c.store.RollupHours(prevHourKey); err != nil {
 		logger.Errorf("Failed to rollup hourly metrics: %v", err)
@@ -300,13 +300,13 @@ func (c *collector) runRollupAndRetention() {
 		prevDay := now.AddDate(0, 0, -1)
 		prevDayKey := prevDay.Format(dayFormat)
 
-		logger.Infof("Starting metrics daily rollup for time_keyPrefix: %s", prevDayKey)
+		logger.Debugf("Starting metrics daily rollup for time_keyPrefix: %s", prevDayKey)
 
 		if err := c.store.RollupDays(prevDayKey); err != nil {
 			logger.Errorf("Failed to rollup daily metrics: %v", err)
 		}
 
-		logger.Info("Cleaning expired metrics data...")
+		logger.Debug("Cleaning expired metrics data...")
 		if err := c.store.DeleteExpired("metric_minute", now.AddDate(0, 0, -7)); err != nil {
 			logger.Errorf("Failed to clean metric_minute: %v", err)
 		}

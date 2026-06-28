@@ -311,7 +311,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 			if err := txRepo.CreateAction(&action); err != nil {
 				logger.Warnf("Failed to create default action: group=%s, action=%s, err=%v", req.GroupName, actionName, err)
 			} else {
-				logger.Infof("Default action created during conversion: group=%s, action=%s", req.GroupName, actionName)
+				logger.Debugf("Default action created during conversion: group=%s, action=%s", req.GroupName, actionName)
 			}
 		}
 	}

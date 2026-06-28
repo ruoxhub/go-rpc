@@ -90,14 +90,14 @@ func (g *RpcGroup) handleCommand(cmd groupCommand) {
 			g.order = append(g.order, cmd.client.ClientID)
 		}
 		g.clients[cmd.client.ClientID] = cmd.client
-		logger.Infof("Client registered: group=%s, clientId=%s", g.name, cmd.client.ClientID)
+		logger.Debugf("Client registered: group=%s, clientId=%s", g.name, cmd.client.ClientID)
 
 	case cmdUnregister:
 		if client, ok := g.clients[cmd.clientID]; ok {
 			client.Close()
 			delete(g.clients, cmd.clientID)
 			g.removeFromOrder(cmd.clientID)
-			logger.Infof("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
+			logger.Debugf("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
 		}
 
 	case cmdGetClient:
