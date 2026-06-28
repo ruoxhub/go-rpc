@@ -6,24 +6,21 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/deps"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
-	"gorm.io/gorm"
 )
 
 // Deps holds all handler dependencies for injection.
 type Deps struct {
-	UserRepo       repository.UserRepository
-	GroupRepo      repository.GroupRepository
-	ClientManager  *client.ClientManager
-	SysConfigRepo  repository.SysConfigRepository
-	ServerNodeRepo repository.ServerNodeRepository
-	SysLogRepo     repository.SysLogRepository
-	TraceRepo      repository.TraceRepository
-	AlertRepo      repository.AlertRepository
-	MetricRepo     repository.MetricRepository
-	// DB is the shared *gorm.DB used by handlers that need direct access
-	// (e.g. SysConfigHandler for configService.Refresh). nil in DB-less mode.
-	DB *gorm.DB
+	*deps.AppDependencies // 嵌入：UserRepo/GroupRepo/DB/ConfigService/EventBus 自动提升
+	ClientManager         *client.ClientManager
+	SysConfigRepo         repository.SysConfigRepository
+	ServerNodeRepo        repository.ServerNodeRepository
+	SysLogRepo            repository.SysLogRepository
+	TraceRepo             repository.TraceRepository
+	AlertRepo             repository.AlertRepository
+	MetricRepo            repository.MetricRepository
+	AuthMW                *middleware.AuthMiddleware
 }
 
 // SetupWebRoutes 设置 Web 管理界面路由

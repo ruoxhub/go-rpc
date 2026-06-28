@@ -103,6 +103,7 @@ type Server struct {
 	alertEvaluator   *alert.Evaluator
 	configService    pkgconfig.Service
 	groupRepo        repository.GroupRepository
+	authMW           *middleware.AuthMiddleware
 	db               *gorm.DB
 	// wsCancel cancels all WebSocket handler goroutines on shutdown
 	wsCtx    context.Context
@@ -222,6 +223,14 @@ func (s *Server) Start() error {
 		handler.SetUserRepository(appDeps.UserRepo)
 		handler.SetLoginGroupRepository(appDeps.GroupRepo)
 		middleware.SetTokenUserRepository(appDeps.UserRepo)
+
+		// 创建 AuthMiddleware 实例（B4 DI 改造）
+		s.authMW = middleware.NewAuthMiddleware(
+			appDeps.UserRepo,
+			s.groupRepo.FindGroupByName,
+			middleware.DefaultTokenCache(),
+			middleware.DefaultGroupCache(),
+		)
 
 		// Verify LoginHandler constructor works with AppDependencies
 		_ = handler.NewLoginHandler(appDeps.UserRepo)
@@ -412,9 +421,14 @@ func (s *Server) registerRoutes() {
 
 	if !disableWebAdmin {
 		db := s.db
-		deps := handler.Deps{
-			UserRepo:       repository.NewUserRepository(db),
-			GroupRepo:      repository.NewGroupRepository(db),
+		webDeps := handler.Deps{
+			AppDependencies: &deps.AppDependencies{
+				DB:            db,
+				UserRepo:      repository.NewUserRepository(db),
+				GroupRepo:     repository.NewGroupRepository(db),
+				ConfigService: s.configService,
+				EventBus:      s.eventBus,
+			},
 			ClientManager:  s.clientManager,
 			SysConfigRepo:  repository.NewSysConfigRepository(db),
 			ServerNodeRepo: repository.NewServerNodeRepository(db),
@@ -422,9 +436,9 @@ func (s *Server) registerRoutes() {
 			TraceRepo:      repository.NewTraceRepository(db),
 			AlertRepo:      repository.NewAlertRepository(db),
 			MetricRepo:     repository.NewMetricRepository(db),
-			DB:             db,
+			AuthMW:         s.authMW,
 		}
-		handler.SetupWebRoutes(s.httpServer.Engine(), deps, s.alertEvaluator, s.configService)
+		handler.SetupWebRoutes(s.httpServer.Engine(), webDeps, s.alertEvaluator, s.configService)
 	}
 
 	v1 := s.optionalAuthGroup("/v1")

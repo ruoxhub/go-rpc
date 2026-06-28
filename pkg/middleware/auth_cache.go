@@ -153,6 +153,16 @@ func InvalidateAllGroups() {
 	defaultGroupCache.clear()
 }
 
+// DefaultTokenCache 返回包级 token 缓存实例（B4 过渡期使用，后续随包级全局一起删除）
+func DefaultTokenCache() *cache[model.UserInfo] {
+	return defaultTokenCache
+}
+
+// DefaultGroupCache 返回包级 group 缓存实例（B4 过渡期使用，后续随包级全局一起删除）
+func DefaultGroupCache() *cache[model.GroupConfig] {
+	return defaultGroupCache
+}
+
 // GroupConfigLookup 是注入式的 GroupConfig 查询函数。实现可走 GORM 直查，也可走 repository。
 // 返回 (group=nil, err=nil) 表示 group 不存在（会被负缓存）。
 type GroupConfigLookup func(groupName string) (*model.GroupConfig, error)
