@@ -249,17 +249,15 @@ func (s *Server) Start() error {
 	logger.Info("Config service started successfully")
 
 	// 订阅配置变更事件，失效相关缓存
-	s.eventBus.Subscribe(eventbus.EventConfigChanged, func(event interface{}) {
-		if e, ok := event.(eventbus.ConfigChangedEvent); ok {
-			for _, key := range e.Keys {
-				if strings.HasPrefix(key, "user.") || strings.HasPrefix(key, "token.") {
-					middleware.InvalidateAllTokens()
-					logger.Debugf("tokenCache invalidated due to config change: key=%s", key)
-				}
-				if strings.HasPrefix(key, "group.") {
-					middleware.InvalidateAllGroups()
-					logger.Debugf("groupCache invalidated due to config change: key=%s", key)
-				}
+	eventbus.SubscribeTyped(s.eventBus, eventbus.EventConfigChanged, func(e eventbus.ConfigChangedEvent) {
+		for _, key := range e.Keys {
+			if strings.HasPrefix(key, "user.") || strings.HasPrefix(key, "token.") {
+				middleware.InvalidateAllTokens()
+				logger.Debugf("tokenCache invalidated due to config change: key=%s", key)
+			}
+			if strings.HasPrefix(key, "group.") {
+				middleware.InvalidateAllGroups()
+				logger.Debugf("groupCache invalidated due to config change: key=%s", key)
 			}
 		}
 	})
@@ -277,21 +275,18 @@ func (s *Server) Start() error {
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
 	if s.metricsCollector != nil {
-		s.eventBus.Subscribe(eventbus.EventClientConnect, func(event interface{}) {
-			e := event.(*eventbus.ClientConnectEvent)
+		eventbus.SubscribeTyped(s.eventBus, eventbus.EventClientConnect, func(e eventbus.ClientConnectEvent) {
 			current := s.clientManager.GetClientsByGroup(e.Group)
 			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, float64(len(current)))
 		})
-		s.eventBus.Subscribe(eventbus.EventClientDisconnect, func(event interface{}) {
-			e := event.(*eventbus.ClientDisconnectEvent)
+		eventbus.SubscribeTyped(s.eventBus, eventbus.EventClientDisconnect, func(e eventbus.ClientDisconnectEvent) {
 			current := s.clientManager.GetClientsByGroup(e.Group)
 			s.metricsCollector.Set("client.online", map[string]string{"group": e.Group}, float64(len(current)))
 		})
 	}
 
 	// 注册事件订阅：健康降级 → 记录告警
-	s.eventBus.Subscribe(eventbus.EventClientHealthDegraded, func(event interface{}) {
-		e := event.(*eventbus.ClientHealthDegradedEvent)
+	eventbus.SubscribeTyped(s.eventBus, eventbus.EventClientHealthDegraded, func(e eventbus.ClientHealthDegradedEvent) {
 		logger.Warnf("Client health degraded: group=%s, clientId=%s, failCount=%d",
 			e.Group, e.ClientID, e.FailCount)
 	})
