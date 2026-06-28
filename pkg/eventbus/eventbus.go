@@ -80,6 +80,21 @@ func (eb *EventBus) HandlerCount(eventType string) int {
 	return len(eb.handlers[eventType])
 }
 
+// SubscribeTyped 泛型订阅：编译期绑定事件类型 T。
+// 内部包装为 func(interface{})，断言失败 panic（契约违反）。
+func SubscribeTyped[T any](eb *EventBus, eventType string, handler func(T)) {
+	wrapped := func(event interface{}) {
+		e := event.(T)
+		handler(e)
+	}
+	eb.Subscribe(eventType, wrapped)
+}
+
+// PublishTyped 泛型发布：编译期绑定事件类型 T。
+func PublishTyped[T any](eb *EventBus, eventType string, event T) {
+	eb.Publish(eventType, event)
+}
+
 // sameHandler 比较两个处理函数是否为同一个（通过地址）
 func sameHandler(a, b EventHandler) bool {
 	return funcEqual(a, b)
