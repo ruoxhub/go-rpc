@@ -230,6 +230,7 @@ func (s *Server) Start() error {
 			s.groupRepo.FindGroupByName,
 			middleware.DefaultTokenCache(),
 			middleware.DefaultGroupCache(),
+			s.metricsCollector,
 		)
 
 		// Verify LoginHandler constructor works with AppDependencies

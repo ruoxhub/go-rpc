@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
@@ -279,15 +280,20 @@ type AuthMiddleware struct {
 	groupLookup GroupConfigLookup
 	tokenCache  *cache[model.UserInfo]
 	groupCache  *cache[model.GroupConfig]
+	metrics     metrics.MetricCollector
 }
 
 // NewAuthMiddleware creates an AuthMiddleware with explicit dependencies.
-func NewAuthMiddleware(userRepo TokenUserLookup, groupLookup GroupConfigLookup, tokenCache *cache[model.UserInfo], groupCache *cache[model.GroupConfig]) *AuthMiddleware {
+func NewAuthMiddleware(userRepo TokenUserLookup, groupLookup GroupConfigLookup, tokenCache *cache[model.UserInfo], groupCache *cache[model.GroupConfig], mc metrics.MetricCollector) *AuthMiddleware {
+	if mc == nil {
+		mc = metrics.NewNoopCollector()
+	}
 	return &AuthMiddleware{
 		userRepo:    userRepo,
 		groupLookup: groupLookup,
 		tokenCache:  tokenCache,
 		groupCache:  groupCache,
+		metrics:     mc,
 	}
 }
 
@@ -296,11 +302,13 @@ func (am *AuthMiddleware) Authenticate() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := ExtractAuthTokenFromRequest(c, false)
 		if token == "" {
+			am.metrics.Incr("auth.deny", map[string]string{"reason": "no_token"}, 1)
 			abortJSON(c, http.StatusUnauthorized, "未提供认证信息")
 			return
 		}
 		user, err := am.findUserByToken(token)
 		if err != nil {
+			am.metrics.Incr("auth.deny", map[string]string{"reason": "invalid_token"}, 1)
 			abortJSON(c, http.StatusUnauthorized, "无效的认证 token")
 			return
 		}

@@ -218,7 +218,7 @@ func TestAuthMiddleware_StructAuthenticate(t *testing.T) {
 	defer tc.Stop()
 	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
 	defer gc.Stop()
-	am := NewAuthMiddleware(repo, nil, tc, gc)
+	am := NewAuthMiddleware(repo, nil, tc, gc, nil)
 
 	router := gin.New()
 	router.Use(am.Authenticate())
@@ -243,7 +243,7 @@ func TestAuthMiddleware_StructAuthenticateNoToken(t *testing.T) {
 	defer tc.Stop()
 	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
 	defer gc.Stop()
-	am := NewAuthMiddleware(repo, nil, tc, gc)
+	am := NewAuthMiddleware(repo, nil, tc, gc, nil)
 
 	router := gin.New()
 	router.Use(am.Authenticate())
@@ -264,7 +264,7 @@ func TestAuthMiddleware_StructAuthenticateInvalidToken(t *testing.T) {
 	defer tc.Stop()
 	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
 	defer gc.Stop()
-	am := NewAuthMiddleware(repo, nil, tc, gc)
+	am := NewAuthMiddleware(repo, nil, tc, gc, nil)
 
 	router := gin.New()
 	router.Use(am.Authenticate())
@@ -286,7 +286,7 @@ func TestAuthMiddleware_StructOptionalAuth(t *testing.T) {
 	defer tc.Stop()
 	gc := newCache[model.GroupConfig](defaultGroupPositiveTTL, defaultGroupNegativeTTL)
 	defer gc.Stop()
-	am := NewAuthMiddleware(repo, nil, tc, gc)
+	am := NewAuthMiddleware(repo, nil, tc, gc, nil)
 
 	t.Run("with valid token", func(t *testing.T) {
 		router := gin.New()
