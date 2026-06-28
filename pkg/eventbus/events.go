@@ -85,3 +85,11 @@ type ClientKickedEvent struct {
 	ClientID  string
 	Timestamp time.Time
 }
+
+// EventConfigChanged 配置变更事件
+const EventConfigChanged = "config.changed"
+
+// ConfigChangedEvent 配置变更事件载荷
+type ConfigChangedEvent struct {
+	Keys []string // 变更的配置键集合
+}
