@@ -46,8 +46,8 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 			c.Next()
 		},
 		deps.AuthMW.Authenticate(),
-		middleware.AnonymousAccessMiddleware(cfgSvc),
-		middleware.RateLimitMiddleware(cfgSvc),
+		middleware.AnonymousAccessMiddleware(cfgSvc, nil),
+		middleware.RateLimitMiddleware(cfgSvc, nil),
 	)
 	{
 		users := api.Group("/users")

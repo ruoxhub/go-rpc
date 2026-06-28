@@ -25,7 +25,7 @@ func (m *mockConfigSvcForRL) Refresh() error                                  { 
 func TestRateLimitMiddleware_AnonymousUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockConfigSvcForRL{}
-	middleware := RateLimitMiddleware(cfg)
+	middleware := RateLimitMiddleware(cfg, nil)
 
 	var blocked bool
 	for i := 0; i < 30; i++ {
@@ -46,7 +46,7 @@ func TestRateLimitMiddleware_AnonymousUser(t *testing.T) {
 func TestRateLimitMiddleware_AuthenticatedUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockConfigSvcForRL{}
-	middleware := RateLimitMiddleware(cfg)
+	middleware := RateLimitMiddleware(cfg, nil)
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -60,7 +60,7 @@ func TestRateLimitMiddleware_AuthenticatedUser(t *testing.T) {
 func TestRateLimitMiddleware_ZeroQPSAllowsAll(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := &mockConfigSvcForRL{}
-	middleware := RateLimitMiddleware(cfg)
+	middleware := RateLimitMiddleware(cfg, nil)
 
 	for i := 0; i < 100; i++ {
 		w := httptest.NewRecorder()
