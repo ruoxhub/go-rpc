@@ -149,7 +149,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// 设置熔断器状态变更回调，通过 EventBus 发布事件
 	if h.eventBus != nil {
 		sekiroClient.SetCircuitBreakerCallback(func(from, to client.CircuitState) {
-			h.eventBus.Publish(eventbus.EventCircuitBreakerStateChanged, &eventbus.CircuitBreakerStateEvent{
+			eventbus.PublishTyped(h.eventBus, eventbus.EventCircuitBreakerStateChanged, eventbus.CircuitBreakerStateEvent{
 				Group:     group,
 				ClientID:  clientID,
 				From:      from.String(),
@@ -157,7 +157,7 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 				Timestamp: time.Now(),
 			})
 			if from == client.CircuitClosed && to == client.CircuitOpen {
-				h.eventBus.Publish(eventbus.EventClientHealthDegraded, &eventbus.ClientHealthDegradedEvent{
+				eventbus.PublishTyped(h.eventBus, eventbus.EventClientHealthDegraded, eventbus.ClientHealthDegradedEvent{
 					Group:     group,
 					ClientID:  clientID,
 					FailCount: sekiroClient.GetFailCount(),
