@@ -78,14 +78,8 @@ func HandleLogin(c *gin.Context) {
 
 // HandleGetUserInfo 获取当前用户信息
 func HandleGetUserInfo(c *gin.Context) {
-	token := middleware.ExtractAuthTokenFromRequest(c, false)
-	if token == "" {
-		Unauthorized(c, "请重新登录")
-		return
-	}
-
-	user, err := middleware.FindUserByToken(token)
-	if err != nil {
+	user, ok := middleware.GetCurrentUser(c)
+	if !ok || user == nil {
 		Unauthorized(c, "请重新登录")
 		return
 	}
@@ -187,7 +181,7 @@ func HandleFrontendAnonymousGroupList(c *gin.Context) {
 			return
 		}
 	}
-	anonymousHandler := NewAnonymousGroupHandler(nil, nil)
+	anonymousHandler := NewAnonymousGroupHandler(nil, nil, nil)
 	anonymousHandler.List(c)
 }
 
@@ -230,13 +224,13 @@ func HandleFrontendGroupDetail(c *gin.Context) {
 	// Use groupRepo if available in context
 	if groupRepo, exists := c.Get("groupRepo"); exists {
 		if gr, ok := groupRepo.(repository.GroupRepository); ok {
-			groupHandler := NewGroupHandler(gr)
+			groupHandler := NewGroupHandler(gr, nil)
 			groupHandler.GetDetail(c)
 			return
 		}
 	}
 
-	groupHandler := NewGroupHandler(nil)
+	groupHandler := NewGroupHandler(nil, nil)
 	groupHandler.GetDetail(c)
 }
 

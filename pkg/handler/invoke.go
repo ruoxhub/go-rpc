@@ -35,6 +35,7 @@ type APIHandler struct {
 	configService    config.Service
 	groupRepo        repository.GroupRepository
 	eventBus         *eventbus.EventBus
+	authMW           *middleware.AuthMiddleware
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -77,7 +78,7 @@ type InvokeRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *APIHandler {
 	h := &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(),
@@ -87,6 +88,7 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 		configService:    cfgSvc,
 		groupRepo:        groupRepo,
 		eventBus:         eventBus,
+		authMW:           authMW,
 	}
 
 	if eventBus != nil {
@@ -619,7 +621,7 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 		return true
 	}
 
-	group, err := middleware.LookupGroupConfig(groupName, h.groupRepo.FindGroupByName)
+	group, err := h.authMW.LookupGroupConfig(groupName)
 	if err != nil {
 		InternalError(c, "failed to verify group access: "+err.Error())
 		return false
@@ -651,7 +653,7 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 	token := middleware.ExtractAuthTokenFromRequest(c, false)
 	var user *model.UserInfo
 	if token != "" {
-		resolved, err := middleware.FindUserByToken(token)
+		resolved, err := h.authMW.FindUserByToken(token)
 		if err == nil {
 			user = resolved
 			c.Set(middleware.ContextUserKey, user)
@@ -660,7 +662,7 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 
 	filtered := make([]string, 0, len(groups))
 	for _, groupName := range groups {
-		group, err := middleware.LookupGroupConfig(groupName, h.groupRepo.FindGroupByName)
+		group, err := h.authMW.LookupGroupConfig(groupName)
 		if err != nil {
 			// 数据库查询异常时保守处理：视为匿名分组并保留，避免临时故障导致 groupList 完全不可用
 			logger.Warnf("filterAccessibleGroups: lookup group_config failed for %s: %v, treating as anonymous", groupName, err)

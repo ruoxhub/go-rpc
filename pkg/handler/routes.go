@@ -29,10 +29,10 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 	SetSysLogRepository(deps.SysLogRepo)
 
 	// Create handler instances with injected repositories
-	userHandler := NewUserHandler(deps.UserRepo)
-	groupHandler := NewGroupHandler(deps.GroupRepo)
+	userHandler := NewUserHandler(deps.UserRepo, deps.AuthMW)
+	groupHandler := NewGroupHandler(deps.GroupRepo, deps.AuthMW)
 	sysConfigHandler := NewSysConfigHandler(deps.SysConfigRepo, deps.ServerNodeRepo, deps.SysLogRepo, cfgSvc, deps.DB)
-	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo, deps.ClientManager)
+	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo, deps.ClientManager, deps.AuthMW)
 	metricHandler := NewMetricHandler(deps.MetricRepo)
 	traceHandler := NewTraceHandler(deps.TraceRepo)
 	alertHandler := NewAlertHandler(deps.AlertRepo, alertEvaluator)
@@ -45,7 +45,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 			c.Set("groupRepo", deps.GroupRepo)
 			c.Next()
 		},
-		middleware.Authenticate(),
+		deps.AuthMW.Authenticate(),
 		middleware.AnonymousAccessMiddleware(cfgSvc),
 		middleware.RateLimitMiddleware(cfgSvc),
 	)

@@ -15,10 +15,11 @@ import (
 // UserHandler handles user management APIs.
 type UserHandler struct {
 	userRepo repository.UserRepository
+	authMW   *middleware.AuthMiddleware
 }
 
-func NewUserHandler(userRepo repository.UserRepository) *UserHandler {
-	return &UserHandler{userRepo: userRepo}
+func NewUserHandler(userRepo repository.UserRepository, authMW *middleware.AuthMiddleware) *UserHandler {
+	return &UserHandler{userRepo: userRepo, authMW: authMW}
 }
 
 type UserInfoVO struct {
@@ -139,7 +140,7 @@ func (h *UserHandler) UpdateQps(c *gin.Context) {
 		return
 	}
 
-	middleware.InvalidateToken(user.ApiToken)
+	h.authMW.InvalidateToken(user.ApiToken)
 	auditUpdateQps(c, "user", user.UserName, req.QuotaQps)
 	OK(c, nil)
 }
@@ -157,7 +158,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 	user, err := h.userRepo.FindByID(req.UserID)
 	if err == nil && user != nil {
-		middleware.InvalidateToken(user.ApiToken)
+		h.authMW.InvalidateToken(user.ApiToken)
 	}
 
 	if err := h.userRepo.Delete(req.UserID); err != nil {
@@ -216,8 +217,8 @@ func (h *UserHandler) RefreshToken(c *gin.Context) {
 		return
 	}
 
-	middleware.InvalidateToken(user.ApiToken)
-	middleware.InvalidateToken(newToken)
+	h.authMW.InvalidateToken(user.ApiToken)
+	h.authMW.InvalidateToken(newToken)
 
 	OK(c, gin.H{"apiToken": newToken})
 }

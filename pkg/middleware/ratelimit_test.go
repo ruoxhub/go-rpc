@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
+	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/stretchr/testify/assert"
-	"gorm.io/gorm"
 )
 
 type mockConfigSvcForRL struct{}
@@ -18,7 +19,8 @@ func (m *mockConfigSvcForRL) GetConfigBool(key string, def bool) bool        { r
 func (m *mockConfigSvcForRL) GetConfigFloat(key string, def float64) float64 { return def }
 func (m *mockConfigSvcForRL) GetConfigInt(key string, def int) int           { return def }
 func (m *mockConfigSvcForRL) GetAllConfigs() map[string]string               { return nil }
-func (m *mockConfigSvcForRL) Refresh(db *gorm.DB) error                      { return nil }
+func (m *mockConfigSvcForRL) SetDependencies(repo repository.SysConfigRepository, eb *eventbus.EventBus) {}
+func (m *mockConfigSvcForRL) Refresh() error                                  { return nil }
 
 func TestRateLimitMiddleware_AnonymousUser(t *testing.T) {
 	gin.SetMode(gin.TestMode)

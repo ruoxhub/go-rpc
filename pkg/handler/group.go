@@ -13,11 +13,12 @@ import (
 // GroupHandler 分组管理处理器
 type GroupHandler struct {
 	groupRepo repository.GroupRepository
+	authMW    *middleware.AuthMiddleware
 }
 
 // NewGroupHandler 创建分组处理器
-func NewGroupHandler(groupRepo repository.GroupRepository) *GroupHandler {
-	return &GroupHandler{groupRepo: groupRepo}
+func NewGroupHandler(groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *GroupHandler {
+	return &GroupHandler{groupRepo: groupRepo, authMW: authMW}
 }
 
 type GroupInfoVO struct {
@@ -119,7 +120,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		return
 	}
 
-	middleware.InvalidateGroup(group.GroupName)
+	h.authMW.InvalidateGroup(group.GroupName)
 
 	OK(c, group.ID)
 }
@@ -169,7 +170,7 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 	}
 	committed = true
 
-	middleware.InvalidateGroup(req.GroupName)
+	h.authMW.InvalidateGroup(req.GroupName)
 
 	auditDeleteGroup(c, req.GroupName)
 	OK(c, nil)
@@ -233,7 +234,7 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 		return
 	}
 
-	middleware.InvalidateGroup(req.GroupName)
+	h.authMW.InvalidateGroup(req.GroupName)
 
 	auditUpdateQps(c, "group", req.GroupName, req.QuotaQpsGroup)
 	OK(c, nil)

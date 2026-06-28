@@ -16,6 +16,7 @@ import (
 type AnonymousGroupHandler struct {
 	groupRepo     repository.GroupRepository
 	clientManager anonymousClientManager
+	authMW        *middleware.AuthMiddleware
 }
 
 type anonymousClientManager interface {
@@ -25,8 +26,8 @@ type anonymousClientManager interface {
 }
 
 // NewAnonymousGroupHandler 创建匿名分组处理器
-func NewAnonymousGroupHandler(groupRepo repository.GroupRepository, clientManager anonymousClientManager) *AnonymousGroupHandler {
-	return &AnonymousGroupHandler{groupRepo: groupRepo, clientManager: clientManager}
+func NewAnonymousGroupHandler(groupRepo repository.GroupRepository, clientManager anonymousClientManager, authMW *middleware.AuthMiddleware) *AnonymousGroupHandler {
+	return &AnonymousGroupHandler{groupRepo: groupRepo, clientManager: clientManager, authMW: authMW}
 }
 
 // AnonymousGroupVO 匿名分组 VO
@@ -322,7 +323,7 @@ func (h *AnonymousGroupHandler) ConvertAnonymousGroup(c *gin.Context) {
 	}
 	committed = true
 
-	middleware.InvalidateGroup(req.GroupName)
+	h.authMW.InvalidateGroup(req.GroupName)
 	h.markGroupRegistered(req.GroupName)
 
 	auditConvertGroup(c, "anonymous:"+req.GroupName, req.GroupName)

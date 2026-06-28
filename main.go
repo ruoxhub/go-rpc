@@ -280,7 +280,7 @@ func (s *Server) Start() error {
 		}
 		s.metricsCollector = metrics.NewCollector(1*time.Minute, metricStore)
 	}
-	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo)
+	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo, s.authMW)
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
 	if s.metricsCollector != nil {
@@ -573,7 +573,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		return true
 	}
 
-	group, err := middleware.LookupGroupConfig(groupName, s.groupRepo.FindGroupByName)
+	group, err := s.authMW.LookupGroupConfig(groupName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "failed to verify group access",
@@ -597,7 +597,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		})
 		return false
 	}
-	user, err := middleware.FindUserByToken(token)
+	user, err := s.authMW.FindUserByToken(token)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error": "registered group requires a valid rpc token",
@@ -650,7 +650,7 @@ func (s *Server) Shutdown() {
 	// Flush any pending batched trace records after HTTP traffic has drained.
 	middleware.ShutdownTraceRecorder()
 	// Stop auth cache GC goroutines to avoid leak on exit.
-	middleware.ShutdownCaches()
+	s.authMW.Shutdown()
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
 	}
