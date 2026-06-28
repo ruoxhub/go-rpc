@@ -90,15 +90,11 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 	}
 
 	if eventBus != nil {
-		eventBus.Subscribe(eventbus.EventClientConnect, func(event interface{}) {
-			if e, ok := event.(*eventbus.ClientConnectEvent); ok {
-				h.router.InvalidateRingCache(e.Group)
-			}
+		eventbus.SubscribeTyped(eventBus, eventbus.EventClientConnect, func(e eventbus.ClientConnectEvent) {
+			h.router.InvalidateRingCache(e.Group)
 		})
-		eventBus.Subscribe(eventbus.EventClientDisconnect, func(event interface{}) {
-			if e, ok := event.(*eventbus.ClientDisconnectEvent); ok {
-				h.router.InvalidateRingCache(e.Group)
-			}
+		eventbus.SubscribeTyped(eventBus, eventbus.EventClientDisconnect, func(e eventbus.ClientDisconnectEvent) {
+			h.router.InvalidateRingCache(e.Group)
 		})
 	}
 
@@ -167,7 +163,7 @@ func (h *APIHandler) HandleKickClient(c *gin.Context) {
 		for _, cl := range rpcGroup.GetAllClients() {
 			rpcGroup.Unregister(cl.ClientID)
 			if h.eventBus != nil {
-				h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
+				eventbus.PublishTyped(h.eventBus, eventbus.EventClientKicked, eventbus.ClientKickedEvent{
 					Group:     groupName,
 					ClientID:  cl.ClientID,
 					Timestamp: time.Now(),
@@ -186,7 +182,7 @@ func (h *APIHandler) HandleKickClient(c *gin.Context) {
 	rpcGroup.Unregister(clientID)
 
 	if h.eventBus != nil {
-		h.eventBus.Publish(eventbus.EventClientKicked, &eventbus.ClientKickedEvent{
+		eventbus.PublishTyped(h.eventBus, eventbus.EventClientKicked, eventbus.ClientKickedEvent{
 			Group:     groupName,
 			ClientID:  clientID,
 			Timestamp: time.Now(),
