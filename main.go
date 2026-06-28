@@ -248,6 +248,22 @@ func (s *Server) Start() error {
 	}
 	logger.Info("Config service started successfully")
 
+	// 订阅配置变更事件，失效相关缓存
+	s.eventBus.Subscribe(eventbus.EventConfigChanged, func(event interface{}) {
+		if e, ok := event.(eventbus.ConfigChangedEvent); ok {
+			for _, key := range e.Keys {
+				if strings.HasPrefix(key, "user.") || strings.HasPrefix(key, "token.") {
+					middleware.InvalidateAllTokens()
+					logger.Debugf("tokenCache invalidated due to config change: key=%s", key)
+				}
+				if strings.HasPrefix(key, "group.") {
+					middleware.InvalidateAllGroups()
+					logger.Debugf("groupCache invalidated due to config change: key=%s", key)
+				}
+			}
+		}
+	})
+
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus, s.groupRepo)
 
 	if !disableMetrics {

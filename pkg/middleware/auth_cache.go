@@ -78,6 +78,12 @@ func (c *cache[T]) invalidate(key string) {
 	c.mu.Unlock()
 }
 
+func (c *cache[T]) clear() {
+	c.mu.Lock()
+	c.items = make(map[string]cacheEntry[T])
+	c.mu.Unlock()
+}
+
 func (c *cache[T]) purgeExpiredLocked() {
 	now := time.Now()
 	for k, e := range c.items {
@@ -135,6 +141,16 @@ func InvalidateToken(token string) {
 // InvalidateGroup 显式失效一个 group_config 的缓存。在 group 创建/删除/改 owner 时调用。
 func InvalidateGroup(groupName string) {
 	defaultGroupCache.invalidate(groupName)
+}
+
+// InvalidateAllTokens 清空所有 token 缓存。在配置变更时调用。
+func InvalidateAllTokens() {
+	defaultTokenCache.clear()
+}
+
+// InvalidateAllGroups 清空所有 group 缓存。在配置变更时调用。
+func InvalidateAllGroups() {
+	defaultGroupCache.clear()
 }
 
 // GroupConfigLookup 是注入式的 GroupConfig 查询函数。实现可走 GORM 直查，也可走 repository。
