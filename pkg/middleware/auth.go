@@ -275,17 +275,19 @@ func RequireAdmin() gin.HandlerFunc {
 // AuthMiddleware holds dependencies for authentication middleware,
 // enabling proper dependency injection without package-level globals.
 type AuthMiddleware struct {
-	userRepo   TokenUserLookup
-	tokenCache *cache[model.UserInfo]
-	groupCache *cache[model.GroupConfig]
+	userRepo    TokenUserLookup
+	groupLookup GroupConfigLookup
+	tokenCache  *cache[model.UserInfo]
+	groupCache  *cache[model.GroupConfig]
 }
 
 // NewAuthMiddleware creates an AuthMiddleware with explicit dependencies.
-func NewAuthMiddleware(userRepo TokenUserLookup, tokenCache *cache[model.UserInfo], groupCache *cache[model.GroupConfig]) *AuthMiddleware {
+func NewAuthMiddleware(userRepo TokenUserLookup, groupLookup GroupConfigLookup, tokenCache *cache[model.UserInfo], groupCache *cache[model.GroupConfig]) *AuthMiddleware {
 	return &AuthMiddleware{
-		userRepo:   userRepo,
-		tokenCache: tokenCache,
-		groupCache: groupCache,
+		userRepo:    userRepo,
+		groupLookup: groupLookup,
+		tokenCache:  tokenCache,
+		groupCache:  groupCache,
 	}
 }
 
@@ -347,4 +349,53 @@ func (am *AuthMiddleware) findUserByToken(token string) (*model.UserInfo, error)
 		return nil, fmt.Errorf("user not found")
 	}
 	return v.(*model.UserInfo), nil
+}
+
+// FindUserByToken 公开的 token 查询方法（带缓存 + singleflight）
+func (am *AuthMiddleware) FindUserByToken(token string) (*model.UserInfo, error) {
+	return am.findUserByToken(token)
+}
+
+// LookupGroupConfig 带缓存 + singleflight 的 group_config 查询
+func (am *AuthMiddleware) LookupGroupConfig(groupName string) (*model.GroupConfig, error) {
+	if am.groupLookup == nil {
+		return nil, fmt.Errorf("groupLookup not configured")
+	}
+	if groupName == "" {
+		return nil, nil
+	}
+	if g, ok := am.groupCache.get(groupName); ok {
+		return g, nil
+	}
+	v, err, _ := am.groupCache.sf.Do(groupName, func() (interface{}, error) {
+		if g, ok := am.groupCache.get(groupName); ok {
+			return g, nil
+		}
+		g, err := am.groupLookup(groupName)
+		if err != nil {
+			return nil, err
+		}
+		am.groupCache.set(groupName, g)
+		return g, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.(*model.GroupConfig), nil
+}
+
+// InvalidateToken 显式失效一个 token 的缓存
+func (am *AuthMiddleware) InvalidateToken(token string) {
+	am.tokenCache.invalidate(token)
+}
+
+// InvalidateGroup 显式失效一个 group 的缓存
+func (am *AuthMiddleware) InvalidateGroup(groupName string) {
+	am.groupCache.invalidate(groupName)
+}
+
+// Shutdown 停止缓存的 GC 协程
+func (am *AuthMiddleware) Shutdown() {
+	am.tokenCache.Stop()
+	am.groupCache.Stop()
 }
