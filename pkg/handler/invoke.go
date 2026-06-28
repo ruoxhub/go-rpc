@@ -81,7 +81,7 @@ type InvokeRequest struct {
 func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *APIHandler {
 	h := &APIHandler{
 		clientManager:    manager,
-		router:           router.NewRouter(),
+		router:           router.NewRouter(cfgSvc),
 		wsHandler:        wsHandler,
 		timeoutManager:   timeoutMgr,
 		metricsCollector: metricsCollector,

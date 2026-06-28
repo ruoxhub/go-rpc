@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 
 	"github.com/mrh30000/go-rpc/pkg/client"
+	"github.com/mrh30000/go-rpc/pkg/config"
 )
 
 // RouteParams holds parameters for routing decisions
@@ -61,14 +62,27 @@ type Router struct {
 	mu                sync.Mutex
 	// ringCache caches consistent hash rings per group, invalidated on client list change.
 	ringCache map[string]*cachedRing
+	// strategies holds the three routing strategy implementations
+	strategies struct {
+		specified *SpecifiedStrategy
+		hash      *ConsistentHashStrategy
+		rr        *RoundRobinStrategy
+	}
+	// configSvc reads routing strategy config keys (nil = default RR)
+	configSvc config.Service
 }
 
 // NewRouter creates a new Router instance
-func NewRouter() *Router {
-	return &Router{
+func NewRouter(configSvc config.Service) *Router {
+	r := &Router{
 		roundRobinCounter: make(map[string]*uint64),
 		ringCache:         make(map[string]*cachedRing),
+		configSvc:         configSvc,
 	}
+	r.strategies.specified = &SpecifiedStrategy{}
+	r.strategies.hash = &ConsistentHashStrategy{router: r}
+	r.strategies.rr = &RoundRobinStrategy{router: r}
+	return r
 }
 
 // Route selects a client from the group based on the routing strategy
@@ -82,31 +96,52 @@ func (r *Router) Route(group *client.RpcGroup, params RouteParams) *client.RpcCl
 		return nil
 	}
 
-	// 1. If ClientID is specified, choose between exact and fuzzy lookup.
+	// 1. SpecifiedClient 最高优先级，硬编码短路
 	if params.ClientID != "" {
-		if params.Fuzzy {
-			return group.FindClientByFuzzy(params.ClientID)
+		return r.strategies.specified.Select(group, params)
+	}
+
+	// 2. 显式 HashKey 或 ConstantInvoke → 强制使用一致性 Hash（向后兼容）
+	if params.HashKey != "" || shouldUseConsistentHash(params.ConstantInvoke) {
+		if c := r.strategies.hash.Select(group, params); c != nil {
+			return c
 		}
-		return r.routeBySpecifiedClient(group, params.ClientID)
+		// Hash 无可用客户端 → 回退 RR
+		return r.strategies.rr.Select(group, params)
 	}
 
-	// 2. Resolve hash key: if ConstantInvoke is enabled and no explicit HashKey, build it.
-	hashKey := params.HashKey
-	if hashKey == "" && shouldUseConsistentHash(params.ConstantInvoke) {
-		hashKey = buildConsistentHashKey(params.GroupName, params.Action, params.Payload)
-	}
-
-	// 3. If hash key is available (explicit or auto-built), try consistent hash
-	if hashKey != "" {
-		if client := r.routeByConsistentHash(group, hashKey); client != nil {
-			return client
+	// 3. 按 group 维度读 config key 决定主策略
+	switch r.resolveStrategy(params.GroupName) {
+	case StrategyConsistentHash:
+		if c := r.strategies.hash.Select(group, params); c != nil {
+			return c
 		}
-		// Fallback to round-robin if consistent hash returns nil
-		return r.routeByRoundRobin(group)
+		// Hash 无可用客户端 → 回退 RR
 	}
 
-	// 4. Default to round-robin
-	return r.routeByRoundRobin(group)
+	return r.strategies.rr.Select(group, params)
+}
+
+// resolveStrategy 从 config 读取路由策略，缺省/解析失败 → RoundRobin
+func (r *Router) resolveStrategy(groupName string) StrategyType {
+	if r.configSvc == nil {
+		return StrategyRoundRobin
+	}
+
+	// 先查分组级配置
+	key := "sekiro.routing." + groupName + ".strategy"
+	strategy := r.configSvc.GetConfig(key)
+	if strategy == "" {
+		// 回退全局配置
+		strategy = r.configSvc.GetConfig("sekiro.routing.strategy")
+	}
+
+	switch StrategyType(strategy) {
+	case StrategyConsistentHash:
+		return StrategyConsistentHash
+	default:
+		return StrategyRoundRobin
+	}
 }
 
 // routeBySpecifiedClient routes to a specific client by ID

@@ -330,7 +330,7 @@ func TestHandleGroupListAccessibleGroupsUsesContextUserWhenPresent(t *testing.T)
 }
 
 func newDefaultTestRouter() *router.Router {
-	return router.NewRouter()
+	return router.NewRouter(nil)
 }
 
 func TestHandleKickClient_Single(t *testing.T) {

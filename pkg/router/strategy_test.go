@@ -7,7 +7,7 @@ import (
 )
 
 func TestRouter_RouteBySpecifiedClient(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -36,7 +36,7 @@ func TestRouter_RouteBySpecifiedClient(t *testing.T) {
 }
 
 func TestRouter_RouteBySpecifiedClient_NotFound(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -58,7 +58,7 @@ func TestRouter_RouteBySpecifiedClient_NotFound(t *testing.T) {
 }
 
 func TestRouter_RouteByConsistentHash(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -88,7 +88,7 @@ func TestRouter_RouteByConsistentHash(t *testing.T) {
 }
 
 func TestRouter_RouteByRoundRobin(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -121,7 +121,7 @@ func TestRouter_RouteByRoundRobin(t *testing.T) {
 }
 
 func TestRouter_Route_Priority(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -151,7 +151,7 @@ func TestRouter_Route_Priority(t *testing.T) {
 }
 
 func TestRouter_Route_NilGroup(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 
 	params := RouteParams{
 		GroupName: "test-group",
@@ -165,7 +165,7 @@ func TestRouter_Route_NilGroup(t *testing.T) {
 }
 
 func TestRouter_Route_EmptyGroup(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -180,7 +180,7 @@ func TestRouter_Route_EmptyGroup(t *testing.T) {
 }
 
 func TestRouter_RouteByConstantInvoke(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -224,7 +224,7 @@ func TestRouter_RouteByConstantInvoke(t *testing.T) {
 }
 
 func TestRouter_RouteByConstantInvoke_Disabled(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -257,7 +257,7 @@ func TestRouter_RouteByConstantInvoke_Disabled(t *testing.T) {
 }
 
 func TestRouter_RingCache_Reuse(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -301,7 +301,7 @@ func TestRouter_RingCache_Reuse(t *testing.T) {
 }
 
 func TestRouter_RingCache_Invalidation(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")
 	defer group.Close()
 
@@ -332,7 +332,7 @@ func TestRouter_RingCache_Invalidation(t *testing.T) {
 }
 
 func TestRouter_RingCache_InvalidateAll(t *testing.T) {
-	router := NewRouter()
+	router := NewRouter(nil)
 	group1 := client.NewRpcGroup("group-1")
 	group2 := client.NewRpcGroup("group-2")
 	defer group1.Close()
