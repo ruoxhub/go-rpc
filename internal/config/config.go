@@ -9,27 +9,28 @@ var DefaultTimeout = 30
 
 // ServerConfig holds server configuration loaded from environment variables.
 type ServerConfig struct {
-	Host            string         `env:"RPC_HOST"`
-	Port            int            `env:"RPC_PORT"`
-	HttpsServices   HttpsConfig    `env:"RPC_HTTPS_*"`
-	DefaultTimeOut  int            `env:"RPC_TIMEOUT"`
-	CloseLog        bool           `env:"RPC_CLOSE_LOG"`
-	CloseWebLog     bool           `env:"RPC_CLOSE_WEB_LOG"`
-	Mode            string         `env:"RPC_MODE"`
-	Cors            bool           `env:"RPC_CORS"`
-	RouterReplace   RouterReplace  `env:"RPC_ROUTE_REPLACE_*"`
-	DisableWebAdmin bool           `env:"RPC_DISABLE_WEB_ADMIN"`
-	DisableMetrics  bool           `env:"RPC_DISABLE_METRICS"`
-	DisableAlert    bool           `env:"RPC_DISABLE_ALERT"`
-	DisableDatabase bool           `env:"RPC_DISABLE_DATABASE"`
-	DisableTrace    bool           `env:"RPC_DISABLE_TRACE"`
-	Database        DatabaseConfig `env:"RPC_DB_*"`
-	Log             LogConfig      `env:"RPC_LOG_*"`
-	Alert           AlertConfig    `env:"RPC_SMTP_*"`
-	Provider        ProviderConfig `env:"RPC_PROVIDER_*"`
-	CorsOrigins     []string       `env:"RPC_CORS_ORIGINS"`
-	TraceSampleRate float64        `env:"RPC_TRACE_SAMPLE_RATE"`
-	TraceBatchSize  int            `env:"RPC_TRACE_BATCH_SIZE"`
+	Host               string         `env:"RPC_HOST"`
+	Port               int            `env:"RPC_PORT"`
+	HttpsServices      HttpsConfig    `env:"RPC_HTTPS_*"`
+	DefaultTimeOut     int            `env:"RPC_TIMEOUT"`
+	CloseLog           bool           `env:"RPC_CLOSE_LOG"`
+	CloseWebLog        bool           `env:"RPC_CLOSE_WEB_LOG"`
+	Mode               string         `env:"RPC_MODE"`
+	Cors               bool           `env:"RPC_CORS"`
+	RouterReplace      RouterReplace  `env:"RPC_ROUTE_REPLACE_*"`
+	DisableWebAdmin    bool           `env:"RPC_DISABLE_WEB_ADMIN"`
+	DisableMetrics     bool           `env:"RPC_DISABLE_METRICS"`
+	DisableAlert       bool           `env:"RPC_DISABLE_ALERT"`
+	DisableDatabase    bool           `env:"RPC_DISABLE_DATABASE"`
+	DisableTrace       bool           `env:"RPC_DISABLE_TRACE"`
+	DisableAutoMigrate bool           `env:"RPC_DISABLE_AUTO_MIGRATE"`
+	Database           DatabaseConfig `env:"RPC_DB_*"`
+	Log                LogConfig      `env:"RPC_LOG_*"`
+	Alert              AlertConfig    `env:"RPC_SMTP_*"`
+	Provider           ProviderConfig `env:"RPC_PROVIDER_*"`
+	CorsOrigins        []string       `env:"RPC_CORS_ORIGINS"`
+	TraceSampleRate    float64        `env:"RPC_TRACE_SAMPLE_RATE"`
+	TraceBatchSize     int            `env:"RPC_TRACE_BATCH_SIZE"`
 }
 
 // ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
@@ -62,13 +63,14 @@ type DatabaseConfig struct {
 	SSLMode  string `env:"RPC_DB_SSL_MODE"`
 
 	// Connection pool tuning (applied to the underlying *sql.DB).
-	// Defaults are tuned for a mid-traffic service: ~20 concurrent writers
-	// with a handful of idle connections kept warm, and a 30-minute max
-	// lifetime so Postgres-side state (prepared statements, temp tables) is
-	// periodically reclaimed.
+	// Defaults are tuned for a mid-traffic service: ~50 concurrent writers
+	// with idle connections kept warm, a 30-minute max lifetime so Postgres-side
+	// state (prepared statements, temp tables) is periodically reclaimed,
+	// and a 5-minute idle timeout to release unused connections.
 	MaxOpenConns    int `env:"RPC_DB_MAX_OPEN_CONNS"`
 	MaxIdleConns    int `env:"RPC_DB_MAX_IDLE_CONNS"`
 	ConnMaxLifetime int `env:"RPC_DB_CONN_MAX_LIFETIME_SECONDS"`
+	ConnMaxIdleTime int `env:"RPC_DB_CONN_MAX_IDLE_TIME_SECONDS"`
 }
 
 // LogConfig holds file log configuration
@@ -117,9 +119,10 @@ func DefaultServerConfig() *ServerConfig {
 			Password:        "postgres",
 			DBName:          "sekiro",
 			SSLMode:         "disable",
-			MaxOpenConns:    25,
+			MaxOpenConns:    50,
 			MaxIdleConns:    10,
 			ConnMaxLifetime: 1800,
+			ConnMaxIdleTime: 300,
 		},
 		Cors: true,
 		Mode: "release",
@@ -169,6 +172,7 @@ func LoadServerConfigFromEnv() *ServerConfig {
 		DisableAlert:    envBool("RPC_DISABLE_ALERT", d.DisableAlert),
 		DisableDatabase: envBool("RPC_DISABLE_DATABASE", d.DisableDatabase),
 		DisableTrace:    envBool("RPC_DISABLE_TRACE", d.DisableTrace),
+		DisableAutoMigrate: envBool("RPC_DISABLE_AUTO_MIGRATE", d.DisableAutoMigrate),
 		CorsOrigins:     envStringSlice("RPC_CORS_ORIGINS", d.CorsOrigins),
 
 		HttpsServices: HttpsConfig{
@@ -193,6 +197,7 @@ func LoadServerConfigFromEnv() *ServerConfig {
 			MaxOpenConns:    envInt("RPC_DB_MAX_OPEN_CONNS", d.Database.MaxOpenConns),
 			MaxIdleConns:    envInt("RPC_DB_MAX_IDLE_CONNS", d.Database.MaxIdleConns),
 			ConnMaxLifetime: envInt("RPC_DB_CONN_MAX_LIFETIME_SECONDS", d.Database.ConnMaxLifetime),
+			ConnMaxIdleTime: envInt("RPC_DB_CONN_MAX_IDLE_TIME_SECONDS", d.Database.ConnMaxIdleTime),
 		},
 
 		Log: LogConfig{

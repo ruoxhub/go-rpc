@@ -277,7 +277,7 @@ func shouldSkipTracePath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/sysconfig/app-logs"):
 		return true
-	case path == "/health", path == "/healthz", path == "/readyz":
+	case path == "/health", path == "/healthz", path == "/readyz", path == "/live", path == "/ready":
 		return true
 	case strings.HasPrefix(path, "/assets/"):
 		return true

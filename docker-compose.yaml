@@ -32,6 +32,8 @@ services:
       - RPC_DISABLE_METRICS=${RPC_DISABLE_METRICS:-false}
       - RPC_DISABLE_ALERT=${RPC_DISABLE_ALERT:-false}
       - RPC_DISABLE_DATABASE=${RPC_DISABLE_DATABASE:-false}
+      # Schema 管理 (生产建议 true,用 deploy/postgres/migration/ 脚本管理)
+      - RPC_DISABLE_AUTO_MIGRATE=${RPC_DISABLE_AUTO_MIGRATE:-false}
       # Route prefix replacement
       - RPC_ROUTE_REPLACE_ENABLE=${RPC_ROUTE_REPLACE_ENABLE:-false}
       # HTTPS
@@ -44,6 +46,7 @@ services:
       - RPC_DB_PASSWORD=${RPC_DB_PASSWORD:-postgres}
       - RPC_DB_NAME=${RPC_DB_NAME:-sekiro}
       - RPC_DB_SSL_MODE=${RPC_DB_SSL_MODE:-disable}
+      - RPC_DB_CONN_MAX_IDLE_TIME_SECONDS=${RPC_DB_CONN_MAX_IDLE_TIME_SECONDS:-300}
       # SMTP
       - RPC_SMTP_HOST=${RPC_SMTP_HOST:-localhost}
       - RPC_SMTP_PORT=${RPC_SMTP_PORT:-25}
@@ -60,7 +63,7 @@ services:
     networks:
       - 1panel-network
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:5612/business/groupList || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:5612/live || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

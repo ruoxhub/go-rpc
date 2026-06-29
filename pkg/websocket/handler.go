@@ -214,12 +214,16 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		default:
 		}
 
-		if time.Since(sekiroClient.LastActive) > h.heartbeatTimeout {
-			logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
-			return
-		}
+	// 读取 LastActive 走 getter,避免与 UpdateActive 的写操作产生 data race。
+	if time.Since(sekiroClient.GetLastActive()) > h.heartbeatTimeout {
+		logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
+		return
+	}
 
-		conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
+	// 限制单条消息大小,防止恶意客户端发送超大帧导致 OOM。
+	// 与 TCP 协议层 bodyLen 上限 (10MB) 对齐。
+	conn.SetReadLimit(10 * 1024 * 1024)
+	conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {

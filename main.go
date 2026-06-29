@@ -38,6 +38,10 @@ var (
 	debug        bool
 	localDebug   bool
 	resetMetrics bool
+
+	// version 在构建时通过 -ldflags "-X main.version=..." 注入。
+	// 默认 "dev" 用于本地开发,docker build 可通过 --build-arg VERSION=<tag> 覆盖。
+	version = "dev"
 )
 
 func init() {
@@ -166,6 +170,24 @@ func (s *Server) Start() error {
 
 	logger.InitLogger(s.config.Debug, logFileOptions(s.serverConfig))
 
+	logger.Infof("Rpc RPC Server version: %s", version)
+
+	// 生产环境安全检查:拒绝使用默认数据库密码,防止误部署导致数据泄露。
+	isReleaseMode := s.serverConfig.Mode == "release" || !s.config.Debug
+	dbCfg := s.serverConfig.Database
+	if isReleaseMode && !s.serverConfig.DisableDatabase {
+		if dbCfg.User == "postgres" && dbCfg.Password == "postgres" {
+			return fmt.Errorf("refusing to start in release mode with default database credentials " +
+				"(postgres/postgres): set RPC_DB_USER and RPC_DB_PASSWORD to non-default values")
+		}
+	}
+
+	// 生产环境安全检查:拒绝 -reset-metrics,防止误操作清空生产指标数据。
+	if resetMetrics && isReleaseMode {
+		return fmt.Errorf("-reset-metrics is forbidden in release mode " +
+			"(it drops all metric tables); restart with RPC_MODE=debug or remove the flag")
+	}
+
 	disableDB := s.serverConfig.DisableDatabase
 	disableMetrics := s.serverConfig.DisableMetrics
 	disableAlert := s.serverConfig.DisableAlert
@@ -187,6 +209,7 @@ func (s *Server) Start() error {
 			s.serverConfig.Database.MaxOpenConns,
 			s.serverConfig.Database.MaxIdleConns,
 			s.serverConfig.Database.ConnMaxLifetime,
+			s.serverConfig.Database.ConnMaxIdleTime,
 		); err != nil {
 			logger.Errorf("Failed to configure database pool: %v", err)
 			return fmt.Errorf("failed to configure database pool: %w", err)
@@ -201,11 +224,16 @@ func (s *Server) Start() error {
 			logger.Warn("Metric tables dropped; AutoMigrate will recreate them below")
 		}
 
-		if err := database.AutoMigrate(); err != nil {
-			logger.Errorf("Failed to run database migration: %v", err)
-			return fmt.Errorf("failed to run database migration: %w", err)
+		if s.serverConfig.DisableAutoMigrate {
+			logger.Info("AutoMigrate skipped (RPC_DISABLE_AUTO_MIGRATE=true); " +
+				"ensure schema is managed via deploy/postgres/migration/ scripts")
+		} else {
+			if err := database.AutoMigrate(); err != nil {
+				logger.Errorf("Failed to run database migration: %v", err)
+				return fmt.Errorf("failed to run database migration: %w", err)
+			}
+			logger.Info("Database migration completed successfully")
 		}
-		logger.Info("Database migration completed successfully")
 		db := database.GetDB()
 		s.db = db
 		s.groupRepo = repository.NewGroupRepository(db)
@@ -339,23 +367,47 @@ func (s *Server) Start() error {
 
 	s.registerRoutes()
 
+	// 监听地址:HTTPS 启用时优先使用 HttpsListen,否则用 host:port。
+	useTLS := s.serverConfig.HttpsServices.IsEnable
 	addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
+	if useTLS && s.serverConfig.HttpsServices.HttpsListen != "" {
+		addr = s.serverConfig.HttpsServices.HttpsListen
+	}
+
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to create listener: %w", err)
 	}
 
-	logger.Infof("Rpc server starting on %s", addr)
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+	}
+	logger.Infof("Rpc server starting on %s://%s", scheme, addr)
 	logger.Infof("CORS enabled: %v", corsEnabled)
 	logger.Debug("Legacy detector path is not wired into the active server bootstrap")
 	if routeReplaceEnabled {
 		logger.Infof("Route prefix replacement enabled: %s", routePrefix)
 	}
+	if useTLS {
+		logger.Infof("TLS enabled: pem=%s key=%s",
+			s.serverConfig.HttpsServices.PemPath, s.serverConfig.HttpsServices.KeyPath)
+	}
 	logger.Info("Welcome to use Rpc framework")
 
 	go func() {
-		if err := s.httpServer.Server().Serve(listener); err != nil && err != http.ErrServerClosed {
-			logger.Errorf("HTTP server error: %v", err)
+		if useTLS {
+			if err := s.httpServer.Server().ServeTLS(
+				listener,
+				s.serverConfig.HttpsServices.PemPath,
+				s.serverConfig.HttpsServices.KeyPath,
+			); err != nil && err != http.ErrServerClosed {
+				logger.Errorf("HTTPS server error: %v", err)
+			}
+		} else {
+			if err := s.httpServer.Server().Serve(listener); err != nil && err != http.ErrServerClosed {
+				logger.Errorf("HTTP server error: %v", err)
+			}
 		}
 	}()
 
@@ -379,11 +431,50 @@ func (s *Server) registerRoutes() {
 	}
 
 	// 健康检查端点
+	// /live: 进程存活探针,恒返回 200,用于 K8s livenessProbe(无需鉴权)。
+	s.httpServer.Engine().GET("/live", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":    "alive",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"version":   version,
+		})
+	})
+
+	// /ready: 就绪探针,检查关键依赖(DB)是否可用,用于 K8s readinessProbe。
+	// DB 不可用时返回 503,使流量不路由到该实例。
+	s.httpServer.Engine().GET("/ready", func(c *gin.Context) {
+		if s.db != nil {
+			if sqlDB, err := s.db.DB(); err == nil {
+				if err := sqlDB.Ping(); err != nil {
+					c.JSON(503, gin.H{
+						"status":    "not ready",
+						"reason":    "database ping failed",
+						"timestamp": time.Now().Format(time.RFC3339),
+					})
+					return
+				}
+			} else {
+				c.JSON(503, gin.H{
+					"status":    "not ready",
+					"reason":    "database connection unavailable",
+					"timestamp": time.Now().Format(time.RFC3339),
+				})
+				return
+			}
+		}
+		c.JSON(200, gin.H{
+			"status":    "ready",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"version":   version,
+		})
+	})
+
+	// /health: 向后兼容别名,等同于 /live。
 	s.httpServer.Engine().GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":    "healthy",
 			"timestamp": time.Now().Format(time.RFC3339),
-			"version":   "1.0.0",
+			"version":   version,
 		})
 	})
 
@@ -629,14 +720,27 @@ func (s *Server) Shutdown() {
 		}
 	}
 
-	// Cancel all WebSocket handler goroutines
+	// 1. 先停止 HTTP Server:拒绝新连接,等待 in-flight HTTP 请求处理完毕。
+	//    此时 WebSocket 客户端仍在线,RPC 响应仍可回传,让调用方拿到正常结果。
+	if s.httpServer != nil {
+		logger.Info("Draining HTTP connections (waiting for in-flight requests)...")
+		if err := s.httpServer.Shutdown(); err != nil {
+			logger.Errorf("HTTP server shutdown error: %v", err)
+		}
+	}
+
+	// 2. 等待 in-flight RPC 排空(最多 drainGracePeriod)。
+	//    httpServer.Shutdown 已等待 handler 返回,但 RPC handler 内部
+	//    阻塞在 timeoutManager.Wait() 上。这里给一个额外的排空窗口,
+	//    让尚未完成的 RPC 有机会收到响应或自然超时。
+	s.drainInflight(10 * time.Second)
+
+	// 3. 取消 WebSocket handler goroutines,断开所有客户端连接。
 	if s.wsCancel != nil {
 		s.wsCancel()
 	}
 
-	if s.httpServer != nil {
-		s.httpServer.Shutdown()
-	}
+	// 4. 关闭 timeout manager(强制关闭剩余的 invoke/stream 记录)。
 	// Flush any pending batched trace records after HTTP traffic has drained.
 	middleware.ShutdownTraceRecorder()
 	// Stop auth cache GC goroutines to avoid leak on exit.
@@ -667,6 +771,31 @@ func (s *Server) Shutdown() {
 	}
 
 	logger.Info("Server stopped")
+}
+
+// drainInflight 等待 in-flight RPC 请求(unary + stream)排空,最多等待 maxWait。
+// 在此期间 WebSocket 客户端仍在线,响应可正常回传。
+func (s *Server) drainInflight(maxWait time.Duration) {
+	if s.timeoutManager == nil {
+		return
+	}
+	deadline := time.Now().Add(maxWait)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		count := s.timeoutManager.Count() + s.timeoutManager.StreamCount()
+		if count == 0 {
+			logger.Info("All in-flight RPC requests drained")
+			return
+		}
+		if time.Now().After(deadline) {
+			logger.Warnf("Drain timeout: %d in-flight RPC request(s) still pending, proceeding with shutdown", count)
+			return
+		}
+		logger.Infof("Waiting for %d in-flight RPC request(s) to drain...", count)
+		<-ticker.C
+	}
 }
 
 func (s *Server) GetClientManager() *client.ClientManager {

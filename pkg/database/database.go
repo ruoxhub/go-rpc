@@ -71,8 +71,10 @@ func InitFromConfig(host string, port int, user, password, dbName, sslMode strin
 
 // ConfigurePool 把连接池参数应用到已建立的底层 *sql.DB。
 // 应在 Init / InitFromConfig 成功后调用。
-// maxOpen/maxIdle <= 0 表示保留驱动默认；maxLifetimeSeconds <= 0 表示不限制连接寿命。
-func ConfigurePool(maxOpen, maxIdle, maxLifetimeSeconds int) error {
+// maxOpen/maxIdle <= 0 表示保留驱动默认；
+// maxLifetimeSeconds <= 0 表示不限制连接寿命；
+// maxIdleTimeSeconds <= 0 表示不限制空闲时间。
+func ConfigurePool(maxOpen, maxIdle, maxLifetimeSeconds, maxIdleTimeSeconds int) error {
 	if DB == nil {
 		return fmt.Errorf("database not initialized")
 	}
@@ -90,9 +92,12 @@ func ConfigurePool(maxOpen, maxIdle, maxLifetimeSeconds int) error {
 	if maxLifetimeSeconds > 0 {
 		sqlDB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 	}
+	if maxIdleTimeSeconds > 0 {
+		sqlDB.SetConnMaxIdleTime(time.Duration(maxIdleTimeSeconds) * time.Second)
+	}
 
-	logger.Infof("Database pool configured: max_open=%d max_idle=%d max_lifetime=%ds",
-		maxOpen, maxIdle, maxLifetimeSeconds)
+	logger.Infof("Database pool configured: max_open=%d max_idle=%d max_lifetime=%ds max_idle_time=%ds",
+		maxOpen, maxIdle, maxLifetimeSeconds, maxIdleTimeSeconds)
 	return nil
 }
 
@@ -118,7 +123,8 @@ func ResetMetricTables() error {
 	return nil
 }
 
-// AutoMigrate 检查数据库表是否存在，用于启动时的 schema 校验
+// AutoMigrate 检查数据库表是否存在，用于启动时的 schema 校验。
+// 生产环境可通过 RPC_DISABLE_AUTO_MIGRATE=true 跳过,改用 deploy/postgres/migration/ 增量脚本独立管理 schema。
 func AutoMigrate() error {
 	if DB == nil {
 		return fmt.Errorf("database not initialized")

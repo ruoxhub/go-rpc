@@ -17,6 +17,8 @@ type InvokeRecord struct {
 	Timeout      time.Duration
 	ResponseChan chan *InvokeResponse
 	timedOut     bool
+	closed       bool
+	closeOnce    sync.Once
 	mu           sync.Mutex
 }
 
@@ -126,14 +128,15 @@ func (r *InvokeRecord) IsExpired() bool {
 	return time.Since(r.CreatedAt) > r.Timeout
 }
 
+// Close 关闭响应 channel,多次调用安全。用 sync.Once 保证只关闭一次,
+// 消除之前 select+default 写法在并发场景下的歧义。
 func (r *InvokeRecord) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	select {
-	case <-r.ResponseChan:
-	default:
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed = true
+		r.mu.Unlock()
 		close(r.ResponseChan)
-	}
+	})
 }
 
 // TimeoutManager tracks in-flight invoke and stream requests with timeout and cleanup.
