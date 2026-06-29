@@ -144,11 +144,6 @@ func (r *Router) resolveStrategy(groupName string) StrategyType {
 	}
 }
 
-// routeBySpecifiedClient routes to a specific client by ID
-func (r *Router) routeBySpecifiedClient(group *client.RpcGroup, clientID string) *client.RpcClient {
-	return group.GetClient(clientID)
-}
-
 // routeByConsistentHash routes based on consistent hash of the key, with ring caching.
 func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey string) *client.RpcClient {
 	// Get all clients from the group

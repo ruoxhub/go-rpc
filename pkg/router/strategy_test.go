@@ -57,6 +57,71 @@ func TestRouter_RouteBySpecifiedClient_NotFound(t *testing.T) {
 	}
 }
 
+// TestSpecifiedStrategy_Fuzzy_HealthFirstOverExactUnhealthy 钉死重构前语义：
+// Fuzzy=true 时只走模糊匹配（健康优先），即使存在精确命中但不健康的客户端，
+// 也应返回健康的模糊匹配而非不健康的精确匹配。
+func TestSpecifiedStrategy_Fuzzy_HealthFirstOverExactUnhealthy(t *testing.T) {
+	router := NewRouter(nil)
+	group := client.NewRpcGroup("test-group")
+	defer group.Close()
+
+	// 精确命中 "abc" 但不健康
+	exactUnhealthy := client.NewRpcClient("test-group", "abc", nil)
+	exactUnhealthy.SetStatus(client.StatusOnline)
+	for i := 0; i < 3; i++ {
+		exactUnhealthy.MarkFailure()
+	}
+	group.Register(exactUnhealthy)
+
+	// 模糊命中 "abc" 且健康
+	fuzzyHealthy := client.NewRpcClient("test-group", "abcdef", nil)
+	fuzzyHealthy.SetStatus(client.StatusOnline)
+	group.Register(fuzzyHealthy)
+
+	got := router.Route(group, RouteParams{
+		GroupName: "test-group",
+		ClientID:  "abc",
+		Fuzzy:     true,
+	})
+	if got == nil {
+		t.Fatal("expected a fuzzy match, got nil")
+	}
+	if got.ClientID != "abcdef" {
+		t.Errorf("expected healthy fuzzy match abcdef, got unhealthy exact %s", got.ClientID)
+	}
+}
+
+// TestSpecifiedStrategy_Fuzzy_Off_ReturnsExactEvenUnhealthy 钉死：
+// Fuzzy=false 时走精确匹配，即使目标不健康也原样返回（与重构前一致）。
+func TestSpecifiedStrategy_Fuzzy_Off_ReturnsExactEvenUnhealthy(t *testing.T) {
+	router := NewRouter(nil)
+	group := client.NewRpcGroup("test-group")
+	defer group.Close()
+
+	exactUnhealthy := client.NewRpcClient("test-group", "abc", nil)
+	exactUnhealthy.SetStatus(client.StatusOnline)
+	for i := 0; i < 3; i++ {
+		exactUnhealthy.MarkFailure()
+	}
+	group.Register(exactUnhealthy)
+
+	fuzzyHealthy := client.NewRpcClient("test-group", "abcdef", nil)
+	fuzzyHealthy.SetStatus(client.StatusOnline)
+	group.Register(fuzzyHealthy)
+
+	got := router.Route(group, RouteParams{
+		GroupName: "test-group",
+		ClientID:  "abc",
+		Fuzzy:     false,
+	})
+	if got == nil {
+		t.Fatal("expected exact match, got nil")
+	}
+	if got.ClientID != "abc" {
+		t.Errorf("expected exact match abc, got %s", got.ClientID)
+	}
+}
+
 func TestRouter_RouteByConsistentHash(t *testing.T) {
 	router := NewRouter(nil)
 	group := client.NewRpcGroup("test-group")

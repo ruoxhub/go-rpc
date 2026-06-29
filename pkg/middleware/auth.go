@@ -394,11 +394,17 @@ func (am *AuthMiddleware) LookupGroupConfig(groupName string) (*model.GroupConfi
 
 // InvalidateToken 显式失效一个 token 的缓存
 func (am *AuthMiddleware) InvalidateToken(token string) {
+	if am == nil {
+		return
+	}
 	am.tokenCache.invalidate(token)
 }
 
 // InvalidateGroup 显式失效一个 group 的缓存
 func (am *AuthMiddleware) InvalidateGroup(groupName string) {
+	if am == nil {
+		return
+	}
 	am.groupCache.invalidate(groupName)
 }
 

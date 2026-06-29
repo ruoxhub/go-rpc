@@ -7,6 +7,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/deps"
+	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 )
 
@@ -21,6 +22,7 @@ type Deps struct {
 	AlertRepo             repository.AlertRepository
 	MetricRepo            repository.MetricRepository
 	AuthMW                *middleware.AuthMiddleware
+	MetricsCollector      metrics.MetricCollector
 }
 
 // SetupWebRoutes 设置 Web 管理界面路由
@@ -46,8 +48,8 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 			c.Next()
 		},
 		deps.AuthMW.Authenticate(),
-		middleware.AnonymousAccessMiddleware(cfgSvc, nil),
-		middleware.RateLimitMiddleware(cfgSvc, nil),
+		middleware.AnonymousAccessMiddleware(cfgSvc, deps.MetricsCollector),
+		middleware.RateLimitMiddleware(cfgSvc, deps.MetricsCollector),
 	)
 	{
 		users := api.Group("/users")

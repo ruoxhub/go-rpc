@@ -37,7 +37,7 @@ func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
 		clientManager:  clientManager,
 		wsHandler:      wsHandler,
 		timeoutManager: timeoutMgr,
-		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil),
+		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil, nil),
 	}
 	s.registerRoutes()
 

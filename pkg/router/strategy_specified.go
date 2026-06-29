@@ -13,15 +13,11 @@ func (s *SpecifiedStrategy) Select(group *client.RpcGroup, params RouteParams) *
 		return nil
 	}
 
-	// 精确匹配
-	if c := group.GetClient(params.ClientID); c != nil {
-		return c
-	}
-
-	// 模糊匹配（Fuzzy=true）
+	// Fuzzy=true：仅走模糊匹配（健康优先），与重构前语义一致
 	if params.Fuzzy {
 		return group.FindClientByFuzzy(params.ClientID)
 	}
 
-	return nil
+	// 精确匹配（GetClient 不按健康过滤，与重构前一致）
+	return group.GetClient(params.ClientID)
 }

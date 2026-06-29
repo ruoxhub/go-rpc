@@ -80,7 +80,9 @@ func (m *ClientManager) Register(client *RpcClient) {
 	group.Register(client)
 
 	m.publishDebounced(eventbus.EventClientConnect, client.Group, client.ClientID, func() interface{} {
-		return &eventbus.ClientConnectEvent{
+		// 事件约定为值类型发布（见 docs/superpowers/specs/2026-06-28-arch-optimization-design.md），
+		// 订阅方 SubscribeTyped[T] 为值类型 T，发指针会导致类型断言 panic。
+		return eventbus.ClientConnectEvent{
 			Group:     client.Group,
 			ClientID:  client.ClientID,
 			Timestamp: time.Now(),
@@ -105,7 +107,7 @@ func (m *ClientManager) Unregister(groupName, clientID string) {
 	}
 
 	m.publishDebounced(eventbus.EventClientDisconnect, groupName, clientID, func() interface{} {
-		return &eventbus.ClientDisconnectEvent{
+		return eventbus.ClientDisconnectEvent{
 			Group:     groupName,
 			ClientID:  clientID,
 			Timestamp: time.Now(),

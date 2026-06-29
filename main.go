@@ -33,11 +33,11 @@ import (
 )
 
 var (
-	port          int
-	host          string
-	debug         bool
-	localDebug    bool
-	resetMetrics  bool
+	port         int
+	host         string
+	debug        bool
+	localDebug   bool
+	resetMetrics bool
 )
 
 func init() {
@@ -91,7 +91,7 @@ func DefaultConfig() *Config {
 // Server represents the Rpc server
 type Server struct {
 	config           *Config
-	serverConfig       *config.ServerConfig
+	serverConfig     *config.ServerConfig
 	shutdown         chan struct{}
 	eventBus         *eventbus.EventBus
 	clientManager    *client.ClientManager
@@ -211,6 +211,11 @@ func (s *Server) Start() error {
 		s.groupRepo = repository.NewGroupRepository(db)
 		userRepo := repository.NewUserRepository(db)
 
+		// 初始化 metrics collector（须早于 authMW 构造，使 auth.deny 埋点真正生效）
+		if !disableMetrics {
+			s.metricsCollector = metrics.NewCollector(1*time.Minute, repository.NewMetricStore(db))
+		}
+
 		appDeps := &deps.AppDependencies{
 			DB:            db,
 			UserRepo:      userRepo,
@@ -255,32 +260,15 @@ func (s *Server) Start() error {
 	} else {
 		logger.Info("Running in DB-less mode (DisableDatabase=true)")
 		logger.Warn("数据库未初始化，跳过配置刷新")
+		// DB-less 模式下仍创建无 store 的 collector（flush 时 warn，不落库），保留原行为
+		if !disableMetrics {
+			s.metricsCollector = metrics.NewCollector(1*time.Minute, nil)
+		}
 	}
 	logger.Info("Config service started successfully")
 
-	// 订阅配置变更事件，失效相关缓存
-	eventbus.SubscribeTyped(s.eventBus, eventbus.EventConfigChanged, func(e eventbus.ConfigChangedEvent) {
-		for _, key := range e.Keys {
-			if strings.HasPrefix(key, "user.") || strings.HasPrefix(key, "token.") {
-				middleware.InvalidateAllTokens()
-				logger.Debugf("tokenCache invalidated due to config change: key=%s", key)
-			}
-			if strings.HasPrefix(key, "group.") {
-				middleware.InvalidateAllGroups()
-				logger.Debugf("groupCache invalidated due to config change: key=%s", key)
-			}
-		}
-	})
-
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus, s.groupRepo)
 
-	if !disableMetrics {
-		var metricStore repository.MetricStore
-		if !disableDB {
-			metricStore = repository.NewMetricStore(s.db)
-		}
-		s.metricsCollector = metrics.NewCollector(1*time.Minute, metricStore)
-	}
 	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo, s.authMW)
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
@@ -430,14 +418,15 @@ func (s *Server) registerRoutes() {
 				ConfigService: s.configService,
 				EventBus:      s.eventBus,
 			},
-			ClientManager:  s.clientManager,
-			SysConfigRepo:  repository.NewSysConfigRepository(db),
-			ServerNodeRepo: repository.NewServerNodeRepository(db),
-			SysLogRepo:     repository.NewSysLogRepository(db),
-			TraceRepo:      repository.NewTraceRepository(db),
-			AlertRepo:      repository.NewAlertRepository(db),
-			MetricRepo:     repository.NewMetricRepository(db),
-			AuthMW:         s.authMW,
+			ClientManager:    s.clientManager,
+			SysConfigRepo:    repository.NewSysConfigRepository(db),
+			ServerNodeRepo:   repository.NewServerNodeRepository(db),
+			SysLogRepo:       repository.NewSysLogRepository(db),
+			TraceRepo:        repository.NewTraceRepository(db),
+			AlertRepo:        repository.NewAlertRepository(db),
+			MetricRepo:       repository.NewMetricRepository(db),
+			AuthMW:           s.authMW,
+			MetricsCollector: s.metricsCollector,
 		}
 		handler.SetupWebRoutes(s.httpServer.Engine(), webDeps, s.alertEvaluator, s.configService)
 	}
@@ -651,7 +640,9 @@ func (s *Server) Shutdown() {
 	// Flush any pending batched trace records after HTTP traffic has drained.
 	middleware.ShutdownTraceRecorder()
 	// Stop auth cache GC goroutines to avoid leak on exit.
-	s.authMW.Shutdown()
+	if s.authMW != nil {
+		s.authMW.Shutdown()
+	}
 	if s.wsHandler != nil {
 		s.wsHandler.Shutdown()
 	}
