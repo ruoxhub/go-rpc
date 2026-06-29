@@ -1,8 +1,9 @@
-# Sekiro RPC Server — 全面技术分析与架构解构
+# Rpc RPC Server — 全面技术分析与架构解构
 
-> 分析基准：当前 `refactor` 分支代码实现（2026-06-11）  
+> 分析基准：当前 `main` 分支代码实现（截至 2026-06-28，commit `45a0e16`）  
 > 模块路径：`github.com/mrh30000/go-rpc`  
-> Go 版本：1.25.0 | 前端：React 18 + Vite + Ant Design
+> Go 版本：1.25.0 | 前端：React 18 + Vite 5 + Ant Design 5  
+> 文档目标：作为技术交接与二次开发依据，所有结论以**当前代码实现**为准
 
 ---
 
@@ -21,353 +22,397 @@
 
 ### 1.1 项目定位
 
-Sekiro RPC Server 是一个 **反向 RPC 网关**：服务端主动将请求转发给通过 WebSocket 长连接的客户端执行，客户端返回结果后服务端响应给调用方。同时内嵌了 Web 管理后台（React SPA）、OpenAI 兼容的 Chat Completions 代理、指标采集与告警引擎。
+Rpc RPC Server 是一个 **反向 RPC 网关**：服务端主动将调用方请求转发给通过 WebSocket / TCP 长连接的客户端执行，客户端返回结果后服务端响应给调用方。同时内嵌：
 
-**核心场景**：调用方 → HTTP API → Sekiro Server → WebSocket → RPC Client（业务端） → 响应回传。
+- **Web 管理后台**（React SPA，由 Gin 静态托管）
+- **OpenAI 兼容的 Chat Completions 代理**（`/business/chat`、`/business/qwen`），把 LLM 流式响应桥接到 RPC 客户端
+- **指标采集与告警引擎**（counter / gauge / latency，分钟-小时-天三级聚合）
+- **调用链路追踪**（TraceID 串联一次调用的所有 span）
 
-### 1.2 模块拆解
+**核心场景**：调用方 → HTTP API → Rpc Server → WebSocket/TCP → RPC Client（业务端）→ 响应回传。
 
-#### 1.2.1 服务启动与编排层 (`main.go`)
+### 1.2 模块拆解总览
+
+| 层级 | 包路径 | 职责 |
+|------|--------|------|
+| 编排层 | `main.go` | 组合根，装配与生命周期 |
+| 依赖容器 | `pkg/deps` | `AppDependencies` 聚合共享依赖 |
+| 协议层 | `pkg/protocol` | 数据包编解码 `[Magic][Len][Type][Serial][Headers][Data]` |
+| 传输层 | `pkg/transport` | `Connection` 抽象（WS / TCP 两实现） |
+| 客户端管理 | `pkg/client` | 分组、Actor 模型、健康检查、熔断 |
+| 路由层 | `pkg/router` | 轮询 / 指定 / 一致性 Hash |
+| 转发层 | `pkg/forwarder` | 超时管理、流式帧 |
+| WebSocket | `pkg/websocket` | WS 消息处理、客户端注册 |
+| HTTP 处理 | `pkg/handler` | 业务 API + Web 管理 + LLM 代理 |
+| 中间件 | `pkg/middleware` | 鉴权、限流、CORS、日志、追踪、路由替换 |
+| 配置 | `pkg/config` + `internal/config` | 运行期配置服务（DB-backed） |
+| 持久化 | `pkg/database` + `repository` | GORM + PostgreSQL，Repository 模式 |
+| 模型 | `pkg/model` | GORM 实体 |
+| 指标 | `pkg/metrics` | 采集、聚合、落库 |
+| 告警 | `pkg/alert` | 规则评估、通知 |
+| 事件 | `pkg/eventbus` | 发布-订阅，解耦客户端生命周期 |
+| 压缩 | `pkg/compress` | Gzip / Snappy / None（策略模式） |
+| 工具 | `pkg/utils` | 密码哈希、traceID、文件、错误码 |
+
+---
+
+### 1.3 核心模块详解
+
+#### 1.3.1 服务启动与编排层 (`main.go`)
 
 | 维度 | 说明 |
 |------|------|
-| **职责** | 组合根（Composition Root），负责所有组件的创建、装配、生命周期管理 |
-| **核心类型** | `Config`（CLI 参数）、`Server`（持有全部组件引用） |
-| **关键流程** | `NewServer()` → `Start()` → YAML 加载 → 日志初始化 → DB 连接 → 迁移 → 配置服务 → WebSocket Handler → 指标采集 → 告警引擎 → Gin 引擎 → 路由注册 → `net.Listen` → 等待关停信号 |
-| **依赖方向** | 向下依赖所有 `pkg/` 子包，是唯一知道全部组件的"粘合层" |
+| **职责** | 组合根（Composition Root），负责所有组件创建、装配、生命周期管理 |
+| **核心类型** | `Config`（CLI flag）、`Server`（持有全部组件引用） |
+| **关键流程** | `NewServer()` → `Start()`：YAML 加载 → 日志初始化 → DB 连接 + AutoMigrate → `configService` → `EventBus` → `ClientManager` → `TimeoutManager` → `metrics.Collector` → `alert.Evaluator` → `WebSocket Handler` → `APIHandler` → `gin.Engine` → `registerRoutes()` → `net.Listen` → 等待关停信号 |
 
 **关键设计**：
-- `Server.registerRoutes()` 是唯一的路由注册入口，根据 `DisableWebAdmin` / `DisableDatabase` 等开关裁剪路由。
-- 三组 API 路由：`/business/*`（核心 RPC 调用）、`/api/*`（Web 管理）、`/rpc-api/*`（前端外部接口）。
-- 优雅关停：`waitForShutdown()` 监听 `SIGINT/SIGTERM` → `Shutdown()` 级联取消 WS 协程、HTTP 服务器、告警引擎、指标采集器、客户端管理器。
 
-#### 1.2.2 客户端管理 (`pkg/client/`)
+- **统一依赖注入**：构造 `deps.AppDependencies{DB, UserRepo, GroupRepo, ConfigService, EventBus}` 一次性传入所有模块，替代早期散落的包级全局变量。`main.go` 是唯一知道全部组件的"粘合层"。
+- **路由裁剪开关**：`DisableWebAdmin` / `DisableDatabase` 控制 `/api/*`、`/rpc-api/*` 是否注册，支持极简部署。
+- **三组 API 路由**：
+  - `/business/*` — 核心 RPC 调用（`invoke` / `groupList` / `clientQueue` / `kick` / `chat` / `qwen` / `execjs` / `cookie` / `html`）
+  - `/api/*` — Web 管理后台接口（认证 + 限流）
+  - `/rpc-api/*` — 前端外部兼容接口（登录、用户、分组、追踪、告警）
+- **优雅关停**：`waitForShutdown()` 监听 `SIGINT/SIGTERM` → `Shutdown()` 级联关闭：WS 协程 → HTTP Server → 告警引擎 → 指标采集器 → 客户端管理器 → `ShutdownCaches()` 停止鉴权缓存 GC → 关闭 DB 连接池。
 
-| 维度 | 说明 |
+**调用关系**：`main.go` →（向下依赖）→ 所有 `pkg/*` 子包；`pkg/*` 之间通过接口与 EventBus 解耦，互不反向依赖 `main`。
+
+---
+
+#### 1.3.2 依赖容器 (`pkg/deps`)
+
+```go
+type AppDependencies struct {
+    DB            *gorm.DB
+    UserRepo      repository.UserRepository
+    GroupRepo     repository.GroupRepository
+    ConfigService config.Service
+    EventBus      *eventbus.EventBus
+}
+```
+
+**职责**：聚合"被多个模块共享"的依赖，避免每个 handler 各自重复声明。`handler.Deps` 进一步扩展为各 handler 专属仓库集合。这是从"包级全局 `database.DB`"向"显式注入"迁移的过渡形态——`database.DB` 仍保留但已标记 `// Deprecated`。
+
+---
+
+#### 1.3.3 客户端管理 (`pkg/client/`)
+
+| 文件 | 核心类型 | 说明 |
+|------|----------|------|
+| `client.go` | `RpcClient` | 单连接，持有 `transport.Connection`、健康状态、`OnHealthDegraded` 回调 |
+| `group.go` | `RpcGroup` | **Actor 模型**分组，所有操作经 `commandChan` 串行化 |
+| `manager.go` | `ClientManager` | 全局分组管理 + 生命周期事件去抖 |
+| `circuit_breaker.go` | `CircuitBreaker` | 客户端级熔断器 |
+
+**RpcClient 健康机制**：
+
+- `MarkSuccess()` 重置失败计数；`MarkFailure()` 累加。
+- 连续 3 次失败 → `IsHealthy=false`，触发 `OnHealthDegraded` → EventBus 发布 `EventClientHealthDegraded`。
+- 路由优先选健康客户端（见 `router.filterEligibleClients`）。
+
+**RpcGroup Actor 模型**：
+
+- 所有操作（`Register`/`Unregister`/`GetClient`/`Allocate`/`GetAllClients`）封装为 command，通过 `commandChan` 投递到单一 `runLoop` goroutine，**彻底消除并发竞争**。
+- 关停：`done` channel 关闭 → `runLoop` 退出 → `drainCommands` 回填零值 → `closeAllClients`。
+
+**ClientManager 事件去抖**：
+
+- 高频上下线场景，`(group, clientID, eventType)` 三元组在 `defaultDebounceDuration=10ms` 窗口内合并，只发布最后一次，避免下游（指标、路由缓存失效）被风暴冲垮。
+
+**调用关系**：`ClientManager` → `RpcGroup` → `RpcClient` → `transport.Connection`；通过 `EventBus` 发布事件，`metrics`/`router`/`alert` 订阅。
+
+---
+
+#### 1.3.4 路由层 (`pkg/router/`)
+
+三种策略（`RoutingStrategy` 枚举）：
+
+| 策略 | 触发条件 | 实现 |
+|------|----------|------|
+| `SpecifiedClient` | `ClientID != ""` | `group.GetClient(id)`；`Fuzzy=true` 时走 `FindClientByFuzzy` 子串匹配 |
+| `ConsistentHash` | `ConstantInvoke` truthy 或显式 `HashKey` | `ConsistentHashRing.Get(key)`，key 由 `group:action:payload` 自动构建 |
+| `RoundRobin` | 默认 | `atomic.AddUint64` 计数取模 |
+
+**一致性 Hash 优化**：
+
+- `ringCache` 按 group 缓存 hash 环，附带 `fingerprint`（客户端 ID 排序后的 sha256 前 8 字节）。
+- 客户端增删 → EventBus `EventClientConnect/Disconnect` → `Router.InvalidateRingCache(group)` 失效缓存，避免脏路由。
+- `Route()` 优先级：`SpecifiedClient > ConsistentHash > RoundRobin`；一致性 Hash 无可用客户端时回退轮询。
+
+**健康过滤**：`filterEligibleClients` 两级回退——优先健康在线 → 在线 → 全部。
+
+---
+
+#### 1.3.5 转发与超时层 (`pkg/forwarder/`)
+
+| 文件 | 职责 |
 |------|------|
-| **职责** | 管理所有 RPC 客户端的连接、状态、分组和生命周期 |
-| **核心类型** | `RpcClient`（单连接）、`RpcGroup`（Actor 模型分组）、`ClientManager`（全局管理） |
+| `timeout.go` | `TimeoutManager` 管理 invoke 记录（`Add`/`Wait`/`Remove`）与流式记录（`RegisterStream`/`RemoveStream`） |
+| `streamframe.go` | 流式帧 `StreamRecord`，`ChunkChan` 传递分片 |
 
-**RpcClient** (`client.go`):
-- 持有 `transport.Connection` 抽象、健康状态（`IsHealthy`、`FailCount`）、`OnHealthDegraded` 回调。
-- 3 次连续失败 → 标记不健康，触发 EventBus 发布 `EventClientHealthDegraded`。
+**Unary 流程**：`Add(sequence,...)` → 发送 WS invoke → `Wait(sequence)` 阻塞 → 响应或 `ctx.Done()` 超时 → `Remove`。
 
-**RpcGroup** (`group.go`):
-- **Actor 模型**：所有操作（Register/Unregister/GetClient/Allocate）通过 `commandChan` 发送到单一 goroutine（`runLoop`），彻底消除并发竞争。
-- 关停模型：`done` channel 关闭 → `runLoop` 自然退出 → `drainCommands` 回填零值 → `closeAllClients`。
-- `allocate()` 优先级：健康在线 → 在线 → 任意。
+**Stream 流程**：`RegisterStream` → 发送 → 循环消费 `ChunkChan` → SSE `text/event-stream` 输出；客户端断连或超时主动 `RemoveStream`，触发 `ChunkChan close` 终止读流。
 
-**ClientManager** (`manager.go`):
-- `sync.RWMutex` 保护 groups map，懒创建 `RpcGroup`。
-- **事件去抖**：客户端上下线事件在 `(group, clientID, eventType)` 维度做 10ms trailing-only 去抖，压制高频抖动的通知噪音。
+**并发安全**：`TimeoutManager.Shutdown` 用 `sync.Once` 防重复关闭。
 
-#### 1.2.3 WebSocket 消息处理 (`pkg/websocket/`)
+---
 
-| 维度 | 说明 |
-|------|------|
-| **职责** | 处理客户端 WebSocket 连接的全生命周期：注册、心跳、消息分发、invoke 请求发送 |
-| **核心类型** | `Handler`、`RpcMessage`（JSON 协议消息） |
+#### 1.3.6 HTTP 处理层 (`pkg/handler/`)
 
-**消息类型**：
-- `heartbeat` — 心跳保活 + 设备活跃时间更新
-- `invoke` — 服务端向客户端发送 RPC 调用
-- `invoke_response` — 客户端返回调用结果
-- `invoke_stream` — 客户端返回流式响应分片
-- `bind` — 客户端上报 action 列表，同步到 DB
+这是最大的包，按职责细分：
 
-**HandleConnection 流程**：
-1. 创建 `transport.WSConnection` 包装
-2. 创建 `RpcClient`，设置健康降级回调
-3. 检查分组是否已注册（DB），创建/更新设备记录
-4. 注册到 `ClientManager`
-5. 进入读循环：读消息 → 解析 JSON → 分发到对应 handler
-
-#### 1.2.4 请求转发 (`pkg/forwarder/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 追踪 in-flight 的 RPC 调用，管理超时与流式响应 |
-| **核心类型** | `TimeoutManager`、`InvokeRecord`、`StreamRecord` |
-
-**InvokeRecord**：每个 unary 请求对应一个 record，持有 `ResponseChan`。客户端响应到达时通过 `Complete()` 将结果推入 channel，`Wait()` 阻塞等待。
-
-**StreamRecord**：每个 stream 请求对应一个 record，持有 `ChunkChan`（buffer=16）。客户端通过 `PushStreamChunk` 推入数据分片，`Close()` 关闭 channel 通知消费端。Push 有 5 秒背压超时防止客户端卡死服务端。
-
-**TimeoutManager**：定期 `cleanupExpired()` 清理超时记录。
-
-#### 1.2.5 HTTP 处理器 (`pkg/handler/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 统一的 HTTP API 入口：RPC 调用、Chat Completions、Web 管理 |
-| **核心类型** | `APIHandler`（invoke/chat/qwen）、各 Web handler（user/group/metric/trace/alert/sysconfig） |
-
-**RequestBuilder 接口**：将 invoke 和 chat 请求统一抽象为 `BuildRequestData()` / `GetTimeout()` / `IsStream()` 等方法，`handleForwardRequest()` 作为统一编排入口。
-
-**三种响应类型**：
-- `ApiResponse` — `/api/*` 管理接口，`code=0` 表示成功
-- `RpcResponse` — `/rpc-api/*` 和 `/business/*`，`status=0` 表示成功
-- `RpcExtraResponse` — invoke 响应，额外携带 `group` / `clientId` 路由元数据
-
-#### 1.2.6 路由策略 (`pkg/router/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 客户端选择策略：轮询、指定、一致性哈希 |
-| **核心类型** | `Router`、`ConsistentHashRing`、`RouteParams` |
-
-**策略优先级**：`SpecifiedClient`（指定 clientId） > `ConsistentHash`（constantInvoke=true） > `RoundRobin`（默认）。
-
-**哈希环缓存**：`ringCache` 按 group 缓存一致性哈希环，通过 client 列表指纹检测变更。客户端上下线时通过 EventBus → `InvalidateRingCache` 主动失效。
-
-#### 1.2.7 中间件 (`pkg/middleware/`)
-
-| 中间件 | 说明 |
-|--------|------|
-| `AuthMiddleware.Authenticate()` | 必选认证：Bearer token → DB 查询 → 写入 context |
-| `AuthMiddleware.OptionalAuth()` | 可选认证：有 token 就解析，没有也放行 |
-| `AuthMiddleware.RequireAdmin()` | 管理员权限校验 |
-| `LoggingMiddleware` | 请求日志 |
-| `TraceMiddleware` | 链路追踪（traceId 注入） |
-| `RateLimitMiddleware` | QPS 限流（令牌桶） |
-| `AnonymousAccessMiddleware` | 匿名访问控制 |
-
-**Token 缓存**：`FindUserByToken` 使用 singleflight + 内存缓存（含负缓存），避免并发穿透和 DB 抖动放大。
-
-#### 1.2.8 协议层 (`pkg/protocol/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 二进制协议编解码（TCP 传输层使用） |
-| **包格式** | `[Magic:int64][Length:int32][Type:byte][SerialNumber:int32][Headers][Data]` |
-| **Magic** | `0x73656b69726f0000`（"sekiro\0\0"） |
-
-**注意**：当前 WebSocket 通道使用 JSON 协议（`RpcMessage`），TCP 通道使用二进制协议（`RpcPacket`）。WebSocket 是当前主力通道。
-
-#### 1.2.9 传输层 (`pkg/transport/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 连接抽象，统一 WebSocket 和 TCP 的发送接口 |
-| **接口** | `Connection`：`Send(data []byte) error` / `Close() error` / `RemoteAddr() string` |
-| **实现** | `WSConnection`（gorilla/websocket）、`TCPConnection` |
-
-#### 1.2.10 压缩层 (`pkg/compress/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 数据压缩/解压，支持 Gzip、Snappy、None 三种策略 |
-| **模式** | Strategy 模式，`CompressManager` 按名称选择具体实现 |
-
-#### 1.2.11 事件总线 (`pkg/eventbus/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 进程内发布-订阅，解耦客户端生命周期事件与业务响应 |
-| **事件类型** | `EventClientConnect`、`EventClientDisconnect`、`EventClientHealthDegraded` |
-| **特点** | 同步分发（handler 内不要做耗时操作），支持 Unsubscribe |
-
-#### 1.2.12 指标采集 (`pkg/metrics/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 采集 RPC 调用计数、延迟、Gauge 等指标，定期刷盘到 PostgreSQL |
-| **架构** | 内存 bucket → 1 分钟 flush → `metric_minute` → 1 小时 rollup → `metric_hour` → 每天 rollup → `metric_day` |
-| **类型** | Counter（计数求和）、Gauge（瞬时值）、Histogram（含 P50/P90/P99） |
-
-#### 1.2.13 告警引擎 (`pkg/alert/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | 定期评估告警规则，超阈值时发送通知（SMTP/Webhook） |
-| **流程** | 加载 DB 规则 → 1 分钟轮询 → 查指标窗口数据 → 阈值判断 → 5 分钟防抖 → 发送通知 → 记录 history |
-| **告警级别** | Info（1x 阈值）→ Warning（1.5x）→ Critical（2x） |
-
-#### 1.2.14 限流器 (`pkg/flow/`)
-
-| 维度 | 说明 |
-|------|------|
-| **职责** | QPS 令牌桶限流 |
-| **特点** | `golang.org/x/time/rate` 实现，per-key limiter 带 TTL 自动清理 |
-
-#### 1.2.15 数据持久化 (`pkg/database/` + `pkg/model/`)
-
-| 维度 | 说明 |
-|------|------|
-| **ORM** | GORM + PostgreSQL |
-| **全局单例** | `database.DB` 包级变量，通过 `GetDB()` 访问 |
-| **Repository 模式** | `repository/` 定义接口（UserRepository、GroupRepository 等），handler 层通过接口注入依赖 |
-
-**数据模型**：
-
-| 模型 | 表名 | 说明 |
+| 文件 | 模块 | 职责 |
 |------|------|------|
-| `UserInfo` | `user_info` | 用户（含 api_token、is_admin、quota_qps） |
-| `GroupConfig` | `group_config` | 分组配置（归属用户、QPS 配额） |
-| `GroupAction` | `group_actions` | 分组可用的 RPC action 列表 |
-| `GroupDevice` | `group_device` | 分组下的设备（客户端）记录 |
-| `SysConfig` | `sys_config` | 系统键值配置 |
-| `SysLog` | `sys_log` | 审计日志 |
-| `ServerNode` | `server_node` | 服务器节点注册 |
-| `TraceRecord` | `trace_record` | 调用链路追踪 |
-| `AlertRule` / `AlertHistory` | `alert_rule` / `alert_history` | 告警规则与历史 |
-| `MetricMinute/Hour/Day` | `metric_minute/hour/day` | 多粒度指标聚合 |
-| `MetricTag` | `metric_tag` | 指标标签映射 |
+| `routes.go` | 路由注册 | `SetupWebRoutes` 装配 `/api/*`，handler 实例化 + DI |
+| `invoke.go` | RPC 调用 | `APIHandler` 核心转发，`RequestBuilder` 接口抽象 |
+| `chat.go` / `qwen.go` | LLM 代理 | OpenAI 兼容 Chat Completions，流式桥接 |
+| `stream.go` | 流式输出 | SSE 通用工具 |
+| `login.go` | 登录 | `LoginHandler` 结构体 + DI（保留 legacy wrapper 兼容） |
+| `user.go` / `group.go` / `sysconfig.go` | Web 管理 | CRUD |
+| `metric.go` / `trace.go` / `alert.go` | 可观测性 | 指标/追踪/告警查询 |
+| `anonymous.go` | 匿名分组 | 列表、转换 |
+| `authz.go` | 鉴权辅助 | `authorizeGroupAccess`、`getAuthenticatedUser` |
+| `audit.go` | 审计 | 操作日志记录 |
+| `websocket.go` | WS 升级 | 升级配置 |
+| `http_server.go` | HTTP 封装 | Gin 引擎包装 |
+| `response.go` / `errorcode/` | 响应信封 | 统一 `Response{code,message,data,group,clientId,trace_id}` 与错误码常量 |
+| `constants.go` | 常量 | 共享常量 |
 
-#### 1.2.16 运行时配置 (`pkg/config/`)
+**`APIHandler` 核心转发流程**（`handleForwardRequest`）：
 
-| 维度 | 说明 |
+1. `BuildRequestData()` 构建 action/params
+2. 参数校验（group 非空）
+3. `authorizeRegisteredGroupAccess` 鉴权（注册分组需 token + 归属/管理员）
+4. `rejectIdleInvoke` 空转保护（`ConfigKeyDefendIdleInvoke` 开启时拒绝 `constantInvoke=true`）
+5. `selectTargetClient` 路由选客户端
+6. JSON 序列化 → `forwardStream` / `forwardUnary`
+
+**`RequestBuilder` 接口**（策略模式）：抽象 invoke / chat / qwen 等不同请求的构建差异，`handleForwardRequest` 只做编排，不感知具体类型。
+
+**鉴权收敛**：原版本允许在 body/query 传 `sekiro_token`，现已删除——鉴权统一由 `middleware.Authenticate`/`OptionalAuth` 从 `Authorization` / `token` header 解析，业务层用 `middleware.GetCurrentUser(c)` 取用户。
+
+---
+
+#### 1.3.7 中间件层 (`pkg/middleware/`)
+
+| 文件 | 中间件 | 说明 |
+|------|--------|------|
+| `auth.go` | `Authenticate` / `OptionalAuth` / `RequireAdmin` | Bearer token 鉴权，写入 `ContextUserKey` |
+| `auth_cache.go` | （内部） | 通用 `cache[T]`：TTL + singleflight + 正负缓存 + GC 协程 |
+| `ratelimit.go` | `RateLimitMiddleware` / `AnonymousAccessMiddleware` | 用户 QPS / 匿名 IP QPS 限流 |
+| `login_ratelimit.go` | `LoginRateLimitMiddleware` | 登录端点限流（防爆破） |
+| `cors.go` | CORS | 跨域 |
+| `logging.go` | 请求日志 | 访问日志 |
+| `trace.go` | TraceID | 生成/传播 trace_id |
+| `route_replace.go` | 路由替换 | 反向代理前缀剥离 |
+| `response.go` | `abortJSON` | 统一错误响应 |
+
+**鉴权缓存设计**（`auth_cache.go`，亮点）：
+
+- `cache[T]` 泛型结构，`sync.RWMutex` + `singleflight.Group` 合并并发穿透。
+- **正缓存** 30s（命中用户）、**负缓存** 5s（token 不存在）——负缓存避免无效 token 反复打 DB。
+- **DB 错误不缓存**，避免短暂故障被放大成持续错误窗口。
+- `cacheSoftCap=10000` 触发即时清理，`gcLoop` 每 5 分钟定期清理。
+- `InvalidateToken` / `InvalidateGroup` 供改密、刷 token、删用户等场景显式失效。
+- `AuthMiddleware` 结构体版本（`NewAuthMiddleware`）支持完整 DI，与包级 `FindUserByToken`/`LookupGroupConfig` 共存（过渡期）。
+
+**隐蔽鉴权**：`ExtractTokenFromSubprotocol` 从 `Sec-WebSocket-Protocol: sekiro-auth.<token>` 解析 token，URL 与访问日志不暴露，用于 WS 客户端。
+
+**IP 白名单**（全局化迁移）：`IPInList` / `ValidateIPList` 支持逗号分隔的 IP/CIDR 白名单，回环地址自动放行。**最近重构**（commit `45a0e16`）将分组级 IP 白名单迁移到全局 `sys_config` 配置，统一管理。
+
+---
+
+#### 1.3.8 持久化层 (`pkg/database/` + `repository/`)
+
+**Repository 模式**，接口定义在 `repository/interfaces.go`：
+
+| 仓库 | 接口 | 实体 |
+|------|------|------|
+| `user_repo.go` | `UserRepository` | `UserInfo` |
+| `group_repo.go` | `GroupRepository` | `GroupConfig` / `GroupAction` / `GroupDevice` |
+| `sysconfig_repo.go` | `SysConfigRepository` / `ServerNodeRepository` / `SysLogRepository` | `SysConfig` / `ServerNode` / `SysLog` |
+| `metric_repo.go` / `metric_store.go` | `MetricRepository` / `MetricStore` | `MetricMinute/Hour/Day` / `MetricTag` |
+| `trace_repo.go` | `TraceRepository` | `TraceRecord` |
+| `alert_repo.go` | `AlertRepository` | `AlertRule` / `AlertHistory` |
+| `db_helper.go` | — | 通用分页/查询辅助 |
+
+**设计**：handler 依赖接口而非 `*gorm.DB`，便于测试与切换存储。`database.go` 暴露 `InitFromConfig` 与全局 `DB`（已 Deprecated，新代码走 `deps.AppDependencies.DB`）。
+
+---
+
+#### 1.3.9 配置服务 (`pkg/config/`)
+
+`config.Service` 是 **DB-backed 运行期配置**：
+
+- `GetConfigBool/Float/String(key, default)` 按 key 查 `sys_config` 表。
+- 配置 key 常量集中定义（如 `ConfigKeyDefendIdleInvoke`、`ConfigKeyAllowAnonymousAccess`、`ConfigKeyAnonymousRateLimit`、IP 白名单 key 等）。
+- 支持热更新（无需重启），`Refresh` 机制由 `SysConfigHandler` 触发。
+
+---
+
+#### 1.3.10 指标采集 (`pkg/metrics/`)
+
+`MetricCollector` 接口（`Incr`/`Set`/`Observe`/`RecordLatency`/`Shutdown`）：
+
+- **内存聚合**：`metricBucket` 按 `(name, timeKey, tags)` 聚合，`timeKey` 用 `200601021504`（分钟）格式。
+- **三级落库**：minute → hour → day，定时 flush 到 `MetricStore`。
+- **MD5 tag 签名**：tags 排序后 MD5 作为唯一标识，避免 map 比对。
+- `Shutdown()` 用 `sync.Once` + `WaitGroup` 优雅停止。
+
+**调用关系**：`APIHandler.recordInvokeMetric` → `collector.Incr("invoke.total",...)` + `RecordLatency("invoke.latency",...)`。
+
+---
+
+#### 1.3.11 告警引擎 (`pkg/alert/`)
+
+| 文件 | 职责 |
 |------|------|
-| **职责** | 从 DB `sys_config` 表加载键值配置，提供类型安全的访问方法 |
-| **缓存** | `sync.Map` 内存缓存，`Refresh()` 时计算 FNV-1a 哈希检测变化 |
+| `evaluator.go` | `Evaluator` 周期性评估 `AlertRule`，对比指标与阈值 |
+| `notifier.go` | Webhook / 邮件通知，写 `AlertHistory` |
 
-#### 1.2.17 前端 (`web/`)
+支持操作符 `>, <, >=, <=, ==, !=`，时间窗口（分钟），按 group/api 维度。有专门的 evaluator 单元测试（commit `bff7e3e`）。
 
-| 维度 | 说明 |
-|------|------|
-| **技术栈** | React 18 + React Router v6 + Ant Design + Axios + Vite |
-| **嵌入方式** | `web/embed.go` 使用 `//go:embed dist` 将构建产物嵌入 Go 二进制 |
-| **页面** | Dashboard、分组管理、匿名分组、监控大盘、用户管理、系统面板、链路追踪、告警规则/历史 |
-| **鉴权** | `AuthGuard` 组件 + `localStorage` 存储 `api_token` |
+---
 
-### 1.3 模块间调用关系
+#### 1.3.12 事件总线 (`pkg/eventbus/`)
+
+简单可靠的发布-订阅：
+
+- `Subscribe`/`Unsubscribe`/`Publish`，`Publish` 同步遍历 handler（拷贝切片避免遍历期间变更）。
+- 事件类型常量集中（`events.go`）：客户端连接/断开/销毁/上线/健康降级/熔断/踢除、调用端连接/断开/销毁。
+- `ClientManager` 发布 → `metrics`、`router`（失效缓存）、`alert` 订阅。
+
+---
+
+#### 1.3.13 协议与传输层
+
+**协议层** (`pkg/protocol/`)：
 
 ```
-main.go (组合根)
- ├── pkg/handler (HTTP 处理器)
- │    ├── pkg/client (客户端管理)
- │    ├── pkg/websocket (WS 消息处理)
- │    ├── pkg/forwarder (请求追踪)
- │    ├── pkg/router (路由策略)
- │    ├── pkg/metrics (指标采集)
- │    ├── pkg/config (配置服务)
- │    ├── pkg/middleware (鉴权/限流)
- │    └── pkg/model (数据模型)
- ├── pkg/websocket
- │    ├── pkg/client
- │    ├── pkg/forwarder
- │    ├── pkg/transport
- │    ├── pkg/eventbus
- │    └── pkg/database + pkg/model
- ├── pkg/client
- │    ├── pkg/transport
- │    └── pkg/eventbus
- ├── pkg/alert
- │    ├── pkg/metrics (读取指标)
- │    └── pkg/database + pkg/model
- ├── pkg/metrics
- │    └── pkg/database + pkg/model
- └── pkg/database
-      └── pkg/model
+[Magic:int64][Length:int32][Type:byte][SerialNumber:int32][Headers][Data]
 ```
 
-### 1.4 隐式耦合与边界问题
+| 包类型 | 值 | 说明 |
+|--------|----|------|
+| HEARTBEAT | 0 | 心跳 |
+| C_REGISTER | 16 | 客户端注册 |
+| C_INVOKE_RESPONSE | 17 | 调用响应 |
+| C_OFFLINE | 18 | 客户端下线 |
+| S_INVOKE | 32 | 服务器调用 |
+| I_INVOKE | 49 | 调用端请求 |
+
+`bufwriter.go` 提供缓冲写入。
+
+**传输层** (`pkg/transport/`)：`Connection` 接口 + `ws_conn.go`（WebSocket）/ `tcp_conn.go`（TCP）两实现，`RpcClient` 依赖抽象而非具体，支持多传输协议。
+
+---
+
+#### 1.3.14 压缩层 (`pkg/compress/`)
+
+策略模式：`Compressor` 接口 + `Gzip` / `Snappy` / `None` 三实现，`manager.go` 按名称分发。用于协议数据压缩。
+
+---
+
+### 1.4 模块间隐式耦合与技术债
 
 | 问题 | 位置 | 说明 |
 |------|------|------|
-| **全局 DB 单例** | `pkg/database/database.go` | `database.DB` 包级变量，所有需要 DB 的包直接引用，无法注入替代 |
-| **Handler 直接依赖 database.GetDB()** | `pkg/handler/invoke.go`、`pkg/websocket/handler.go` | 绕过 Repository 接口，直接 GORM 查询 |
-| **ConfigService 通过 context 传递** | `main.go` 路由注册 | `/rpc-api/*` 路由通过 `c.Set("configService", ...)` 注入，类型不安全 |
-| **响应类型分裂** ✅ 已解决 | `pkg/handler/response.go` | 已统一为单一 `Response` 信封 + `code` 字段 + 分段错误码, 详见 [`error-codes.md`](error-codes.md) |
-| **internal/config 与 pkg/config 并存** | 两个 config 包 | `internal/config` 负责 YAML 配置解析，`pkg/config` 负责 DB 运行时配置，命名容易混淆 |
+| **包级全局过渡** | `middleware.auth_cache.go` 的 `defaultTokenCache`/`defaultGroupCache`、`database.DB` | DI 改造未完成，`AuthMiddleware` 结构体与包级函数共存，新代码需注意用哪个 |
+| **`tokenUserRepoPtr` 全局** | `middleware/auth.go` | `atomic.Pointer` 注入，仍是包级状态，测试隔离性差 |
+| **`handler.Deps` 与 `deps.AppDependencies` 重复** | 两处 | 字段重叠（UserRepo/GroupRepo），应合并或让前者嵌入后者 |
+| **`APIHandler` 仍直持 `*gorm.DB` 路径** | `sysConfigHandler` 经 `deps.DB` 做 `Refresh` | 部分 handler 绕过 repository 直连 DB |
+| **响应展开逻辑分散** | `invoke.go` 的 `renderUnaryResponse` | JSON object 平级展开兼容旧前端，逻辑特殊且难测试 |
 
 ---
 
 ## 2. 设计模式与架构风格分析
 
-### 2.1 已使用的设计模式
+### 2.1 架构层级模式：分层架构 + 依赖注入容器
 
-#### 2.1.1 Actor 模型（并发控制）
+**位置**：整体  
+**实现**：编排层（`main`）→ 依赖容器（`deps`）→ 业务层（`handler`/`client`/`router`）→ 持久化（`repository`）→ 模型（`model`）。依赖方向严格向下。  
+**优点**：层次清晰，`main.go` 是唯一组合根。  
+**缺陷**：DI 改造进行中，包级全局与结构体注入并存（见 1.4）。
 
-- **位置**：`pkg/client/group.go` — `RpcGroup`
-- **解决的问题**：分组内客户端注册/注销/分配等操作的并发安全
-- **实现方式**：单一 goroutine（`runLoop`）通过 `commandChan` 串行处理所有命令，外部通过 channel callback 同步获取结果
-- **优点**：完全消除锁竞争，关停模型优雅（done channel + drain）
-- **评价**：实现规范，符合 Actor 模式意图
+### 2.2 创建型：依赖注入（手动 Constructor Injection）
 
-#### 2.1.2 Strategy 模式（路由策略）
+**位置**：`handler.NewAPIHandler`、`NewUserHandler`、`middleware.NewAuthMiddleware`、`deps.AppDependencies`  
+**动机**：替换包级全局，提升可测试性与显式依赖。  
+**实现**：构造函数接收仓库/服务接口，存为字段。`SetupWebRoutes` 集中实例化。  
+**优点**：handler 可单测（mock repository）。  
+**缺陷**：`NewAuthMiddleware` 与包级 `Authenticate()` 两套并存，调用方需选择。
 
-- **位置**：`pkg/router/strategy.go` — `Router.Route()`
-- **解决的问题**：支持多种客户端选择策略（轮询/指定/一致性哈希）
-- **实现方式**：`Router` 内部按优先级选择策略方法，各策略是独立函数
-- **潜在缺陷**：策略选择硬编码在 `Route()` 中，未抽象为接口。如需新增策略（如加权轮询），需修改 `Route()` 方法
-- **优化建议**：抽取 `RoutingStrategy` 接口，通过配置或参数动态选择
+### 2.3 行为型：策略模式（Strategy）
 
-#### 2.1.3 Builder 模式（请求构建）
+**位置**：
+- `pkg/router/strategy.go` — `RoutingStrategy`（RoundRobin / SpecifiedClient / ConsistentHash）
+- `pkg/handler/invoke.go` — `RequestBuilder` 接口（InvokeBuilder / ChatBuilder / QwenBuilder）
+- `pkg/compress/manager.go` — `Compressor`（Gzip / Snappy / None）
+- `pkg/transport/connection.go` — `Connection`（WS / TCP）
 
-- **位置**：`pkg/handler/invoke.go` — `RequestBuilder` 接口 + `InvokeBuilder`、`ChatCompletionRequest`
-- **解决的问题**：统一 invoke 和 chat 两种请求类型的处理流程
-- **实现方式**：`handleForwardRequest` 只依赖 `RequestBuilder` 接口，不同请求类型实现各自的 `BuildRequestData()` / `GetTimeout()` / `IsStream()` 等方法
-- **优点**：模板方法 + 策略的组合，新请求类型只需实现接口
+**实现**：接口 + 多实现 + 上下文选择。`Route()` 根据 `RouteParams` 字段选策略。  
+**优点**：新增路由/请求/压缩/传输方式只需新增实现，不改编排代码。  
+**符合度**：标准策略模式。
 
-#### 2.1.4 Observer 模式（事件总线）
+### 2.4 行为型：观察者模式（Observer）— EventBus
 
-- **位置**：`pkg/eventbus/eventbus.go` — `EventBus`
-- **解决的问题**：客户端生命周期事件（连接/断开/健康降级）需要通知多个关注方
-- **实现方式**：同步发布，handler 列表在发布时 copy-on-read
-- **优点**：解耦事件源（ClientManager）和事件处理方（Router 缓存失效、Metrics Gauge 更新）
-- **潜在缺陷**：同步分发，handler 中的耗时操作会阻塞调用方
+**位置**：`pkg/eventbus/`，发布者 `ClientManager`，订阅者 `metrics`/`router`/`alert`  
+**动机**：解耦客户端生命周期与下游消费方。  
+**实现**：`Subscribe`/`Publish`，事件用字符串类型常量。  
+**优点**：新增订阅者无需改 `ClientManager`。  
+**缺陷**：
+- `Publish` **同步**调用 handler，慢订阅者会阻塞发布者（虽有去抖缓冲）。
+- 事件类型是字符串，无编译期检查；handler 用类型断言（`event.(*ClientConnectEvent)`），断言失败静默跳过。
 
-#### 2.1.5 Repository 模式（数据访问）
+### 2.5 行为型：Actor 模型（并发隔离）
 
-- **位置**：`pkg/database/repository/interfaces.go` + 各 repo 实现
-- **解决的问题**：数据访问层抽象，支持 mock 测试
-- **实现方式**：接口定义 + GORM 实现，handler 通过 `Deps` 结构体注入
-- **优点**：handler 不直接依赖 GORM，便于单元测试
-- **潜在缺陷**：部分 handler（`invoke.go`、`websocket/handler.go`）仍直接调用 `database.GetDB()`，未完全收敛到 Repository
+**位置**：`pkg/client/group.go` 的 `RpcGroup`  
+**动机**：避免 `map` + `sync.RWMutex` 的细粒度锁竞争与死锁风险。  
+**实现**：所有操作经 `commandChan` 投递到单一 `runLoop` goroutine 串行执行。  
+**优点**：无锁、无竞争、关停语义清晰（`done` 关闭即退出）。  
+**缺陷**：单 goroutine 是分组吞吐瓶颈；command 结构需为每操作定义。
 
-#### 2.1.6 Facade 模式（APIHandler）
+### 2.6 结构型：外观/门面（Facade）
 
-- **位置**：`pkg/handler/invoke.go` — `APIHandler`
-- **解决的问题**：将复杂的 RPC 转发流程封装为简单的 HTTP handler
-- **实现方式**：`HandleInvoke` → `handleForwardRequest` → 编排鉴权/路由/发送/等待/响应
-- **优点**：HTTP 层不感知 RPC 内部细节
+**位置**：
+- `main.go` 的 `Server` — 对外屏蔽全部内部组件
+- `pkg/config/service.go` 的 `config.Service` — 屏蔽 `sys_config` 表与缓存细节
+- `pkg/metrics/collector.go` 的 `MetricCollector` — 屏蔽三级聚合落库
 
-#### 2.1.7 Singleton 模式
+**优点**：调用方接口极简（`cfgSvc.GetConfigBool`）。
 
-- **位置**：
-  - `pkg/database/database.go` — `DB *gorm.DB` 全局单例
-  - `pkg/middleware/auth_cache.go` — `defaultTokenCache` 全局缓存
-- **评价**：DB 单例在小项目中合理，但限制了多实例测试和未来分库扩展
+### 2.7 结构型：适配器（Adapter）
 
-#### 2.1.8 Adapter 模式（传输层抽象）
+**位置**：`pkg/transport/` — `Connection` 接口适配 `gorilla/websocket` 与原生 `net.TCPConn` 到统一抽象。  
+**动机**：`RpcClient` 不感知传输差异。
 
-- **位置**：`pkg/transport/connection.go` — `Connection` 接口
-- **解决的问题**：统一 WebSocket 和 TCP 两种传输协议的接口
-- **实现方式**：`WSConnection` 和 `TCPConnection` 各自实现 `Connection` 接口
-- **优点**：`RpcClient` 不感知底层传输细节
+### 2.8 结构型：装饰器（Decorator）— Gin 中间件链
 
-#### 2.1.9 Proxy/Gateway 模式（OpenAI 兼容层）
+**位置**：`routes.go` 的 `api.Use(Authenticate, AnonymousAccessMiddleware, RateLimitMiddleware)` + 路由组级 `RequireAdmin`  
+**实现**：每个中间件包装 `gin.HandlerFunc`，前序鉴权/限流"装饰"业务 handler。  
+**符合度**：标准 HTTP 中间件装饰器链。
 
-- **位置**：`pkg/handler/chat.go` — `HandleChatCompletions`
-- **解决的问题**：将 Sekiro RPC 协议适配为标准 OpenAI Chat Completions API
-- **实现方式**：接收 OpenAI 请求 → promptcompat 规范化 → 通过 RPC invoke 转发 → 响应格式化为 OpenAI 标准
+### 2.9 行为型：模板方法（Template Method）
 
-### 2.2 架构风格
+**位置**：`APIHandler.handleForwardRequest` — 定义"校验→鉴权→空转保护→选客户端→构包→分发"骨架，`forwardStream`/`forwardUnary` 为具体步骤；`RequestBuilder` 提供可变点。  
+**说明**：Go 无继承，用接口 + 组合实现"模板"语义，更接近策略+模板混合。
 
-#### 分层架构（Layered Architecture）
+### 2.10 创建型：单例（Singleton）
 
-```
-HTTP Layer     → pkg/handler (Gin handlers)
-Business Layer → pkg/client + pkg/websocket + pkg/forwarder + pkg/router
-Data Layer     → pkg/database + pkg/model + pkg/database/repository
-Infra Layer    → pkg/transport + pkg/protocol + pkg/compress
-Cross-cutting  → pkg/middleware + pkg/eventbus + pkg/metrics + pkg/alert + pkg/config + pkg/flow
-```
+**位置**：`middleware.defaultTokenCache`/`defaultGroupCache`（包级 `var`）、`database.DB`  
+**实现**：包级变量初始化一次。  
+**缺陷**：全局可变状态，测试隔离差（已通过 `AuthMiddleware` 结构体版本部分缓解）。
 
-**特点**：
-- 自上而下的依赖方向，`main.go` 作为组合根装配所有层
-- 非严格的分层：handler 层可直接访问 database（绕过 repository），存在层间泄露
-- `pkg/handler` 是最"厚"的层，承担了 HTTP 解析、业务编排、响应格式化等多重职责
+### 2.11 尚未使用但建议引入的模式
 
-### 2.3 可引入但未使用的设计模式
-
-| 模式 | 建议位置 | 解决的问题 |
-|------|----------|------------|
-| **Circuit Breaker** | `pkg/client/` 或 `pkg/forwarder/` | 客户端持续失败时快速失败，避免雪崩。当前只有 3 次失败标记不健康，无熔断恢复机制 |
-| **Chain of Responsibility** | `pkg/middleware/` | 当前中间件通过 Gin `Use()` 链式调用，但自定义中间件（CORS、路由替换）在 `main.go` 中以函数形式存在，可统一为中间件链 |
-| **Factory Method** | `pkg/router/` | 路由策略创建可抽象为工厂，支持运行时切换策略 |
-| **Template Method** | `pkg/handler/invoke.go` | `handleForwardRequest` 实际已是隐式模板方法，但使用接口组合而非继承，可进一步提炼流程步骤 |
+| 模式 | 建议位置 | 收益 |
+|------|----------|------|
+| **Factory Method** | `forwarder.TimeoutManager` 的记录创建 | 统一 unary/stream 记录构造 |
+| **Chain of Responsibility** | 鉴权链（token→匿名→限流→admin） | 当前是中间件串联，可显式建模为责任链提升可测性 |
+| **Null Object** | `metrics.MetricCollector` 的 noop 实现 | DB-less 模式下避免到处 `!= nil` 判空 |
+| **Builder** | `InvokeRequest` 复杂构造 | query/body/默认值合并逻辑（`bindInvokeRequest`）可抽取 Builder |
 
 ---
 
@@ -376,315 +421,204 @@ Cross-cutting  → pkg/middleware + pkg/eventbus + pkg/metrics + pkg/alert + pkg
 ### 3.1 系统架构图
 
 ```mermaid
-graph TB
-    subgraph "外部调用方"
-        INVOKER[HTTP Client / SDK]
-        BROWSER[Web Browser]
+flowchart TB
+    subgraph 调用方
+        INV[Invoker / HTTP Client]
+        WEB[Web 浏览器 React SPA]
     end
 
-    subgraph "Sekiro RPC Server"
-        subgraph "HTTP Layer (Gin)"
-            BIZ["/business/*<br/>RPC 调用"]
-            API["/api/*<br/>Web 管理"]
-            RPCAPI["/rpc-api/*<br/>前端接口"]
-            CHAT["/v1/chat/completions<br/>OpenAI 兼容"]
-            WS_REG["/business/register<br/>WebSocket 注册"]
-        end
-
-        subgraph "Middleware"
-            AUTH["AuthMiddleware<br/>Token 认证"]
-            RATE["RateLimitMiddleware<br/>QPS 限流"]
-            TRACE["TraceMiddleware<br/>链路追踪"]
-            LOG["LoggingMiddleware<br/>请求日志"]
-        end
-
-        subgraph "Business Layer"
-            HANDLER["APIHandler<br/>请求编排"]
-            ROUTER["Router<br/>路由策略"]
-            WS_HANDLER["WebSocket Handler<br/>消息处理"]
-            FORWARDER["TimeoutManager<br/>请求追踪"]
-        end
-
-        subgraph "Client Management"
-            MANAGER["ClientManager"]
-            GROUP1["RpcGroup A<br/>(Actor)"]
-            GROUP2["RpcGroup B<br/>(Actor)"]
-            CLIENT1["RpcClient 1"]
-            CLIENT2["RpcClient 2"]
-            CLIENT3["RpcClient 3"]
-        end
-
-        subgraph "Cross-cutting"
-            EVENTBUS["EventBus<br/>事件总线"]
-            METRICS["MetricCollector<br/>指标采集"]
-            ALERT["Alert Evaluator<br/>告警引擎"]
-            CONFIG["ConfigService<br/>运行时配置"]
-        end
-
-        subgraph "Data Layer"
-            DB[("PostgreSQL")]
-            REPO["Repository<br/>数据访问"]
-        end
-
-        subgraph "Infrastructure"
-            TRANSPORT["Transport<br/>连接抽象"]
-            PROTOCOL["Protocol<br/>二进制/JSON"]
-            COMPRESS["Compress<br/>Gzip/Snappy"]
-        end
+    subgraph 编排层
+        MAIN[main.go<br/>Composition Root]
+        DEPS[deps.AppDependencies<br/>DI 容器]
     end
 
-    subgraph "RPC Clients"
-        RC1[RPC Client App 1]
-        RC2[RPC Client App 2]
-        RC3[RPC Client App 3]
+    subgraph 接入层
+        GIN[gin.Engine]
+        MW[middleware:<br/>Auth/RateLimit/CORS/Trace/RouteReplace]
+        BIZ[handler.APIHandler<br/>/business/*]
+        API[handler /api/*<br/>Web 管理]
+        RPCAPI[handler /rpc-api/*<br/>前端兼容]
+        CHAT[handler.chat/qwen<br/>LLM 代理]
     end
 
-    subgraph "Web Admin"
-        SPA["React SPA<br/>(go:embed)"]
+    subgraph 核心层
+        WS[websocket.Handler]
+        FWD[forwarder.TimeoutManager]
+        ROUTER[router.Router<br/>轮询/指定/一致性Hash]
+        CM[client.ClientManager<br/>Actor + 去抖]
+        EB[eventbus.EventBus]
     end
 
-    INVOKER --> BIZ
-    INVOKER --> CHAT
-    BROWSER --> API
-    BROWSER --> RPCAPI
-    BROWSER --> SPA
+    subgraph 客户端
+        RC[RpcClient<br/>健康检查+熔断]
+        CONN[transport.Connection<br/>WS/TCP Adapter]
+    end
 
-    BIZ --> AUTH --> HANDLER
-    API --> AUTH --> RATE --> HANDLER
-    RPCAPI --> AUTH --> HANDLER
-    CHAT --> AUTH --> HANDLER
-    WS_REG --> WS_HANDLER
+    subgraph 持久化
+        REPO[repository.*<br/>Repository 模式]
+        GORM[gorm.DB]
+        PG[(PostgreSQL)]
+    end
 
-    HANDLER --> ROUTER
-    HANDLER --> FORWARDER
-    HANDLER --> WS_HANDLER
+    subgraph 可观测
+        MET[metrics.Collector]
+        ALERT[alert.Evaluator]
+        CFG[config.Service<br/>DB-backed]
+    end
 
-    ROUTER --> MANAGER
-    WS_HANDLER --> MANAGER
+    INV --> GIN
+    WEB --> GIN
+    MAIN --> DEPS
+    DEPS --> API & RPCAPI & BIZ
+    GIN --> MW --> BIZ & API & RPCAPI & CHAT
+    BIZ --> ROUTER & FWD & WS & MET
+    BIZ --> REPO
+    CHAT --> FWD & WS
+    WS --> CM
+    CM --> RC --> CONN
+    CM -.发布.-> EB
+    EB -.订阅.-> MET & ROUTER & ALERT
+    FWD --> WS
+    ROUTER --> CM
+    REPO --> GORM --> PG
+    CFG --> REPO
+    MET --> REPO
+    ALERT --> REPO
+    MW --> CFG
+    BIZ --> CFG
 
-    MANAGER --> GROUP1
-    MANAGER --> GROUP2
-    GROUP1 --> CLIENT1
-    GROUP1 --> CLIENT2
-    GROUP2 --> CLIENT3
-
-    CLIENT1 --> TRANSPORT
-    CLIENT2 --> TRANSPORT
-    CLIENT3 --> TRANSPORT
-
-    MANAGER --> EVENTBUS
-    EVENTBUS --> METRICS
-    EVENTBUS --> ROUTER
-    HANDLER --> METRICS
-    ALERT --> METRICS
-    HANDLER --> CONFIG
-
-    REPO --> DB
-    ALERT --> DB
-    METRICS --> DB
-    CONFIG --> DB
-
-    TRANSPORT -.-> RC1
-    TRANSPORT -.-> RC2
-    TRANSPORT -.-> RC3
-
-    style DB fill:#336791,color:#fff
-    style EVENTBUS fill:#e67e22,color:#fff
-    style MANAGER fill:#27ae60,color:#fff
+    classRef store PG
 ```
 
-### 3.2 核心业务流程图 — RPC Invoke 请求生命周期
+### 3.2 核心业务流程图：一次 `/business/invoke` 完整生命周期
+
+```mermaid
+flowchart TD
+    A[调用方 POST /business/invoke] --> B[middleware.TraceID 生成 trace_id]
+    B --> C{middleware.Authenticate<br/>解析 Bearer token}
+    C -->|无 token| D{AnonymousAccessMiddleware<br/>允许匿名?}
+    D -->|不允许| E1[401 Unauthorized]
+    D -->|允许| F[middleware.RateLimitMiddleware<br/>用户/匿名IP QPS 限流]
+    C -->|有效 token| G[写入 ContextUserKey]
+    G --> F
+    F -->|超限| E2[429 Too Many Requests]
+    F -->|通过| H[APIHandler.HandleInvoke]
+
+    H --> I[bindInvokeRequest<br/>JSON/query 合并]
+    I --> J{action 非空?}
+    J -->|否| E3[400 Bad Request]
+    J -->|是| K[handleForwardRequest 编排]
+
+    K --> L[authorizeRegisteredGroupAccess<br/>注册分组需 token+归属/管理员]
+    L -->|拒绝| E4[401/403]
+    L -->|通过| M{rejectIdleInvoke<br/>空转保护}
+    M -->|拦截| E5[Fail EmptyInvoke]
+    M -->|放行| N[selectTargetClient<br/>Router.Route 选策略]
+
+    N --> O{有可用客户端?}
+    O -->|否| E6[Fail NoClientAvailable]
+    O -->|是| P{IsStream?}
+
+    P -->|Stream| Q[forwardStream<br/>RegisterStream + SSE 循环]
+    P -->|Unary| R[forwardUnary<br/>Add + Send + Wait]
+
+    Q --> S[wsHandler.SendInvokeRequest<br/>WebSocket/TCP 下发]
+    R --> S
+    S --> T[RpcClient 执行业务]
+
+    T --> U{响应/超时/断连}
+    U -->|超时| V1[Remove + MarkFailure<br/>Fail Timeout + metric]
+    U -->|断连| V2[RemoveStream + metric failure]
+    U -->|成功| V3[renderUnaryResponse / SSE chunk<br/>MarkSuccess + metric success]
+
+    V1 --> W[返回响应信封<br/>code/message/data/trace_id]
+    V2 --> W
+    V3 --> W
+```
+
+### 3.3 客户端注册与事件流
 
 ```mermaid
 sequenceDiagram
-    participant Invoker as 调用方
-    participant Gin as Gin Engine
-    participant MW as Middleware
-    participant Handler as APIHandler
-    participant Router as Router
+    participant C as RPC Client
+    participant WS as websocket.Handler
     participant CM as ClientManager
-    participant Group as RpcGroup (Actor)
-    participant WS as WebSocket Handler
-    participant TM as TimeoutManager
-    participant Client as RPC Client
-    participant Metrics as MetricCollector
+    participant G as RpcGroup (Actor)
+    participant EB as EventBus
+    participant R as Router
+    participant M as metrics
 
-    Invoker->>Gin: POST /business/invoke<br/>{group, action, params}
-    Gin->>MW: OptionalAuth / Trace / Logging
-    MW->>Handler: HandleInvoke(c)
-
-    Handler->>Handler: bindInvokeRequest()<br/>解析 JSON/Query
-    Handler->>Handler: authorizeRegisteredGroupAccess()<br/>查 DB 校验分组权限
-
-    Handler->>Router: Route(group, params)
-    alt 指定 clientId
-        Router->>Group: GetClient(clientId)
-    else constantInvoke=true
-        Router->>Router: 一致性哈希选择
-        Router->>Group: GetClient(hashedId)
-    else 默认
-        Router->>Group: 轮询选择
+    C->>WS: WebSocket 注册 (sekiro-auth 子协议)
+    WS->>CM: Register(RpcClient)
+    CM->>G: command{Register} via commandChan
+    G->>G: runLoop 串行处理
+    G-->>CM: 完成
+    CM->>EB: Publish(EventClientConnect) [去抖]
+    par 订阅方
+        EB->>R: InvalidateRingCache(group)
+        EB->>M: 采集连接指标
     end
-    Group-->>Router: *RpcClient
-    Router-->>Handler: targetClient
-
-    Handler->>TM: Add(sequence, group, clientId, data)
-    TM-->>Handler: *InvokeRecord
-
-    Handler->>WS: SendInvokeRequest(client, seq, data)
-    WS->>Client: WebSocket JSON 消息<br/>{type:"invoke", action, params}
-
-    Handler->>TM: Wait(sequence)
-    Note over Handler,TM: 阻塞等待响应或超时
-
-    Client->>WS: invoke_response<br/>{sequence, data, status}
-    WS->>CM: GetClient(group, clientId)
-    WS->>WS: handleInvokeResponse()
-    WS->>TM: Complete(sequence, response)
-
-    TM-->>Handler: *InvokeResponse
-
-    alt 成功
-        Handler->>Client: MarkSuccess()
-        Handler->>Metrics: Incr("invoke.total", success)
-        Handler->>Metrics: RecordLatency("invoke.latency")
-    else 失败
-        Handler->>Client: MarkFailure()
-        Handler->>Metrics: Incr("invoke.total", failure)
-    end
-
-    Handler-->>Invoker: HTTP 200<br/>RpcExtraResponse{status, message, group, clientId, data}
-```
-
-### 3.3 WebSocket 客户端连接生命周期
-
-```mermaid
-stateDiagram-v2
-    [*] --> Connected: WebSocket 握手成功
-    Connected --> Registered: ClientManager.Register()
-    Registered --> Online: 首次心跳确认
-
-    Online --> Online: 心跳保活<br/>(60s 超时)
-    Online --> Processing: 收到 invoke 请求
-    Processing --> Online: 发送 invoke_response
-
-    Online --> Degraded: 连续 3 次失败
-    Degraded --> Online: 成功响应重置
-    Degraded --> Offline: 连接断开/超时
-
-    Online --> Offline: 连接断开/心跳超时
-    Offline --> [*]: Unregister + Close
-
-    state Registered {
-        [*] --> CheckGroup
-        CheckGroup --> RegisteredGroup: group_config 存在
-        CheckGroup --> AnonymousGroup: group_config 不存在
-        RegisteredGroup --> CreateDevice: 创建设备记录
-        RegisteredGroup --> EnsureActions: 创建默认 action
-    }
+    Note over C,WS: 长连接保持，心跳维护
 ```
 
 ---
 
 ## 4. 二次开发与架构优化建议
 
-### 建议 1：消除 Handler 层对 `database.GetDB()` 的直接依赖
+### 4.1 完成 DI 改造，消除包级全局状态
 
-**目标模块**：`pkg/handler/invoke.go`、`pkg/websocket/handler.go`、`main.go`
+**目标模块**：`pkg/middleware/auth.go`、`auth_cache.go`、`pkg/database/database.go`  
+**当前问题**：`defaultTokenCache`、`defaultGroupCache`、`tokenUserRepoPtr`、`database.DB` 仍是包级全局，`AuthMiddleware` 结构体与包级 `FindUserByToken` 两套并存，测试无法隔离，`database.DB` 已 Deprecated 但仍被引用。  
+**方案**：
+1. 将 `cache[T]` 实例下沉到 `AuthMiddleware` 字段，删除包级 `defaultTokenCache`。
+2. `FindUserByToken`/`LookupGroupConfig` 改为 `AuthMiddleware` 方法，调用方经 DI 持有 `*AuthMiddleware`。
+3. `handler.Deps` 嵌入 `deps.AppDependencies`，消除字段重复。
+4. 移除 `database.DB` 全局，所有 handler 经 `repository` 接口或 `deps.DB`。
+**预期收益**：可测试性大幅提升（可并行测试），依赖图清晰，消除"用哪个版本"的歧义。  
+**风险/成本**：中。涉及 `filterAccessibleGroups` 等多处调用点改造，需配套补单测；过渡期可保留 wrapper 函数内部转调结构体方法。
 
-**当前问题**：
-- `invoke.go` 中的 `authorizeRegisteredGroupAccess()` 直接调用 `database.GetDB().Where(...)` 查询 `group_config`
-- `websocket/handler.go` 中的 `ensureDefaultActions()`、`isGroupRegistered()`、`HandleConnection()` 直接操作 DB
-- 这些操作绕过了 Repository 接口，违反了分层原则
+### 4.2 EventBus 异步化与类型安全
 
-**实施方案**：
-1. 在 `GroupRepository` 接口中新增 `IsGroupRegistered(name string) (bool, error)` 和 `EnsureDefaultActions(groupName string)` 方法
-2. 将 `GroupRepository` 注入到 `APIHandler` 和 `websocket.Handler` 中
-3. 移除所有 `database.GetDB()` 的直接调用（`pkg/database` 只被 `repository` 和 `main.go` 引用）
+**目标模块**：`pkg/eventbus/`  
+**当前问题**：`Publish` 同步遍历 handler，慢订阅者阻塞发布者（虽有 10ms 去抖缓冲）；事件类型为字符串，handler 用类型断言，断言失败静默跳过，易隐藏 bug。  
+**方案**：
+1. `Publish` 改为每事件投递到带缓冲 channel，独立 worker 消费（异步），保护发布者。
+2. 引入泛型事件注册：`Subscribe[T](eventType, func(T))`，编译期类型安全；或用 `string` 常量 + typed handler 接口。
+3. 增加 `Publish` 背压/丢弃策略与指标（丢弃数）。
+**预期收益**：避免慢订阅者拖垮调用链；消除类型断言静默失败。  
+**风险/成本**：中低。异步化改变事件顺序语义（订阅者不再依赖同步顺序），需审计 `router.InvalidateRingCache` 等是否依赖同步性；缓冲队列需管理关停。
 
-**预期收益**：
-- 可维护性：数据访问收敛到 Repository 层，变更 SQL 逻辑只需改一处
-- 可测试性：Handler 单元测试可 mock Repository，无需真实 DB
-- 安全性：减少 SQL 注入风险面
+### 4.3 路由策略可配置化与扩展点
 
-**风险与成本**：低风险，改动集中在 3-4 个文件，接口新增方法不影响现有实现。约 2-3 小时工作量。
+**目标模块**：`pkg/router/`  
+**当前问题**：策略选择硬编码在 `Route()` 的 if-else 链（`SpecifiedClient > ConsistentHash > RoundRobin`），新增策略需改核心函数；一致性 Hash 环重建虽缓存但 `fingerprint` 仅按 ID 集合，权重变化无法感知。  
+**方案**：
+1. 抽象 `RoutingStrategy` 接口（`Select(group, params) *RpcClient`），三种策略各为实现，`Router` 持有策略链（Chain of Responsibility）。
+2. 策略选择规则可配置（`group_config` 增 `routing_strategy` 字段或全局配置）。
+3. 一致性 Hash 支持虚拟节点权重（按客户端负载或 QPS 配额）。
+**预期收益**：开闭原则，新增"最少连接""加权随机"等策略零侵入；支持精细化负载均衡。  
+**风险/成本**：中。需数据库迁移加字段，策略链顺序需保证兼容现有语义（SpecifiedClient 必须最高优先级）。
 
-### 建议 2：引入 Circuit Breaker 增强客户端容错
+### 4.4 鉴权与限流统一为责任链 + 可观测
 
-**目标模块**：`pkg/client/client.go`、`pkg/forwarder/timeout.go`
+**目标模块**：`pkg/middleware/`  
+**当前问题**：鉴权（Authenticate/OptionalAuth/AnonymousAccess）、限流（RateLimit/LoginRateLimit）分散为多个中间件，IP 白名单逻辑散落在 `IPInList`；限流器 `flow.NewRateLimiter` 是全局限流器但 key 维度混合（user/anonymous:IP），缺乏统一可观测。  
+**方案**：
+1. 显式建模 `AuthChain`（责任链）：token 解析 → IP 白名单 → 匿名策略 → QPS 限流 → 角色（admin），每环节可独立测试与短路。
+2. 限流维度统一（user / group / IP / global），引入 `LimiterFactory` 按维度创建。
+3. 鉴权与限流命中/拒绝打点 metrics（`auth.deny`、`ratelimit.reject`），供告警引擎消费。
+**预期收益**：安全链路清晰可测，限流策略可扩展，安全事件可观测可告警。  
+**风险/成本**：中高。重构中间件顺序需保证不破坏现有放行语义（匿名分组放行、回环 IP 放行）；需补集成测试（已有 `RateLimitMiddleware` 集成测试可作基线）。
 
-**当前问题**：
-- 客户端 3 次失败标记不健康后，Router 优先跳过该客户端，但没有恢复机制
-- 不健康的客户端只能通过心跳中的 `MarkSuccess()` 恢复，缺乏半开状态探测
-- 当所有客户端都不健康时，请求仍会被路由到不健康客户端（fallback），但没有快速失败机制
+### 4.5 配置热更新下沉到 EventBus
 
-**实施方案**：
-1. 为 `RpcClient` 引入三态熔断器：Closed（正常） → Open（熔断） → Half-Open（探测）
-2. Open 状态下直接跳过该客户端，不参与路由选择
-3. 定时（如 30 秒后）从 Open 转入 Half-Open，允许一个探测请求
-4. 探测成功 → Closed；探测失败 → 回到 Open 并重置计时器
-
-**预期收益**：
-- 可用性：故障客户端自动隔离，恢复后自动重新接入
-- 性能：避免持续向已知故障客户端发送请求
-- 可观测性：熔断状态变化可发布到 EventBus，触发告警或 Dashboard 更新
-
-**风险与成本**：中等风险，需要修改 Router 的健康检查逻辑。约 4-6 小时工作量。
-
-### 建议 3：将 `main.go` 中的自定义中间件迁移到 `pkg/middleware/`
-
-**目标模块**：`main.go`、`pkg/middleware/`
-
-**当前问题**：
-- `ginCorsMiddleware()` 和 `ginRouteReplaceMiddleware()` 定义在 `main.go` 中，作为函数级中间件存在
-- 这些中间件无法被其他模块复用或独立测试
-- `main.go` 承载了过多职责（644 行），包含中间件实现、路由注册、关停逻辑
-
-**实施方案**：
-1. 将 `ginCorsMiddleware` 迁移到 `pkg/middleware/cors.go`，改为 `CORSMiddleware(enabled bool, whitelist []string) gin.HandlerFunc`
-2. 将 `ginRouteReplaceMiddleware` 迁移到 `pkg/middleware/route_replace.go`
-3. `main.go` 中改为调用 `middleware.CORSMiddleware(...)` 和 `middleware.RouteReplaceMiddleware(...)`
-4. 考虑将 `registerRoutes()` 和 `handleRegister()` 等方法拆分到独立的 bootstrap 文件
-
-**预期收益**：
-- 可维护性：`main.go` 精简到纯编排逻辑，中间件可独立测试
-- 可扩展性：新中间件统一在 `pkg/middleware/` 管理
-
-**风险与成本**：低风险，纯重构，不改行为。约 1-2 小时工作量。
-
-### 建议 4：统一响应格式与错误码体系 ✅ 已实施
-
-**目标模块**：`pkg/handler/response.go`、前端 `web/src/utils/api.js`
-
-**已解决的问题**：
-- 三套响应格式（`ApiResponse` / `RpcResponse` / `RpcExtraResponse`）已收敛为单一 `Response` 信封
-- 字段统一为 `code`（旧 `status` 字段已删除），HTTP 状态码与业务码解耦
-- 错误码采用 `1xxx/2xxx/3xxx/5xxx` 分段，定义于 `pkg/handler/errorcode/errorcode.go`
-- 所有响应自动附带 `trace_id`，便于链路追踪
-- 前端统一拦截器识别业务错误码，`Login.jsx` / `Register.jsx` 已改为 `code === 0`
-
-**实施细节**：详见 [`error-codes.md`](error-codes.md)
-
-### 建议 5：引入依赖注入容器替代手动装配
-
-**目标模块**：`main.go`
-
-**当前问题**：
-- `NewServer()` 手动创建和装配 12+ 个组件，依赖关系靠代码顺序隐式表达
-- 新增组件需要修改 `Server` 结构体和 `Start()` 方法
-- 测试需要构建完整的 `Server` 或手动 mock 部分组件
-
-**实施方案**：
-1. 使用 `go.uber.org/fx` 或 `google/wire` 引入轻量 DI 容器
-2. 将组件创建改为 Provider 函数，声明依赖关系
-3. `main.go` 简化为 `fx.New(providers...).Run()`
-
-**预期收益**：
-- 可维护性：依赖关系显式声明，组件顺序不再重要
-- 可测试性：测试时只替换特定 Provider
-- 可扩展性：新组件只需添加 Provider，无需改 `main.go`
-
-**风险与成本**：较高成本，需要学习 DI 框架。建议在小范围试点（如 handler 层）。约 8-12 小时工作量。
+**目标模块**：`pkg/config/`、各配置消费方  
+**当前问题**：`SysConfigHandler.Update` 后需手动 `Refresh`，部分消费方（如限流阈值、IP 白名单）可能读到旧缓存值；`configService` 刷新依赖 `deps.DB` 直连，绕过 repository。  
+**方案**：
+1. `configService.Update` 后 `Publish(EventConfigChanged, {keys})`，消费方（限流器、IP 白名单缓存）订阅主动失效/重载。
+2. 配置读写统一走 `SysConfigRepository`，移除 handler 直连 DB。
+**预期收益**：配置变更全链路即时生效，消除缓存不一致窗口。  
+**风险/成本**：低中。需梳理所有配置消费点的缓存语义，确保失效逻辑幂等。
 
 ---
 
@@ -692,219 +626,72 @@ stateDiagram-v2
 
 ```
 go-rpc/
-├── main.go                    # 服务组合根：Config、Server、NewServer、Start、Shutdown
-├── main_test.go               # 集成测试：路由注册和 HTTP 配置
-├── go.mod                     # Go 模块定义 (github.com/mrh30000/go-rpc)
-├── go.sum                     # 依赖校验
-├── config.yaml                # 运行时配置（YAML）
-├── config.yaml.example        # 配置模板
-├── config.yaml.docker         # Docker 专用配置
-├── Dockerfile                 # 多阶段构建（golang:1.25-alpine → alpine:3.19）
-├── docker-compose.yaml        # Docker Compose 编排
-├── .env.example               # 环境变量模板
-├── .dockerignore              # Docker 构建排除
-├── .gitignore                 # Git 排除
-├── AGENTS.md                  # AI 编码助手指令
-├── CLAUDE.md                  # Claude 编码指令
-├── README.md                  # 项目说明
-├── prd.md                     # 产品需求文档
+├── main.go                 # 启动入口（组合根），578 行
+├── main_test.go            # 启动冒烟测试
+├── go.mod / go.sum         # Go 1.25 依赖
+├── config.yaml(.example)   # 运行配置
+├── Dockerfile              # 服务端镜像
+├── docker-compose.yaml     # PG + 服务编排
+├── .env(.example)          # 环境变量
+├── prd.md / README.md / AGENTS.md
 │
-├── internal/                  # 私有包（不可被外部 import）
-│   ├── config/                # YAML 配置解析（ServerConfig、LogConfig、DatabaseConfig）
-│   │   ├── config.go          # 配置结构体定义和加载
-│   │   ├── config_v2.go       # V2 配置格式
-│   │   ├── dotenv.go          # .env 文件加载
-│   │   ├── models.go          # 模型别名配置
-│   │   ├── paths.go           # 路径解析
-│   │   ├── store.go           # 配置存储
-│   │   └── validation.go      # 配置校验
-│   ├── prompt/                # 提示词消息处理
-│   ├── promptcompat/          # OpenAI prompt 兼容性处理
-│   ├── toolcall/              # 工具调用解析（DSML 格式）
-│   ├── util/                  # 内部工具函数
-│   └── utils/
-│       └── logger/            # 日志封装（zap.SugaredLogger + lumberjack）
+├── internal/               # 内部包（不对外暴露）
+│   ├── config/             #   YAML 配置结构 + 加载
+│   └── utils/logger/       #   zap + lumberjack 日志
 │
-├── pkg/                       # 公共包（可被外部 import）
-│   ├── alert/                 # 告警引擎
-│   │   ├── evaluator.go       # 规则评估（1 分钟轮询）
-│   │   ├── notifier.go        # 通知发送（SMTP/Webhook）
-│   │   └── notifier_test.go
-│   │
-│   ├── client/                # 服务端客户端管理
-│   │   ├── client.go          # RpcClient（连接、健康状态）
-│   │   ├── group.go           # RpcGroup（Actor 模型）
-│   │   ├── group_test.go
-│   │   ├── manager.go         # ClientManager（全局管理、事件去抖）
-│   │   ├── manager_test.go
-│   │   └── sdk/               # SDK（供外部消费者使用）
-│   │       ├── client.go      # SDK 客户端
-│   │       └── invoker.go     # SDK 调用器
-│   │
-│   ├── compress/              # 压缩策略
-│   │   ├── gzip.go            # Gzip 实现
-│   │   ├── snappy.go          # Snappy 实现
-│   │   ├── none.go            # 无压缩
-│   │   └── manager.go         # 压缩管理器（Strategy 选择）
-│   │
-│   ├── config/                # 运行时配置服务（DB 键值）
-│   │   └── service.go         # Service 接口 + sync.Map 缓存
-│   │
-│   ├── database/              # 数据库
-│   │   ├── database.go        # GORM 初始化、AutoMigrate
-│   │   └── repository/        # Repository 模式
-│   │       ├── interfaces.go  # 接口定义（User/Group/SysConfig/...）
-│   │       ├── user_repo.go
-│   │       ├── group_repo.go
-│   │       ├── alert_repo.go
-│   │       ├── metric_repo.go
-│   │       ├── sysconfig_repo.go
-│   │       ├── trace_repo.go
-│   │       └── db_helper.go
-│   │
-│   ├── eventbus/              # 事件总线（发布-订阅）
-│   │   ├── eventbus.go        # EventBus 核心
-│   │   ├── events.go          # 事件类型定义
-│   │   └── helper.go          # 函数比较工具
-│   │
-│   ├── flow/                  # 流量控制
-│   │   ├── ratelimit.go       # QPS 令牌桶限流
-│   │   └── backoff.go         # 空队列退避
-│   │
-│   ├── forwarder/             # 请求转发追踪
-│   │   ├── timeout.go         # TimeoutManager（InvokeRecord + StreamRecord）
-│   │   ├── streamframe.go     # 流式帧处理
-│   │   └── *_test.go
-│   │
-│   ├── handler/               # HTTP 处理器
-│   │   ├── invoke.go          # RPC invoke 核心（APIHandler + RequestBuilder）
-│   │   ├── chat.go            # OpenAI Chat Completions 代理
-│   │   ├── qwen.go            # 通义千问专用路由
-│   │   ├── stream.go          # SSE 流式响应
-│   │   ├── routes.go          # Web 管理路由注册
-│   │   ├── http_server.go     # HTTPServer 封装
-│   │   ├── response.go        # 统一响应信封 Response + 辅助函数 (OK/Fail/BadRequest/...)
-│   │   ├── errorcode/         # 业务错误码常量包 (1xxx/2xxx/3xxx/5xxx 分段)
-│   │   ├── websocket.go       # WebSocket 相关 handler
-│   │   ├── user.go            # 用户管理 handler
-│   │   ├── group.go           # 分组管理 handler
-│   │   ├── metric.go          # 指标查询 handler
-│   │   ├── trace.go           # 链路追踪 handler
-│   │   ├── alert.go           # 告警管理 handler
-│   │   ├── sysconfig.go       # 系统配置 handler
-│   │   ├── anonymous.go       # 匿名分组 handler
-│   │   ├── login.go           # 登录/注册 handler
-│   │   ├── authz.go           # 权限校验
-│   │   ├── audit.go           # 审计日志
-│   │   └── constants.go       # 常量定义
-│   │
-│   ├── metrics/               # 指标采集
-│   │   └── collector.go       # MetricCollector（分钟刷盘 + 小时/天聚合）
-│   │
-│   ├── middleware/             # Gin 中间件
-│   │   ├── auth.go            # 认证（Bearer token + sekiro-token）
-│   │   ├── auth_cache.go      # Token 缓存（singleflight + 负缓存）
-│   │   ├── logging.go         # 请求日志
-│   │   ├── ratelimit.go       # QPS 限流中间件
-│   │   └── trace.go           # 链路追踪（traceId 注入）
-│   │
-│   ├── model/                 # 数据模型（GORM）
-│   │   ├── database.go        # UserInfo/SysConfig/GroupConfig/GroupDevice/...
-│   │   ├── alert.go           # AlertRule/AlertHistory
-│   │   ├── trace.go           # TraceRecord
-│   │   ├── group.go           # DefaultGroupActions 常量
-│   │   └── openai.go          # ChatCompletionRequest（OpenAI 请求模型）
-│   │
-│   ├── protocol/              # 二进制协议
-│   │   ├── packet.go          # RpcPacket 编解码
-│   │   ├── packet_type.go     # 包类型常量
-│   │   └── bufwriter.go       # 缓冲写入器
-│   │
-│   ├── router/                # 路由策略
-│   │   ├── strategy.go        # Router（RoundRobin/Specified/ConsistentHash）
-│   │   └── hash.go            # ConsistentHashRing 实现
-│   │
-│   ├── transport/             # 传输层抽象
-│   │   ├── connection.go      # Connection 接口
-│   │   ├── ws_conn.go         # WebSocket 实现
-│   │   └── tcp_conn.go        # TCP 实现
-│   │
-│   ├── utils/                 # 工具函数
-│   │   ├── code.go            # 代码辅助
-│   │   ├── file.go            # 文件操作
-│   │   ├── password/          # 密码哈希
-│   │   └── traceid/           # TraceID 生成
-│   │
-│   └── websocket/             # WebSocket 消息处理
-│       └── handler.go         # Handler（连接管理、消息分发、invoke 发送）
+├── pkg/                    # 对外业务包
+│   ├── deps/               #   AppDependencies DI 容器
+│   ├── protocol/           #   数据包编解码
+│   ├── transport/          #   Connection 抽象 (WS/TCP)
+│   ├── compress/           #   Gzip/Snappy/None
+│   ├── client/             #   客户端管理 (Actor + 熔断)
+│   │   └── sdk/            #     客户端 SDK (RpcClient/Invoker)
+│   ├── router/             #   路由策略
+│   ├── forwarder/          #   超时/流式
+│   ├── websocket/          #   WS 消息处理
+│   ├── handler/            #   HTTP 处理器（最大包）
+│   │   └── errorcode/      #     错误码常量
+│   ├── middleware/         #   鉴权/限流/CORS/Trace
+│   ├── config/             #   DB-backed 配置服务
+│   ├── database/           #   GORM 连接
+│   │   └── repository/     #     Repository 模式
+│   ├── model/              #   GORM 实体
+│   ├── metrics/            #   指标采集
+│   ├── alert/              #   告警引擎
+│   ├── eventbus/           #   发布-订阅
+│   ├── flow/               #   限流器 + 退避
+│   └── utils/              #   密码/traceID/文件/错误码
+│       ├── password/
+│       └── traceid/
 │
-├── web/                       # 前端 SPA
-│   ├── embed.go               # go:embed 嵌入
-│   ├── embed_test.go          # 嵌入测试
-│   ├── index.html             # HTML 入口
-│   ├── package.json           # 前端依赖
-│   ├── vite.config.js         # Vite 构建配置（dev proxy → :5613）
+├── web/                    # React 前端
 │   ├── src/
-│   │   ├── main.jsx           # React 入口
-│   │   ├── App.jsx            # 路由定义
-│   │   ├── App.css
-│   │   ├── index.css
-│   │   ├── components/        # 通用组件
-│   │   │   ├── AuthGuard.jsx  # 认证守卫
-│   │   │   ├── Logo.jsx       # Logo 组件
-│   │   │   ├── GroupAction.jsx
-│   │   │   ├── GroupDeviceList.jsx
-│   │   │   └── GroupMonitor.jsx
-│   │   ├── layouts/
-│   │   │   └── Layout.jsx     # 页面布局
-│   │   ├── pages/             # 页面组件
-│   │   │   ├── Login.jsx
-│   │   │   ├── Register.jsx
-│   │   │   ├── Dashboard.jsx
-│   │   │   ├── GroupList.jsx
-│   │   │   ├── GroupDetail.jsx
-│   │   │   ├── AnonymousGroup.jsx
-│   │   │   ├── MonitorDashboard.jsx
-│   │   │   ├── UserList.jsx
-│   │   │   ├── SystemPanel.jsx
-│   │   │   ├── TraceList.jsx
-│   │   │   ├── TraceDetail.jsx
-│   │   │   ├── AlertRules.jsx
-│   │   │   └── AlertHistory.jsx
-│   │   └── utils/
-│   │       ├── api.js         # Axios 实例 + API 封装
-│   │       └── index.js       # 工具函数
-│   └── dist/                  # 构建产物（go:embed 需要）
+│   │   ├── pages/          #   路由页面 (Login/Dashboard/Groups/Traces/Alerts/Monitor/System...)
+│   │   ├── components/     #   AuthGuard/GroupMonitor/GroupAction/...
+│   │   ├── layouts/        #   Layout
+│   │   └── utils/          #   api.js (axios) / index.js
+│   ├── package.json / vite.config.js
+│   └── dist/               #   构建产物（Gin 静态托管）
 │
-├── sample/                    # 示例代码
-│   ├── go/                    # Go SDK 示例（独立 go.mod）
-│   ├── java/                  # Java 客户端示例
-│   ├── dotnet-core/           # .NET 客户端示例
-│   └── frida/                 # Frida 脚本示例
-│
-├── deploy/                    # 部署脚本
-│   └── postgres/
-│       ├── migration.sql      # PostgreSQL 全量建表
-│       ├── insert_default_configs.sql
-│       └── migration/         # 增量迁移
-│           ├── 002_add_trace_record.sql
-│           └── 003_add_alert_tables.sql
-│
-└── docs/                      # 文档
-    └── *.md
+├── deploy/postgres/        # 数据库迁移脚本
+├── docker/                 # Docker 相关
+├── sample/                 # 示例代码
+├── test/                   # 集成测试
+└── docs/                   # 文档（本文件）
 ```
 
-### 关键目录角色说明
+**关键文件说明**：
 
-| 目录 | 角色 | 边界 |
-|------|------|------|
-| `internal/` | 私有基础设施 | 不可被外部模块 import，仅服务自身使用 |
-| `pkg/client/` | 核心客户端管理 | 被 handler、websocket、router 依赖 |
-| `pkg/handler/` | HTTP 入口层 | 最"厚"的层，连接 HTTP 和业务逻辑 |
-| `pkg/websocket/` | 消息通道 | 客户端通信的唯一入口 |
-| `pkg/forwarder/` | 请求追踪 | invoke 请求的生命周期管理 |
-| `pkg/database/` | 数据持久化 | 全局 DB 单例 + Repository 模式 |
-| `web/` | 前端 SPA | 构建产物嵌入 Go 二进制，无独立部署 |
+| 文件 | 角色 |
+|------|------|
+| `main.go` | 唯一组合根，装配全部组件，注册路由，管理生命周期 |
+| `pkg/handler/routes.go` | `/api/*` 路由注册与 handler DI 实例化 |
+| `pkg/handler/invoke.go` | 核心 RPC 转发编排（`APIHandler`） |
+| `pkg/client/group.go` | Actor 模型分组实现 |
+| `pkg/middleware/auth_cache.go` | 鉴权缓存（TTL+singleflight+正负缓存） |
+| `pkg/router/strategy.go` | 三种路由策略 + 一致性 Hash 环缓存 |
+| `internal/config/config.go` | YAML 配置结构定义 |
+| `deploy/postgres/migration.sql` | 数据库 schema |
 
 ---
 
@@ -912,193 +699,148 @@ go-rpc/
 
 ### 6.1 本地环境搭建
 
-#### 所需软件
+**所需软件与版本**：
 
-| 软件 | 版本要求 | 用途 |
-|------|----------|------|
-| Go | >= 1.25.0 | 后端编译运行 |
-| Node.js | >= 18 | 前端构建 |
-| PostgreSQL | >= 15 | 数据库 |
-| Git | >= 2.x | 版本控制 |
+| 软件 | 版本 | 用途 |
+|------|------|------|
+| Go | 1.25.0+ | 后端编译运行 |
+| Node.js | 18+ | 前端构建 |
+| npm | 9+ | 前端依赖 |
+| PostgreSQL | 14+ | 数据库 |
+| Git | 任意 | 克隆代码 |
 
-#### 环境变量
+**依赖安装**：
 
-```bash
-# Go 代理（国内加速）
-export GOPROXY=https://goproxy.cn,direct
+```powershell
+# 后端依赖
+go mod tidy
 
-# 数据库连接（或使用 config.yaml）
-export PG_HOST=localhost
-export PG_PORT=5432
-export PG_USER=postgres
-export PG_PASSWORD=postgres
-export PG_DBNAME=sekiro
+# 前端依赖
+cd web; npm install
 ```
+
+**环境变量与配置**：
+
+1. 复制配置：`cp config.yaml.example config.yaml`
+2. 编辑 `config.yaml`，关注 `Database` 段（Host/Port/User/Password/DBName）。
+3. 复制 `.env.example` → `.env`，按需填敏感配置。
 
 ### 6.2 从 0 到运行
 
-```bash
-# 1. 克隆代码
-git clone https://github.com/mrh30000/go-rpc.git
+```powershell
+# 1. 克隆
+git clone <repo-url> go-rpc
 cd go-rpc
 
-# 2. 初始化数据库
-#    创建 PostgreSQL 数据库并执行建表脚本
-psql -U postgres -d sekiro -f deploy/postgres/migration.sql
-psql -U postgres -d sekiro -f deploy/postgres/insert_default_configs.sql
+# 2. 启动 PostgreSQL（用 docker-compose 一键起）
+docker-compose up -d postgres
 
-# 3. 配置
-cp config.yaml.example config.yaml
-# 编辑 config.yaml，修改 Database 连接信息
+# 3. 初始化数据库 schema
+psql -h localhost -U postgres -d sekiro -f deploy/postgres/migration.sql
+# 或用 docker：docker exec -i <pg_container> psql -U postgres -d sekiro < deploy/postgres/migration.sql
 
-# 4. 构建前端（生成 web/dist/）
-cd web
-npm install
-npm run build    # 输出到 web/dist/
-cd ..
+# 4. 构建前端（可选，构建后 Gin 自动托管 web/dist）
+cd web; npm run build; cd ..
 
-# 5. 构建后端
-go build -o rpc-server ./main.go
+# 5. 启动服务端（默认端口 5612）
+go run main.go -port 5612
+# 或编译：go build -o rpc-server.exe . ; ./rpc-server.exe -c config.yaml
 
-# 6. 启动服务
-./rpc-server -c config.yaml
+# 6. 访问 Web 管理后台
+# 浏览器打开 http://localhost:5612
+# 默认用户：ruoxing / mrx123456（见 CLAUDE.md）
 
-# 或者直接运行
-go run main.go -c config.yaml
+# 7. 运行一个 RPC 客户端（业务端）
+go run cmd/client/main.go -server localhost:5612 -group test-group -client-id test-1
 
-# 服务启动后访问：
-# - Web 管理后台：http://localhost:5612/
-# - 默认管理员：admin / admin123
-# - 健康检查：http://localhost:5612/health
+# 8. 发起一次调用
+go run cmd/invoker/main.go -server localhost:5612 -group test-group -api test
+# 或 HTTP：
+curl "http://localhost:5612/business/invoke?group=test-group&action=test"
 ```
 
-#### 前端开发模式
+**启动参数**：
 
-```bash
-cd web
-npm install
-npm run dev    # Vite dev server，端口 3000
-# 自动代理 /business|/api|/rpc-api → localhost:5613
-```
+| 参数 | 说明 |
+|------|------|
+| `-port` | 监听端口（默认 5612） |
+| `-host` | 监听主机 |
+| `-debug` | 调试日志 |
+| `-local-debug` | 本地调试模式 |
+| `-c` | 配置文件路径（默认 `config.yaml`） |
+| `-reset-metrics` | 启动时清空指标表（**仅测试环境**） |
 
-> **注意**：Vite 代理目标是 `:5613`，如果后端运行在 `:5612`，需要修改 `web/vite.config.js` 或用 `-port 5613` 启动后端。
+### 6.3 最小改动示例：新增一个 `/business/ping` 健康检查接口
 
-### 6.3 最小改动示例 — 添加一个自定义 Health Check 端点
+**目标**：在 `/business/*` 下新增一个返回 `{code:0, message:"pong"}` 的 ping 接口，走完整的中间件链。
 
-**目标**：新增一个 `/health/detail` 端点，返回更详细的服务器状态信息。
+**步骤 1：在 handler 注册路由**
 
-**涉及文件**：`main.go`
-
-**步骤 1**：在 `registerRoutes()` 方法中，找到现有的 `/health` 路由注册（约第 331 行）：
+在 `main.go` 的 `/business` 路由组（或 `handler` 路由注册处）添加：
 
 ```go
-s.httpServer.Engine().GET("/health", func(c *gin.Context) {
-    c.JSON(200, gin.H{
-        "status":    "healthy",
-        "timestamp": time.Now().Format(time.RFC3339),
-        "version":   "1.0.0",
-    })
-})
+// main.go registerRoutes() 中，business 路由组内
+business.GET("/ping", apiHandler.HandlePing)
 ```
 
-**步骤 2**：在其下方添加新端点：
+**步骤 2：在 `pkg/handler/invoke.go` 添加 handler 方法**
 
 ```go
-s.httpServer.Engine().GET("/health/detail", func(c *gin.Context) {
-    c.JSON(200, gin.H{
-        "status":        "healthy",
-        "timestamp":     time.Now().Format(time.RFC3339),
-        "version":       "1.0.0",
-        "total_groups":  s.clientManager.GroupCount(),
-        "total_clients": s.clientManager.ClientCount(),
-        "all_groups":    s.clientManager.GetAllGroups(),
-        "pending_invokes": s.timeoutManager.Count(),
-        "pending_streams": s.timeoutManager.StreamCount(),
-    })
-})
-```
-
-**步骤 3**：构建并运行：
-
-```bash
-go build -o rpc-server ./main.go
-./rpc-server -c config.yaml
-```
-
-**步骤 4**：验证：
-
-```bash
-curl http://localhost:5612/health/detail
-```
-
-预期返回：
-
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-06-11T10:30:00+08:00",
-  "version": "1.0.0",
-  "total_groups": 2,
-  "total_clients": 5,
-  "all_groups": ["group-a", "group-b"],
-  "pending_invokes": 0,
-  "pending_streams": 0
+// HandlePing 简单健康检查，演示最小改动
+// GET /business/ping
+func (h *APIHandler) HandlePing(c *gin.Context) {
+    OK(c, gin.H{"ping": "pong"})
 }
 ```
 
-### 6.4 测试命令速查
+> 说明：`OK(c, data)` 是 `response.go` 提供的统一响应信封 helper，自动填充 `code:0`、`message:"success"`、`trace_id`。
 
-```bash
-# 全量测试
-go test ./...
+**步骤 3：验证**
 
-# 单包测试
-go test ./pkg/client/...
-go test ./pkg/protocol/...
-go test ./pkg/compress/...
-go test ./pkg/handler/...
-go test ./pkg/websocket/...
-
-# 单个测试
-go test -run TestRpcPacket ./pkg/protocol/...
-go test -run TestGzipCompress ./pkg/compress/...
-go test -run TestClientManager ./pkg/client/...
-
-# 带覆盖率
-go test -cover ./...
-
-# 前端测试
-cd web && npm run build   # 确保 web/dist/ 存在
-go test ./web/...         # 测试嵌入
+```powershell
+go build ./...                 # 确保编译通过
+go run main.go -port 5612      # 启动
+curl http://localhost:5612/business/ping
+# 期望：{"code":0,"message":"success","data":{"ping":"pong"},"trace_id":"..."}
 ```
 
-### 6.5 常见踩坑点
+**步骤 4：补单测**（遵循 TDD，参考 `pkg/server/api/` 既有测试风格）：
 
-| 问题 | 原因 | 解决 |
-|------|------|------|
-| `go build` 报 `web/dist/` 不存在 | `//go:embed dist` 需要目录存在 | 先执行 `cd web && npm run build` |
-| 前端 dev 代理不通 | Vite 代理目标是 `:5613` | 改 `vite.config.js` 或 `-port 5613` 启动后端 |
-| `sample/go/` 编译失败 | 有独立的 `go.mod`，不属于主模块 | 在 `sample/go/` 目录下单独编译 |
-| 数据库连接失败 | `config.yaml` 中 Database 配置不对 | 检查 PostgreSQL 是否运行且连接信息正确 |
-| 登录 401 | 默认用户未创建 | 确保 `migration.sql` 已执行，默认 admin/admin123 |
-| `DisableDatabase: true` 后部分功能不可用 | DB 相关路由被跳过 | 正常行为，此模式下无用户管理/指标/告警 |
+```go
+func TestHandlePing(t *testing.T) {
+    // 构造 gin test context + APIHandler（mock clientManager）
+    // 调用 HandlePing，断言 code==0 且 data.ping=="pong"
+}
+```
+
+**涉及文件**：
+
+- `main.go`（路由注册）
+- `pkg/handler/invoke.go`（handler 方法）
+- 可选：`pkg/handler/invoke_test.go`（测试）
+
+**改动要点**：
+
+1. 路由统一在 `registerRoutes()` 注册，不要散落。
+2. 响应必须用 `OK`/`Fail`/`BadRequest` 等统一 helper，保证信封一致。
+3. 若需鉴权，路由放在已挂 `Authenticate` 的组下；若可匿名，放在 `OptionalAuth` 组或独立组。
+4. 改动前用 GitNexus 跑 `impact` 评估影响面（本项目已索引为 `go-rpc`）。
 
 ---
 
-## 附录：技术栈清单
+## 附录：关键设计决策速查
 
-| 类别 | 技术 |
-|------|------|
-| 语言 | Go 1.25 |
-| Web 框架 | Gin 1.12 |
-| WebSocket | gorilla/websocket 1.5 |
-| ORM | GORM 1.25 + postgres driver |
-| 日志 | zap 1.26 + lumberjack 2.2 |
-| 限流 | golang.org/x/time (rate.Limiter) |
-| JSON | goccy/go-json（高性能替代 encoding/json） |
-| 压缩 | golang/snappy |
-| ID 生成 | google/uuid |
-| 配置 | gopkg.in/yaml.v3 |
-| 前端 | React 18 + Vite + Ant Design + Axios |
-| 构建 | 多阶段 Docker（golang:1.25-alpine → alpine:3.19） |
-| 数据库 | PostgreSQL 15+ |
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| 并发模型 | Actor（RpcGroup）+ sync.RWMutex（Manager） | 分组内无锁串行，避免细粒度锁竞争 |
+| 鉴权缓存 | TTL + singleflight + 正负缓存 | 防穿透、防击穿、DB 错误不缓存 |
+| 路由 | 三策略 + 一致性 Hash 环缓存（fingerprint） | 支持会话粘性，环复用降开销 |
+| 传输抽象 | `Connection` 接口适配 WS/TCP | 客户端不感知传输差异 |
+| 配置 | DB-backed 运行期配置 | 热更新，无需重启 |
+| DI | 手动 Constructor Injection + `AppDependencies` | 显式依赖，过渡期保留包级全局 |
+| 事件 | 发布-订阅 EventBus | 解耦客户端生命周期与下游 |
+| 鉴权入口 | 收敛到中间件（header/subprotocol） | 业务层不再解析 token，安全链统一 |
+
+---
+
+> 本文档基于 `main` 分支 commit `45a0e16`（2026-06-28）代码实现生成。后续重大架构变更（如完成 DI 改造、EventBus 异步化）应同步更新对应章节。
