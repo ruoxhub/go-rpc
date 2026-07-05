@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -682,17 +681,6 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 	return filtered, nil
 }
 
-// writeSSEHeaders 把 HTTP 响应头切到 text/event-stream 模式。
-// 调用者需要自行 Flush() 头(常见用法: 拿 http.Flusher 后立即 Flush)。
-func writeSSEHeaders(c *gin.Context) {
-	header := c.Writer.Header()
-	header.Set("Content-Type", "text/event-stream; charset=utf-8")
-	header.Set("Cache-Control", "no-cache")
-	header.Set("X-Accel-Buffering", "no")
-	header.Set("Connection", "keep-alive")
-	c.Writer.WriteHeader(http.StatusOK)
-}
-
 // streamSSEResponse 把 StreamRecord 的 chunk 通过 chunked HTTP 以 text/event-stream 输出。
 //
 // 与 unary 路径的区别：
@@ -708,7 +696,7 @@ func (h *APIHandler) streamSSEResponse(
 	startTime time.Time,
 	reqAction string,
 ) {
-	writeSSEHeaders(c)
+	WriteSSEHeaders(c)
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -753,21 +741,21 @@ func (h *APIHandler) streamSSEResponse(
 		case <-timeoutTimer.C:
 			h.timeoutManager.RemoveStream(rec.ID)
 			streamErr = "timeout"
-			writeSSEErrorEvent(c.Writer, "timeout")
+			WriteSSEErrorEvent(c.Writer, "timeout")
 			flusher.Flush()
 			return
 		case chunk, ok := <-rec.ChunkChan:
 			if !ok {
 				if errMsg := rec.TerminalError(); errMsg != "" {
 					streamErr = errMsg
-					writeSSEErrorEvent(c.Writer, errMsg)
+					WriteSSEErrorEvent(c.Writer, errMsg)
 					flusher.Flush()
 				}
 				return
 			}
 			if chunk.Error != "" {
 				streamErr = chunk.Error
-				writeSSEErrorEvent(c.Writer, chunk.Error)
+				WriteSSEErrorEvent(c.Writer, chunk.Error)
 				flusher.Flush()
 				continue // ChunkChan close 会从 ok=false 退出
 			}
@@ -789,13 +777,6 @@ func (h *APIHandler) streamSSEResponse(
 			flusher.Flush()
 		}
 	}
-}
-
-// writeSSEErrorEvent 写一个 SSE 错误事件帧。msg 中的换行替换为空格，避免破坏 SSE 边界。
-func writeSSEErrorEvent(w io.Writer, msg string) {
-	safe := strings.ReplaceAll(msg, "\r", " ")
-	safe = strings.ReplaceAll(safe, "\n", " ")
-	fmt.Fprintf(w, "event: error\ndata: %s\n\n", safe)
 }
 
 // decodeStreamBytes 把 chunk.Data (json.RawMessage) 还原成 SSE 文本字节。

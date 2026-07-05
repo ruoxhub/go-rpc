@@ -37,7 +37,7 @@ func NewRpcClient(group, clientID string, conn transport.Connection) *RpcClient 
 		Connection: conn,
 		Status:     StatusConnected,
 		LastActive: time.Now(),
-		cb:         NewCircuitBreaker(3, 30*time.Second),
+		cb:         NewCircuitBreaker(3, 15*time.Second),
 	}
 }
 

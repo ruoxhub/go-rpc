@@ -1,6 +1,13 @@
 package handler
 
 import (
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	json "github.com/goccy/go-json"
+
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/handler/errorcode"
 	"github.com/mrh30000/go-rpc/pkg/utils/traceid"
@@ -84,4 +91,37 @@ func NotFound(c *gin.Context, message string) {
 // InternalError 输出 5001 服务端错误, HTTP 500。
 func InternalError(c *gin.Context, message string) {
 	Fail(c, errorcode.InternalError, message)
+}
+
+// WriteSSEHeaders 把 HTTP 响应头切到 text/event-stream 模式。
+func WriteSSEHeaders(c *gin.Context) {
+	header := c.Writer.Header()
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("X-Accel-Buffering", "no")
+	header.Set("Connection", "keep-alive")
+	c.Writer.WriteHeader(http.StatusOK)
+}
+
+// WriteSSEErrorEvent 写一个 SSE 错误事件帧。msg 中的换行替换为空格，避免破坏 SSE 边界。
+func WriteSSEErrorEvent(w io.Writer, msg string) {
+	safe := strings.ReplaceAll(msg, "\r", " ")
+	safe = strings.ReplaceAll(safe, "\n", " ")
+	fmt.Fprintf(w, "event: error\ndata: %s\n\n", safe)
+}
+
+// WriteSSEData 将数据对象序列化为 JSON 并作为 SSE data 帧写入并 Flush。
+func WriteSSEData(c *gin.Context, value interface{}) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+	c.Writer.Flush()
+}
+
+// WriteSSEDone 写入 SSE 结束帧 [DONE] 并 Flush。
+func WriteSSEDone(c *gin.Context) {
+	fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+	c.Writer.Flush()
 }

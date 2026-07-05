@@ -220,7 +220,7 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 		return
 	}
 
-	writeSSEHeaders(c)
+	WriteSSEHeaders(c)
 	c.Writer.Flush()
 	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
 		logger.Debugf("Failed to clear SSE write deadline: %v", err)
@@ -233,11 +233,11 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 	parser := newQwenSSEParser()
 
 	emit := func(delta map[string]interface{}, finishReason interface{}) {
-		writeSSEData(c, chatCompletionStreamFrame(holdback.chunkID, req.Model, startTime, delta, finishReason))
+		WriteSSEData(c, chatCompletionStreamFrame(holdback.chunkID, req.Model, startTime, delta, finishReason))
 	}
 	onFinal := func(reason string) {
 		emit(map[string]interface{}{}, reason)
-		writeSSEDone(c)
+		WriteSSEDone(c)
 	}
 	finalize := func() {
 		holdback.finalizeAndEmit(emit, req.ToolNames, req.ToolsRaw, onFinal)
@@ -248,15 +248,15 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 		case <-ctx.Done():
 			targetClient.MarkFailure()
 			emit(map[string]interface{}{}, "error")
-			writeSSEDone(c)
+			WriteSSEDone(c)
 			return
 		case chunk, ok := <-stream.ChunkChan:
 			if !ok {
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					targetClient.MarkFailure()
-					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, errMsg))
+					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, errMsg))
 					if !holdback.finished {
-						writeSSEDone(c)
+						WriteSSEDone(c)
 					}
 					return
 				}
@@ -266,8 +266,8 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 			}
 			if chunk.Error != "" {
 				targetClient.MarkFailure()
-				writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, chunk.Error))
-				writeSSEDone(c)
+				WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, chunk.Error))
+				WriteSSEDone(c)
 				return
 			}
 			text, err := decodeStreamChunkText(chunk.Data)
@@ -287,8 +287,8 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 				}
 				if ev.Error != "" {
 					targetClient.MarkFailure()
-					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, ev.Error))
-					writeSSEDone(c)
+					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, ev.Error))
+					WriteSSEDone(c)
 					return
 				}
 				if ev.Finished {
@@ -512,21 +512,6 @@ func writeChatError(c *gin.Context, statusCode int, message string) {
 			"type":    "sekiro_error",
 		},
 	})
-}
-
-func writeSSEData(c *gin.Context, value interface{}) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		logger.Errorf("Failed to marshal chat completion stream chunk: %v", err)
-		return
-	}
-	_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", data)
-	c.Writer.Flush()
-}
-
-func writeSSEDone(c *gin.Context) {
-	_, _ = fmt.Fprint(c.Writer, "data: [DONE]\n\n")
-	c.Writer.Flush()
 }
 
 func boolFromRaw(value interface{}) bool {

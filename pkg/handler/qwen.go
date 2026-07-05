@@ -280,7 +280,7 @@ func (h *APIHandler) qwenStreamToOpenAI(
 		return
 	}
 
-	writeSSEHeaders(c)
+	WriteSSEHeaders(c)
 	c.Writer.Flush()
 
 	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
@@ -308,12 +308,12 @@ func (h *APIHandler) qwenStreamToOpenAI(
 				},
 			},
 		}
-		writeSSEData(c, payload)
+		WriteSSEData(c, payload)
 	}
 
 	onFinal := func(reason string) {
 		emitOpenAIChunk(map[string]interface{}{}, reason)
-		writeSSEDone(c)
+		WriteSSEDone(c)
 	}
 
 	finalize := func() {
@@ -325,15 +325,15 @@ func (h *APIHandler) qwenStreamToOpenAI(
 		case <-ctx.Done():
 			target.MarkFailure()
 			emitOpenAIChunk(map[string]interface{}{}, "error")
-			writeSSEDone(c)
+			WriteSSEDone(c)
 			return
 		case chunk, ok := <-stream.ChunkChan:
 			if !ok {
 				if errMsg := stream.TerminalError(); errMsg != "" {
 					target.MarkFailure()
-					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
+					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
 					if !holdback.finished {
-						writeSSEDone(c)
+						WriteSSEDone(c)
 					}
 					return
 				}
@@ -343,8 +343,8 @@ func (h *APIHandler) qwenStreamToOpenAI(
 			}
 			if chunk.Error != "" {
 				target.MarkFailure()
-				writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
-				writeSSEDone(c)
+				WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
+				WriteSSEDone(c)
 				return
 			}
 			text, err := decodeStreamChunkText(chunk.Data)
@@ -365,8 +365,8 @@ func (h *APIHandler) qwenStreamToOpenAI(
 				}
 				if ev.Error != "" {
 					target.MarkFailure()
-					writeSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
-					writeSSEDone(c)
+					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
+					WriteSSEDone(c)
 					return
 				}
 				if ev.Finished {
