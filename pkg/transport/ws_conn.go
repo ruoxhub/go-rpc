@@ -38,6 +38,12 @@ func (w *WSConnection) PingProbe() error {
 }
 
 func (w *WSConnection) Close() error {
+	if w.conn == nil {
+		return nil
+	}
+	// 先给 close 握手帧一个短 deadline，避免半开（zombie）连接上 Close 永久挂起，
+	// 进而阻塞调用方（曾导致 actor 循环卡死、整组请求冻结）。
+	w.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
 	return w.conn.Close()
 }
 

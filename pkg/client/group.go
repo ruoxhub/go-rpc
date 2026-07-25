@@ -94,10 +94,13 @@ func (g *RpcGroup) handleCommand(cmd groupCommand) {
 
 	case cmdUnregister:
 		if client, ok := g.clients[cmd.clientID]; ok {
-			client.Close()
 			delete(g.clients, cmd.clientID)
 			g.removeFromOrder(cmd.clientID)
 			logger.Debugf("Client unregistered: group=%s, clientId=%s", g.name, cmd.clientID)
+			// 不要在 actor 循环内关闭连接：WSConnection.Close 在半开连接上可能长时间阻塞，
+			// 会把整条串行化的 commandChan 卡死，进而冻结整个分组的请求。
+			// 关闭连接不修改分组状态，放独立 goroutine 安全且不影响串行化。
+			go client.Close()
 		}
 
 	case cmdGetClient:
@@ -203,9 +206,10 @@ func (g *RpcGroup) drainCommands() {
 }
 
 // closeAllClients 在 runLoop 退出前关闭所有 client。
+// 关闭动作放到独立 goroutine，避免关停时逐个阻塞 actor 循环。
 func (g *RpcGroup) closeAllClients() {
 	for _, c := range g.clients {
-		c.Close()
+		go c.Close()
 	}
 	g.clients = make(map[string]*RpcClient)
 	g.order = nil
