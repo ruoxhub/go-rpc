@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,7 +16,6 @@ import (
 	"github.com/mrh30000/go-rpc/internal/toolcall"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
-	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/model"
 )
 
@@ -168,46 +166,22 @@ func (h *APIHandler) HandleChatCompletions(c *gin.Context) {
 }
 
 func (h *APIHandler) handleChatCompletionNonStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.RpcClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
-	invokeRecord := h.timeoutManager.Add(sequence, req.Group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, req.Group, targetClient.ClientID, reqDataJSON, ""); err != nil {
-		h.timeoutManager.Remove(sequence)
+	resp, err := h.waitUnaryInvoke(c.Request.Context(), req.Group, targetClient, sequence, reqDataJSON, timeout, "")
+	if err != nil {
 		targetClient.MarkFailure()
-		writeChatError(c, http.StatusOK, "Failed to send request: "+err.Error())
+		writeChatError(c, http.StatusOK, err.Error())
 		return
 	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
-			return
-		}
-		responseChan <- resp
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
+	if resp.Status >= 0 && resp.Error == "" {
+		targetClient.MarkSuccess()
+	} else {
 		targetClient.MarkFailure()
-		writeChatError(c, http.StatusOK, "Request timeout")
-	case resp := <-responseChan:
-		if resp.Status >= 0 && resp.Error == "" {
-			targetClient.MarkSuccess()
-		} else {
-			targetClient.MarkFailure()
-		}
-		if resp.Error != "" {
-			writeChatError(c, http.StatusOK, resp.Error)
-			return
-		}
-		c.JSON(http.StatusOK, normalizeChatCompletionResponse(req, resp.Data, sequence, startTime))
 	}
+	if resp.Error != "" {
+		writeChatError(c, http.StatusOK, resp.Error)
+		return
+	}
+	c.JSON(http.StatusOK, normalizeChatCompletionResponse(req, resp.Data, sequence, startTime))
 }
 
 func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatCompletionRequest, targetClient *client.RpcClient, sequence string, reqDataJSON []byte, timeout time.Duration, startTime time.Time) {
@@ -220,100 +194,13 @@ func (h *APIHandler) handleChatCompletionStream(c *gin.Context, req *ChatComplet
 		return
 	}
 
-	WriteSSEHeaders(c)
-	c.Writer.Flush()
-	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
-		logger.Debugf("Failed to clear SSE write deadline: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	holdback := newStreamHoldback("chatcmpl-" + sequence)
-	parser := newQwenSSEParser()
-
-	emit := func(delta map[string]interface{}, finishReason interface{}) {
-		WriteSSEData(c, chatCompletionStreamFrame(holdback.chunkID, req.Model, startTime, delta, finishReason))
-	}
-	onFinal := func(reason string) {
-		emit(map[string]interface{}{}, reason)
-		WriteSSEDone(c)
-	}
-	finalize := func() {
-		holdback.finalizeAndEmit(emit, req.ToolNames, req.ToolsRaw, onFinal)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			targetClient.MarkFailure()
-			emit(map[string]interface{}{}, "error")
-			WriteSSEDone(c)
-			return
-		case chunk, ok := <-stream.ChunkChan:
-			if !ok {
-				if errMsg := stream.TerminalError(); errMsg != "" {
-					targetClient.MarkFailure()
-					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, errMsg))
-					if !holdback.finished {
-						WriteSSEDone(c)
-					}
-					return
-				}
-				finalize()
-				targetClient.MarkSuccess()
-				return
-			}
-			if chunk.Error != "" {
-				targetClient.MarkFailure()
-				WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, chunk.Error))
-				WriteSSEDone(c)
-				return
-			}
-			text, err := decodeStreamChunkText(chunk.Data)
-			if err != nil {
-				logger.Warnf("chat completions decode chunk: %v", err)
-				continue
-			}
-			if text == "" && !chunk.Done {
-				continue
-			}
-			for _, ev := range parser.Feed(text) {
-				holdback.adoptResponseID(ev.ResponseID)
-				if ev.Done {
-					finalize()
-					targetClient.MarkSuccess()
-					return
-				}
-				if ev.Error != "" {
-					targetClient.MarkFailure()
-					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, req.Model, startTime, ev.Error))
-					WriteSSEDone(c)
-					return
-				}
-				if ev.Finished {
-					finalize()
-					targetClient.MarkSuccess()
-					return
-				}
-				if ev.Content == "" && ev.Role == "" {
-					continue
-				}
-				if ev.Phase == "thinking" {
-					// Chain-of-Thought 段不参与工具调用解析，立即透传。
-					holdback.flushThinking(emit, ev.Role, ev.Content)
-					continue
-				}
-				holdback.appendAnswer(ev.Content)
-				holdback.flushSafeContent(emit)
-			}
-			if chunk.Done {
-				finalize()
-				targetClient.MarkSuccess()
-				return
-			}
-		}
-	}
+	h.driveOpenAIChatStream(
+		c, stream, targetClient, timeout, req.Model, startTime,
+		req.ToolNames, req.ToolsRaw, "chatcmpl-"+sequence,
+		func(chunkID string, delta map[string]interface{}, finishReason interface{}) {
+			WriteSSEData(c, chatCompletionStreamFrame(chunkID, req.Model, startTime, delta, finishReason))
+		},
+	)
 }
 
 // chatCompletionStreamFrame 构造 deepseek 风格的 chat.completion.chunk 帧。

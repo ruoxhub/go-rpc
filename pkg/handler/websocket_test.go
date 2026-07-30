@@ -31,7 +31,7 @@ func TestHandleRegister_MissingParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
 	mockRpcHandler := wsHandler.NewHandler(mockManager, nil, nil, nil, nil)
-	handler := NewWebSocketHandler(mockRpcHandler)
+	handler := NewWebSocketHandler(mockRpcHandler, func(c *gin.Context, group string) bool { return true })
 
 	// 创建 gin engine 并注册路由
 	router := gin.New()
@@ -56,7 +56,7 @@ func TestHandleRegister_ValidParams(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mockManager := client.NewClientManager()
 	mockRpcHandler := wsHandler.NewHandler(mockManager, nil, nil, nil, nil)
-	handler := NewWebSocketHandler(mockRpcHandler)
+	handler := NewWebSocketHandler(mockRpcHandler, func(c *gin.Context, group string) bool { return true })
 
 	// 创建 gin engine 并注册路由
 	router := gin.New()

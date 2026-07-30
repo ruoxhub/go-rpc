@@ -650,8 +650,12 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		}
 	}
 
-	if s.groupRepo == nil {
-		return true
+	// Fail closed: without groupRepo/authMW we cannot verify ownership.
+	if s.groupRepo == nil || s.authMW == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "group access verification unavailable",
+		})
+		return false
 	}
 
 	group, err := s.authMW.LookupGroupConfig(groupName)
@@ -662,7 +666,13 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		return false
 	}
 	if group == nil {
-		// 未找到分组则视为公开分组，允许任意注册
+		// Anonymous / unregistered group: only allow when anonymous access is enabled.
+		if s.configService != nil && !s.configService.GetConfigBool(pkgconfig.ConfigKeyAllowAnonymousAccess, true) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "anonymous group registration is disabled",
+			})
+			return false
+		}
 		return true
 	}
 

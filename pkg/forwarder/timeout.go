@@ -49,6 +49,7 @@ type StreamRecord struct {
 	timedOut  bool
 	closed    bool
 	closeErr  string
+	closeOnce sync.Once
 	mu        sync.Mutex
 }
 
@@ -66,16 +67,17 @@ func (r *StreamRecord) Close() {
 	r.CloseWithError("")
 }
 
+// CloseWithError closes the stream at most once. Concurrent callers from
+// timeout cleanup, CompleteStream, and backpressure Push are safe.
 func (r *StreamRecord) CloseWithError(err string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return
-	}
-	r.closed = true
-	r.closeErr = err
-	close(r.done)
-	close(r.ChunkChan)
+	r.closeOnce.Do(func() {
+		r.mu.Lock()
+		r.closed = true
+		r.closeErr = err
+		r.mu.Unlock()
+		close(r.done)
+		close(r.ChunkChan)
+	})
 }
 
 func (r *StreamRecord) TerminalError() string {
@@ -369,6 +371,9 @@ func (m *TimeoutManager) PushStreamChunk(id string, chunk *StreamChunk) bool {
 	if record.Push(chunk) {
 		return true
 	}
+	// Push already closed the record on backpressure/terminal failure.
+	// Only detach from the map here — do not Close again (would race with
+	// CompleteStream / cleanupExpired concurrent closes).
 	m.mu.Lock()
 	if m.streams[id] == record {
 		delete(m.streams, id)

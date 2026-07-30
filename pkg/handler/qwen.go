@@ -24,7 +24,6 @@ import (
 	json "github.com/goccy/go-json"
 	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
-	"github.com/mrh30000/go-rpc/pkg/forwarder"
 )
 
 const (
@@ -158,37 +157,14 @@ func (h *APIHandler) qwenCreateChat(ctx context.Context, target *client.RpcClien
 		return "", fmt.Errorf("marshal createChat request: %w", err)
 	}
 
-	rec := h.timeoutManager.Add(seq, qwenGroup, target.ClientID, reqJSON)
-	rec.Timeout = qwenUnaryTimeout
-
-	if err := h.wsHandler.SendInvokeRequest(target, seq, qwenGroup, target.ClientID, reqJSON, ""); err != nil {
-		h.timeoutManager.Remove(seq)
-		return "", fmt.Errorf("send createChat: %w", err)
+	resp, err := h.waitUnaryInvoke(ctx, qwenGroup, target, seq, reqJSON, qwenUnaryTimeout, "")
+	if err != nil {
+		return "", fmt.Errorf("createChat: %w", err)
 	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, qwenUnaryTimeout)
-	defer cancel()
-
-	respCh := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(seq)
-		if err != nil {
-			respCh <- &forwarder.InvokeResponse{Error: err.Error(), Status: -1}
-			return
-		}
-		respCh <- resp
-	}()
-
-	select {
-	case <-waitCtx.Done():
-		h.timeoutManager.Remove(seq)
-		return "", errors.New("createChat timeout")
-	case resp := <-respCh:
-		if resp.Error != "" {
-			return "", errors.New(resp.Error)
-		}
-		return extractQwenChatID(resp.Data)
+	if resp.Error != "" {
+		return "", errors.New(resp.Error)
 	}
+	return extractQwenChatID(resp.Data)
 }
 
 // extractQwenChatID parses createChat response payload and pulls the chat id
@@ -280,118 +256,25 @@ func (h *APIHandler) qwenStreamToOpenAI(
 		return
 	}
 
-	WriteSSEHeaders(c)
-	c.Writer.Flush()
-
-	if err := http.NewResponseController(c.Writer).SetWriteDeadline(time.Time{}); err != nil {
-		logger.Debugf("clear SSE write deadline: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), qwenStreamTimeout)
-	defer cancel()
-
-	// chunkID 优先用上游 response_id，找到前先用本地 sequence 兜底。
-	holdback := newStreamHoldback("chatcmpl-" + seq)
-	parser := newQwenSSEParser()
-
-	emitOpenAIChunk := func(delta map[string]interface{}, finishReason interface{}) {
-		payload := map[string]interface{}{
-			"id":      holdback.chunkID,
-			"object":  "chat.completion.chunk",
-			"created": startTime.Unix(),
-			"model":   model,
-			"choices": []map[string]interface{}{
-				{
-					"index":         0,
-					"delta":         delta,
-					"finish_reason": finishReason,
+	h.driveOpenAIChatStream(
+		c, stream, target, qwenStreamTimeout, model, startTime,
+		toolNames, toolsRaw, "chatcmpl-"+seq,
+		func(chunkID string, delta map[string]interface{}, finishReason interface{}) {
+			WriteSSEData(c, map[string]interface{}{
+				"id":      chunkID,
+				"object":  "chat.completion.chunk",
+				"created": startTime.Unix(),
+				"model":   model,
+				"choices": []map[string]interface{}{
+					{
+						"index":         0,
+						"delta":         delta,
+						"finish_reason": finishReason,
+					},
 				},
-			},
-		}
-		WriteSSEData(c, payload)
-	}
-
-	onFinal := func(reason string) {
-		emitOpenAIChunk(map[string]interface{}{}, reason)
-		WriteSSEDone(c)
-	}
-
-	finalize := func() {
-		holdback.finalizeAndEmit(emitOpenAIChunk, toolNames, toolsRaw, onFinal)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			target.MarkFailure()
-			emitOpenAIChunk(map[string]interface{}{}, "error")
-			WriteSSEDone(c)
-			return
-		case chunk, ok := <-stream.ChunkChan:
-			if !ok {
-				if errMsg := stream.TerminalError(); errMsg != "" {
-					target.MarkFailure()
-					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, errMsg))
-					if !holdback.finished {
-						WriteSSEDone(c)
-					}
-					return
-				}
-				finalize()
-				target.MarkSuccess()
-				return
-			}
-			if chunk.Error != "" {
-				target.MarkFailure()
-				WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, chunk.Error))
-				WriteSSEDone(c)
-				return
-			}
-			text, err := decodeStreamChunkText(chunk.Data)
-			if err != nil {
-				logger.Warnf("qwen stream decode chunk: %v", err)
-				continue
-			}
-			if text == "" && !chunk.Done {
-				continue
-			}
-			events := parser.Feed(text)
-			for _, ev := range events {
-				holdback.adoptResponseID(ev.ResponseID)
-				if ev.Done {
-					finalize()
-					target.MarkSuccess()
-					return
-				}
-				if ev.Error != "" {
-					target.MarkFailure()
-					WriteSSEData(c, buildOpenAIErrorChunk(holdback.chunkID, model, startTime, ev.Error))
-					WriteSSEDone(c)
-					return
-				}
-				if ev.Finished {
-					finalize()
-					target.MarkSuccess()
-					return
-				}
-				if ev.Content == "" && ev.Role == "" {
-					continue
-				}
-				if ev.Phase == "thinking" {
-					// reasoning_content 不参与工具调用解析，立即透传。
-					holdback.flushThinking(emitOpenAIChunk, ev.Role, ev.Content)
-					continue
-				}
-				holdback.appendAnswer(ev.Content)
-				holdback.flushSafeContent(emitOpenAIChunk)
-			}
-			if chunk.Done {
-				finalize()
-				target.MarkSuccess()
-				return
-			}
-		}
-	}
+			})
+		},
+	)
 }
 
 // qwenAggregateToOpenAI handles the non-stream branch. It runs the same

@@ -9,11 +9,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/client"
+	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/router"
+	ws "github.com/mrh30000/go-rpc/pkg/websocket"
 )
 
 // MockClientManager provides mock implementation for testing.
@@ -72,12 +74,35 @@ func (m *MockClientManager) Unregister(group, clientID string)             {}
 func (m *MockClientManager) AllocateClient(group string) *client.RpcClient { return nil }
 func (m *MockClientManager) CleanupAll()                                   {}
 
+// testAnonGroupRepo reports every group as unregistered (anonymous).
+// Embeds repository.GroupRepository (nil): unexpected method calls panic,
+// so interface growth does not require updating this mock.
+type testAnonGroupRepo struct {
+	repository.GroupRepository
+}
+
+func (testAnonGroupRepo) FindGroupByName(string) (*model.GroupConfig, error) { return nil, nil }
+func (testAnonGroupRepo) IsGroupRegistered(string) (bool, error)            { return false, nil }
+func (testAnonGroupRepo) IsAnonymousGroup(string) (bool, error)             { return true, nil }
+
 func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
+	anonRepo := testAnonGroupRepo{}
+	tm := forwarder.NewTimeoutManager(nil)
 	return &APIHandler{
 		clientManager:  mockManager,
 		router:         nil,
-		wsHandler:      nil,
-		timeoutManager: forwarder.NewTimeoutManager(nil),
+		wsHandler:      ws.NewHandler(nil, tm, nil, nil, nil),
+		timeoutManager: tm,
+		// Fail-closed auth requires non-nil groupRepo/authMW. Tests default to
+		// an anonymous-only repo so existing invoke/list cases keep working.
+		groupRepo: anonRepo,
+		authMW: middleware.NewAuthMiddleware(
+			nil,
+			func(string) (*model.GroupConfig, error) { return nil, nil },
+			middleware.DefaultTokenCache(),
+			middleware.DefaultGroupCache(),
+			nil,
+		),
 	}
 }
 
@@ -279,9 +304,10 @@ func TestHandleInvoke_SpecifiedClientNotFound(t *testing.T) {
 	}
 }
 
-func TestFilterAccessibleGroupsWithoutDatabaseReturnsOriginalGroups(t *testing.T) {
+func TestFilterAccessibleGroupsWithoutDatabaseReturnsEmpty(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := newTestAPIHandler(newMockClientManager())
+	handler.groupRepo = nil // simulate missing repository
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -292,21 +318,23 @@ func TestFilterAccessibleGroupsWithoutDatabaseReturnsOriginalGroups(t *testing.T
 	if err != nil {
 		t.Fatalf("filterAccessibleGroups() error = %v", err)
 	}
-	if len(filtered) != len(groups) {
-		t.Fatalf("filtered len = %d, want %d", len(filtered), len(groups))
+	// Fail closed: without groupRepo, do not leak online group names.
+	if len(filtered) != 0 {
+		t.Fatalf("filtered len = %d, want 0", len(filtered))
 	}
 }
 
-func TestAuthorizeRegisteredGroupAccessWithoutDatabaseAllowsRequest(t *testing.T) {
+func TestAuthorizeRegisteredGroupAccessWithoutDatabaseDeniesRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	handler := newTestAPIHandler(newMockClientManager())
+	handler.groupRepo = nil // simulate missing repository
 
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/business/invoke?group=g1", nil)
 
-	if !handler.authorizeRegisteredGroupAccess(c, "g1") {
-		t.Fatal("expected authorizeRegisteredGroupAccess to allow when database is unavailable")
+	if handler.authorizeRegisteredGroupAccess(c, "g1") {
+		t.Fatal("expected authorizeRegisteredGroupAccess to deny when database is unavailable")
 	}
 }
 

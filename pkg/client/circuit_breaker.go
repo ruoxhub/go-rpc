@@ -72,22 +72,50 @@ func (cb *CircuitBreaker) Allow() bool {
 		return true
 	case CircuitOpen:
 		cb.mu.Lock()
+		// Re-check under lock; if another goroutine already left Open,
+		// decide with the lock held (no recursive Allow — mutex is not reentrant).
 		if CircuitState(cb.state.Load()) != CircuitOpen {
+			allowed, transitioned := cb.allowLocked()
 			cb.mu.Unlock()
-			return cb.Allow()
+			if transitioned {
+				cb.fireCallback()
+			}
+			return allowed
 		}
 		if time.Since(cb.lastFailureAt) < cb.recoveryTimeout {
 			cb.mu.Unlock()
 			return false
 		}
 		cb.transitionToLocked(CircuitHalfOpen)
+		allowed := cb.halfOpenProbe.CompareAndSwap(0, 1)
 		cb.mu.Unlock()
 		cb.fireCallback()
-		return cb.halfOpenProbe.CompareAndSwap(0, 1)
+		return allowed
 	case CircuitHalfOpen:
 		return cb.halfOpenProbe.CompareAndSwap(0, 1)
 	default:
 		return false
+	}
+}
+
+// allowLocked evaluates Allow while cb.mu is already held.
+// transitioned is true only when this call performed a state change.
+// Must not call Lock/Unlock or fireCallback.
+func (cb *CircuitBreaker) allowLocked() (allowed, transitioned bool) {
+	state := CircuitState(cb.state.Load())
+	switch state {
+	case CircuitClosed:
+		return true, false
+	case CircuitOpen:
+		if time.Since(cb.lastFailureAt) < cb.recoveryTimeout {
+			return false, false
+		}
+		cb.transitionToLocked(CircuitHalfOpen)
+		return cb.halfOpenProbe.CompareAndSwap(0, 1), true
+	case CircuitHalfOpen:
+		return cb.halfOpenProbe.CompareAndSwap(0, 1), false
+	default:
+		return false, false
 	}
 }
 
@@ -106,6 +134,8 @@ func (cb *CircuitBreaker) RecordSuccess() {
 		cb.transitionToLocked(CircuitClosed)
 		cb.mu.Unlock()
 		cb.fireCallback()
+	default:
+		cb.mu.Unlock()
 	}
 }
 
@@ -132,6 +162,9 @@ func (cb *CircuitBreaker) RecordFailure() {
 		cb.transitionToLocked(CircuitOpen)
 		cb.mu.Unlock()
 		cb.fireCallback()
+	default:
+		// CircuitOpen (and unknown): still release the lock.
+		cb.mu.Unlock()
 	}
 }
 

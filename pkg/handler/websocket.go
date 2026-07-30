@@ -10,22 +10,29 @@ import (
 	wsHandler "github.com/mrh30000/go-rpc/pkg/websocket"
 )
 
+// RegisterAuthorizer validates whether a client may register into a group
+// before the WebSocket upgrade. Return false after writing the HTTP error.
+type RegisterAuthorizer func(c *gin.Context, group string) bool
+
 // WebSocketHandler handles WebSocket connections
 type WebSocketHandler struct {
 	sekiroHandler *wsHandler.Handler
+	authorize     RegisterAuthorizer
 }
 
-// NewWebSocketHandler creates a new WebSocketHandler
-func NewWebSocketHandler(sekiroHandler *wsHandler.Handler) *WebSocketHandler {
+// NewWebSocketHandler creates a new WebSocketHandler.
+// authorize may be nil only in tests that do not exercise auth; production
+// must pass the same authorizeRegisterAccess used by main.handleRegister.
+func NewWebSocketHandler(sekiroHandler *wsHandler.Handler, authorize RegisterAuthorizer) *WebSocketHandler {
 	return &WebSocketHandler{
 		sekiroHandler: sekiroHandler,
+		authorize:     authorize,
 	}
 }
 
 // HandleRegister handles WebSocket registration requests
 // GET /business/register?group=xxx&clientId=xxx
 func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
-	// 获取查询参数
 	group := c.Query("group")
 	clientID := c.Query("clientId")
 
@@ -36,9 +43,20 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 		return
 	}
 
+	// Always run group access checks before upgrading the connection.
+	// Without an authorizer, fail closed to avoid unauthenticated register.
+	if h.authorize == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": "register authorization not configured",
+		})
+		return
+	}
+	if !h.authorize(c, group) {
+		return
+	}
+
 	logger.Debugf("WebSocket register: group=%s, clientId=%s", group, clientID)
 
-	// WebSocket 升级
 	wsConn, err := h.upgradeWebSocket(c.Writer, c.Request)
 	if err != nil {
 		logger.Errorf("WebSocket upgrade error: %v", err)
@@ -50,7 +68,6 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 
 	logger.Debugf("WebSocket upgrade successful: %s", c.ClientIP())
 
-	// 使用完整的 Rpc WebSocket 处理器处理连接
 	ctx := context.Background()
 	h.sekiroHandler.HandleConnection(ctx, wsConn, group, clientID)
 }

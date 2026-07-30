@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -435,7 +435,7 @@ func (h *APIHandler) forwardStream(c *gin.Context, builder RequestBuilder, group
 	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, traceID(c)); err != nil {
 		h.timeoutManager.RemoveStream(sequence)
 		targetClient.MarkFailure()
-		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
+		h.writeForwardError(c, group, targetClient.ClientID, fmt.Errorf("Failed to send request: %w", err))
 		return
 	}
 	logger.Debugf("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
@@ -472,40 +472,19 @@ func (h *APIHandler) dispatchInvokeRequest(
 	timeout time.Duration,
 	traceID string,
 ) (*forwarder.InvokeResponse, bool) {
-
-	invokeRecord := h.timeoutManager.Add(sequence, group, targetClient.ClientID, reqDataJSON)
-	invokeRecord.Timeout = timeout
-
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, traceID); err != nil {
-		h.timeoutManager.Remove(sequence)
+	resp, err := h.waitUnaryInvoke(c.Request.Context(), group, targetClient, sequence, reqDataJSON, timeout, traceID)
+	if err != nil {
 		targetClient.MarkFailure()
-		h.writeForwardError(c, group, targetClient.ClientID, "Failed to send request: "+err.Error())
+		h.writeForwardError(c, group, targetClient.ClientID, err)
+		// Timeout → ok=true so callers still record timeout metrics;
+		// send/other failures → ok=false.
+		if errors.Is(err, errInvokeTimeout) {
+			return nil, true
+		}
 		return nil, false
 	}
 	logger.Debugf("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
-
-	ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
-	defer cancel()
-
-	responseChan := make(chan *forwarder.InvokeResponse, 1)
-	go func() {
-		resp, err := h.timeoutManager.Wait(sequence)
-		if err != nil {
-			responseChan <- &forwarder.InvokeResponse{Error: err.Error(), Status: errorcode.Timeout}
-			return
-		}
-		responseChan <- resp
-	}()
-
-	select {
-	case <-ctx.Done():
-		h.timeoutManager.Remove(sequence)
-		targetClient.MarkFailure()
-		h.writeForwardError(c, group, targetClient.ClientID, "Request timeout")
-		return nil, true
-	case resp := <-responseChan:
-		return resp, true
-	}
+	return resp, true
 }
 
 // renderUnaryResponse 把 InvokeResponse 渲染成统一响应信封 Response, 携带路由元数据
@@ -595,11 +574,15 @@ func (h *APIHandler) recordInvokeMetric(builder RequestBuilder, group, action, s
 
 // writeForwardError 输出 invoke 路径下的错误响应包络, 携带 group / clientId 与 trace_id。
 // 必须在 HTTP 响应头未写出时调用 (否则 JSON 头会失败)。
-// msg 为 "Request timeout" 时按 errorcode.Timeout 输出, 其余按 errorcode.InternalError。
-func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg string) {
+// errInvokeTimeout → errorcode.Timeout；其余 → errorcode.InternalError。
+func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID string, err error) {
 	code := errorcode.InternalError
-	if msg == "Request timeout" {
+	if errors.Is(err, errInvokeTimeout) {
 		code = errorcode.Timeout
+	}
+	msg := "unknown error"
+	if err != nil {
+		msg = err.Error()
 	}
 	FailWithRoute(c, code, msg, group, clientID)
 }
@@ -616,8 +599,15 @@ func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID, msg stri
 // 原版本同时支持调用方在 body/query 中传 sekiro_token 解析用户 — 已被删除, 鉴权
 // 入口统一收敛到中间件, 业务层不再做 token 解析。
 func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName string) bool {
+	// Fail closed: without a group repository we cannot distinguish registered
+	// vs anonymous groups, so deny rather than open the door.
 	if h.groupRepo == nil {
-		return true
+		InternalError(c, "group repository not available")
+		return false
+	}
+	if h.authMW == nil {
+		InternalError(c, "auth middleware not available")
+		return false
 	}
 
 	group, err := h.authMW.LookupGroupConfig(groupName)
@@ -645,8 +635,13 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 }
 
 func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]string, error) {
+	// Fail closed: without repo we cannot filter registered groups safely.
+	// Return empty rather than leaking the full online group list.
 	if h.groupRepo == nil {
-		return groups, nil
+		return []string{}, nil
+	}
+	if h.authMW == nil {
+		return []string{}, nil
 	}
 
 	token := middleware.ExtractAuthTokenFromRequest(c, false)
@@ -663,9 +658,9 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 	for _, groupName := range groups {
 		group, err := h.authMW.LookupGroupConfig(groupName)
 		if err != nil {
-			// 数据库查询异常时保守处理：视为匿名分组并保留，避免临时故障导致 groupList 完全不可用
-			logger.Warnf("filterAccessibleGroups: lookup group_config failed for %s: %v, treating as anonymous", groupName, err)
-			filtered = append(filtered, groupName)
+			// Fail closed on lookup errors: omit the group instead of treating
+			// it as anonymous (which would leak registered group names).
+			logger.Warnf("filterAccessibleGroups: lookup group_config failed for %s: %v, omitting", groupName, err)
 			continue
 		}
 		if group == nil {

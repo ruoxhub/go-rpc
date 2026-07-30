@@ -17,6 +17,65 @@ func TestCircuitBreaker_InitialState(t *testing.T) {
 	}
 }
 
+// TestCircuitBreaker_AllowNoSpuriousCallback ensures that when Open is
+// re-checked under lock and the state is already Closed, OnStateChange is
+// not fired (allowLocked returns transitioned=false).
+func TestCircuitBreaker_AllowNoSpuriousCallback(t *testing.T) {
+	cb := NewCircuitBreaker(1, time.Hour)
+	cb.RecordFailure() // → Open
+	if cb.State() != CircuitOpen {
+		t.Fatalf("expected Open, got %s", cb.State())
+	}
+
+	// Concurrent recovery to Closed without going through Allow's Open path.
+	cb.RecordSuccess()
+	if cb.State() != CircuitClosed {
+		t.Fatalf("expected Closed after RecordSuccess, got %s", cb.State())
+	}
+
+	var calls atomic.Int32
+	cb.OnStateChange = func(from, to CircuitState) {
+		calls.Add(1)
+	}
+
+	// Force the Open branch entry then re-check sees Closed.
+	// Simulate by setting state Open briefly then Closed under race is hard;
+	// instead call allowLocked path via state already Closed: Allow short-circuits.
+	if !cb.Allow() {
+		t.Fatal("Allow should succeed in Closed")
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("spurious OnStateChange calls: %d", calls.Load())
+	}
+
+	// Now exercise the re-check path: set Open, then flip to Closed while holding
+	// the same sequence Allow uses after Load sees Open.
+	cb.RecordFailure() // Closed → Open (threshold=1)
+	cb.state.Store(int32(CircuitOpen))
+	// Another goroutine recovers:
+	cb.mu.Lock()
+	cb.transitionToLocked(CircuitClosed)
+	cb.mu.Unlock()
+	// Clear lastTransition so fireCallback from transition above is consumed.
+	cb.fireCallback()
+	calls.Store(0)
+
+	// Manually run the Open re-check branch body:
+	cb.mu.Lock()
+	// state is Closed now
+	allowed, transitioned := cb.allowLocked()
+	cb.mu.Unlock()
+	if !allowed || transitioned {
+		t.Fatalf("allowLocked on Closed: allowed=%v transitioned=%v", allowed, transitioned)
+	}
+	if transitioned {
+		cb.fireCallback()
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("expected no callback when transitioned=false, got %d", calls.Load())
+	}
+}
+
 func TestCircuitBreaker_ClosedToOpen(t *testing.T) {
 	cb := NewCircuitBreaker(3, 100*time.Millisecond)
 

@@ -17,10 +17,16 @@ import (
 var (
 	loginUserRepo  repository.UserRepository
 	loginGroupRepo repository.GroupRepository
+	// defaultLoginHandler is reused for package-level HandleLogin/HandleRegister.
+	// userRepo is updated by SetUserRepository (startup wiring only).
+	defaultLoginHandler = &LoginHandler{}
 )
 
 // SetUserRepository sets the UserRepository for login/register handlers.
-func SetUserRepository(r repository.UserRepository) { loginUserRepo = r }
+func SetUserRepository(r repository.UserRepository) {
+	loginUserRepo = r
+	defaultLoginHandler.userRepo = r
+}
 
 // SetLoginGroupRepository sets the GroupRepository for frontend list handlers.
 func SetLoginGroupRepository(r repository.GroupRepository) { loginGroupRepo = r }
@@ -31,49 +37,9 @@ type LoginRequest struct {
 	Password string `form:"password" binding:"required"`
 }
 
-// HandleLogin 处理登录请求
+// HandleLogin 处理登录请求（委托给包级 LoginHandler，消除双实现）。
 func HandleLogin(c *gin.Context) {
-	var req LoginRequest
-	if err := c.ShouldBind(&req); err != nil {
-		BadRequest(c, err.Error())
-		return
-	}
-
-	if loginUserRepo == nil {
-		InternalError(c, "user repository not available")
-		return
-	}
-
-	user, err := loginUserRepo.FindByUserName(req.UserName)
-	if err != nil || user == nil {
-		Unauthorized(c, "用户名或密码错误")
-		return
-	}
-
-	if !password.CheckPassword(req.Password, user.Password) {
-		Unauthorized(c, "用户名或密码错误")
-		return
-	}
-
-	loginUserRepo.UpdateFields(user.ID, map[string]interface{}{"last_active": time.Now()})
-
-	updateTime := ""
-	if user.UpdateTime != nil {
-		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
-	}
-
-	OK(c, gin.H{
-		"id":         user.ID,
-		"userName":   user.UserName,
-		"lastActive": user.LastActive.Format("2006-01-02T15:04:05"),
-		"createTime": user.CreateTime.Format("2006-01-02T15:04:05"),
-		"loginToken": user.LoginToken,
-		"apiToken":   user.ApiToken,
-		"isAdmin":    user.IsAdmin,
-		"updateTime": updateTime,
-		"permission": user.Permission,
-		"quotaQps":   user.QuotaQps,
-	})
+	defaultLoginHandler.HandleLogin(c)
 }
 
 // HandleGetUserInfo 获取当前用户信息
@@ -240,69 +206,9 @@ type RegisterRequest struct {
 	Password string `form:"password" binding:"required"`
 }
 
-// HandleRegister 处理注册请求
+// HandleRegister 处理注册请求（委托给包级 LoginHandler，消除双实现）。
 func HandleRegister(c *gin.Context) {
-	var configSvc pkgconfig.Service
-	if cfgSvc, exists := c.Get("configService"); exists {
-		configSvc, _ = cfgSvc.(pkgconfig.Service)
-	}
-
-	if configSvc != nil && !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
-		Fail(c, errorcode.RegisterDisabled, "当前不允许注册新用户")
-		return
-	}
-
-	var req RegisterRequest
-	if err := c.ShouldBind(&req); err != nil {
-		BadRequest(c, err.Error())
-		return
-	}
-
-	if loginUserRepo == nil {
-		InternalError(c, "user repository not available")
-		return
-	}
-
-	existing, err := loginUserRepo.FindByUserName(req.UserName)
-	if err == nil && existing != nil {
-		BadRequest(c, "用户名已存在")
-		return
-	}
-
-	now := time.Now()
-
-	hashedPassword, err := password.HashPassword(req.Password)
-	if err != nil {
-		Fail(c, errorcode.EncryptFailed, "密码加密失败")
-		return
-	}
-
-	var defaultQps float64 = 100
-	if configSvc != nil {
-		defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
-	}
-
-	user := model.UserInfo{
-		UserName:   req.UserName,
-		Password:   hashedPassword,
-		QuotaQps:   defaultQps,
-		IsAdmin:    false,
-		ApiToken:   uuid.New().String(),
-		LoginToken: uuid.New().String(),
-		CreateTime: now,
-		LastActive: now,
-		UpdateTime: &now,
-	}
-
-	if err := loginUserRepo.Create(&user); err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-
-	OK(c, gin.H{
-		"id":       user.ID,
-		"userName": user.UserName,
-	})
+	defaultLoginHandler.HandleRegister(c)
 }
 
 // HandleUserAdd 添加用户（兼容 /rpc-api/user-info/add）
@@ -376,7 +282,7 @@ func (h *LoginHandler) HandleLogin(c *gin.Context) {
 		Unauthorized(c, "用户名或密码错误")
 		return
 	}
-	h.userRepo.UpdateFields(user.ID, map[string]interface{}{"last_active": time.Now()})
+	_ = h.userRepo.UpdateFields(user.ID, map[string]interface{}{"last_active": time.Now()})
 	updateTime := ""
 	if user.UpdateTime != nil {
 		updateTime = user.UpdateTime.Format("2006-01-02T15:04:05")
@@ -397,6 +303,15 @@ func (h *LoginHandler) HandleLogin(c *gin.Context) {
 
 // HandleRegister handles user registration requests.
 func (h *LoginHandler) HandleRegister(c *gin.Context) {
+	var configSvc pkgconfig.Service
+	if cfgSvc, exists := c.Get("configService"); exists {
+		configSvc, _ = cfgSvc.(pkgconfig.Service)
+	}
+	if configSvc != nil && !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
+		Fail(c, errorcode.RegisterDisabled, "当前不允许注册新用户")
+		return
+	}
+
 	var req RegisterRequest
 	if err := c.ShouldBind(&req); err != nil {
 		BadRequest(c, err.Error())
@@ -417,7 +332,10 @@ func (h *LoginHandler) HandleRegister(c *gin.Context) {
 		Fail(c, errorcode.EncryptFailed, "密码加密失败")
 		return
 	}
-	var defaultQps float64 = 100
+	defaultQps := 100.0
+	if configSvc != nil {
+		defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
+	}
 	user := model.UserInfo{
 		UserName:   req.UserName,
 		Password:   hashedPassword,

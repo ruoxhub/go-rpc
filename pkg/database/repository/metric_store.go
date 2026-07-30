@@ -97,10 +97,41 @@ func (s *metricStore) RollupDays(dayPrefix string) error {
 }
 
 func (s *metricStore) DeleteExpired(table string, before time.Time) error {
-	if err := s.db.Exec(fmt.Sprintf(`DELETE FROM %s WHERE create_time < ?`, table), before).Error; err != nil {
+	// Fixed SQL per table — never interpolate identifiers from callers.
+	var query string
+	switch table {
+	case "metric_minute":
+		query = `DELETE FROM metric_minute WHERE create_time < ?`
+	case "metric_hour":
+		query = `DELETE FROM metric_hour WHERE create_time < ?`
+	case "metric_day":
+		query = `DELETE FROM metric_day WHERE create_time < ?`
+	default:
+		return fmt.Errorf("refusing to delete from unlisted metric table %q", table)
+	}
+	if err := s.db.Exec(query, before).Error; err != nil {
 		return fmt.Errorf("failed to delete expired metrics from %s: %w", table, err)
 	}
 	return nil
+}
+
+// applyMetricTagFilter appends a WHERE clause for a fixed physical tag column.
+// column must be one of the five literal slots; anything else is ignored.
+func applyMetricTagFilter(query *gorm.DB, column, value string) *gorm.DB {
+	switch column {
+	case "tag1":
+		return query.Where("tag1 = ?", value)
+	case "tag2":
+		return query.Where("tag2 = ?", value)
+	case "tag3":
+		return query.Where("tag3 = ?", value)
+	case "tag4":
+		return query.Where("tag4 = ?", value)
+	case "tag5":
+		return query.Where("tag5 = ?", value)
+	default:
+		return query
+	}
 }
 
 func (s *metricStore) QueryMetricMinutes(name string, tags map[string]string, tagMapping *MetricTagMapping, limit int) ([]MetricMinutePoint, error) {
@@ -111,18 +142,29 @@ func (s *metricStore) QueryMetricMinutes(name string, tags map[string]string, ta
 		Limit(limit)
 
 	if tagMapping != nil {
-		tagColumns := map[string]string{
-			tagMapping.Tag1Name: "tag1",
-			tagMapping.Tag2Name: "tag2",
-			tagMapping.Tag3Name: "tag3",
-			tagMapping.Tag4Name: "tag4",
-			tagMapping.Tag5Name: "tag5",
+		// Logical tag name → fixed physical column (literal only, never free-form).
+		tagColumns := map[string]string{}
+		if tagMapping.Tag1Name != "" {
+			tagColumns[tagMapping.Tag1Name] = "tag1"
+		}
+		if tagMapping.Tag2Name != "" {
+			tagColumns[tagMapping.Tag2Name] = "tag2"
+		}
+		if tagMapping.Tag3Name != "" {
+			tagColumns[tagMapping.Tag3Name] = "tag3"
+		}
+		if tagMapping.Tag4Name != "" {
+			tagColumns[tagMapping.Tag4Name] = "tag4"
+		}
+		if tagMapping.Tag5Name != "" {
+			tagColumns[tagMapping.Tag5Name] = "tag5"
 		}
 		for tagName, tagValue := range tags {
 			column, ok := tagColumns[tagName]
-			if ok && column != "" {
-				query = query.Where(fmt.Sprintf("%s = ?", column), tagValue)
+			if !ok {
+				continue
 			}
+			query = applyMetricTagFilter(query, column, tagValue)
 		}
 	} else {
 		if group, ok := tags["group"]; ok {

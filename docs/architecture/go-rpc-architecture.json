@@ -1,0 +1,288 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Go-RPC (Sekiro) 系统架构与反向 RPC 流程图",
+    "subtitle": "基于 Go + React + WebSocket 的高性能内网穿透反向 RPC 代理系统架构",
+    "output": "go-rpc-architecture.html"
+  },
+  "components": [
+    {
+      "id": "invoker",
+      "type": "external",
+      "label": "Business Invoker",
+      "sublabel": "HTTP POST /business/invoke",
+      "pos": [80, 140],
+      "size": [180, 64]
+    },
+    {
+      "id": "admin_browser",
+      "type": "frontend",
+      "label": "Admin Web User",
+      "sublabel": "Browser React SPA",
+      "pos": [80, 360],
+      "size": [180, 64]
+    },
+    {
+      "id": "target_client_a",
+      "type": "external",
+      "label": "Intranet Client A",
+      "sublabel": "SDK (Reverse WS Conn)",
+      "pos": [80, 560],
+      "size": [180, 60]
+    },
+    {
+      "id": "target_client_b",
+      "type": "external",
+      "label": "Intranet Client B",
+      "sublabel": "SDK (Reverse WS Conn)",
+      "pos": [80, 660],
+      "size": [180, 60]
+    },
+    {
+      "id": "gin_engine",
+      "type": "backend",
+      "label": "Gin Web Engine",
+      "sublabel": "Auth / CORS / RateLimit",
+      "pos": [350, 140],
+      "size": [160, 64]
+    },
+    {
+      "id": "web_embed",
+      "type": "frontend",
+      "label": "React SPA Embed",
+      "sublabel": "web/embed.go (//go:embed)",
+      "pos": [350, 360],
+      "size": [160, 64]
+    },
+    {
+      "id": "api_handler",
+      "type": "backend",
+      "label": "API Handler",
+      "sublabel": "HandleInvoke / Web API",
+      "pos": [600, 140],
+      "size": [160, 64]
+    },
+    {
+      "id": "timeout_mgr",
+      "type": "backend",
+      "label": "Timeout Manager",
+      "sublabel": "In-flight RPC & Channels",
+      "pos": [850, 140],
+      "size": [160, 64]
+    },
+    {
+      "id": "router_engine",
+      "type": "backend",
+      "label": "Router Engine",
+      "sublabel": "RR / Hash / Specified",
+      "pos": [1100, 140],
+      "size": [160, 64]
+    },
+    {
+      "id": "client_mgr",
+      "type": "backend",
+      "label": "Client Manager",
+      "sublabel": "Actor Model (RpcGroup)",
+      "pos": [1100, 360],
+      "size": [160, 64]
+    },
+    {
+      "id": "ws_gateway",
+      "type": "messagebus",
+      "label": "WebSocket Gateway",
+      "sublabel": "Reverse WS Gateway / Codec / Heartbeat",
+      "pos": [600, 580],
+      "size": [660, 64]
+    },
+    {
+      "id": "config_svc",
+      "type": "cloud",
+      "label": "Config Service",
+      "sublabel": "SysConfig Dynamic Cache",
+      "pos": [1400, 140],
+      "size": [160, 60]
+    },
+    {
+      "id": "metrics_coll",
+      "type": "cloud",
+      "label": "Metrics Collector",
+      "sublabel": "QPS / Latency Aggregation",
+      "pos": [1400, 270],
+      "size": [160, 60]
+    },
+    {
+      "id": "alert_engine",
+      "type": "security",
+      "label": "Alert Engine",
+      "sublabel": "SMTP / Webhook Alert",
+      "pos": [1400, 400],
+      "size": [160, 60]
+    },
+    {
+      "id": "postgres_db",
+      "type": "database",
+      "label": "PostgreSQL DB",
+      "sublabel": "Users / Groups / Traces",
+      "pos": [1400, 580],
+      "size": [160, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "External Invokers & Intranet Clients (外部调用与客户端)",
+      "wraps": ["invoker", "admin_browser", "target_client_a", "target_client_b"]
+    },
+    {
+      "kind": "region",
+      "label": "Go-RPC Core Server Boundary (Go-RPC 核心服务端)",
+      "wraps": [
+        "gin_engine",
+        "web_embed",
+        "api_handler",
+        "timeout_mgr",
+        "router_engine",
+        "client_mgr",
+        "ws_gateway",
+        "config_svc",
+        "metrics_coll",
+        "alert_engine"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "Data & Persistence Boundary (持久化存储)",
+      "wraps": ["postgres_db"]
+    }
+  ],
+  "connections": [
+    {
+      "from": "invoker",
+      "to": "gin_engine",
+      "label": "1. Invoke Req",
+      "variant": "emphasis",
+      "labelDy": -15
+    },
+    {
+      "from": "admin_browser",
+      "to": "web_embed",
+      "label": "SPA Visit",
+      "variant": "default",
+      "labelDy": -15
+    },
+    {
+      "from": "admin_browser",
+      "to": "gin_engine",
+      "label": "Manage API",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "left",
+      "labelDy": -20
+    },
+    {
+      "from": "gin_engine",
+      "to": "api_handler",
+      "label": "Auth & Route",
+      "variant": "default",
+      "labelDy": -15
+    },
+    {
+      "from": "api_handler",
+      "to": "timeout_mgr",
+      "label": "2. Register",
+      "variant": "emphasis",
+      "labelDy": -15
+    },
+    {
+      "from": "timeout_mgr",
+      "to": "router_engine",
+      "label": "3. Pick Client",
+      "variant": "emphasis",
+      "labelDy": -15
+    },
+    {
+      "from": "router_engine",
+      "to": "client_mgr",
+      "label": "4. Select Client",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": 45,
+      "labelDy": 30
+    },
+    {
+      "from": "client_mgr",
+      "to": "ws_gateway",
+      "label": "5. Dispatch WS",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDx": 45
+    },
+    {
+      "from": "target_client_a",
+      "to": "ws_gateway",
+      "label": "Reverse WS",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -15
+    },
+    {
+      "from": "target_client_b",
+      "to": "ws_gateway",
+      "label": "Heartbeat",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": 15
+    },
+    {
+      "from": "ws_gateway",
+      "to": "timeout_mgr",
+      "label": "6. WS Callback Channel",
+      "variant": "emphasis",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": -40
+    },
+    {
+      "from": "api_handler",
+      "to": "metrics_coll",
+      "label": "Metrics",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left",
+      "labelDy": -15
+    },
+    {
+      "from": "alert_engine",
+      "to": "postgres_db",
+      "label": "Rules",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "right",
+      "labelDx": 25
+    },
+    {
+      "from": "api_handler",
+      "to": "postgres_db",
+      "label": "Auth & Trace",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "labelDy": 25
+    },
+    {
+      "from": "config_svc",
+      "to": "postgres_db",
+      "label": "SysConfig",
+      "variant": "default",
+      "fromSide": "right",
+      "toSide": "right",
+      "labelDx": 30
+    }
+  ],
+  "cards": []
+}
