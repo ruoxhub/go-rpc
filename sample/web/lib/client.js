@@ -41,8 +41,51 @@ class BackgroundWebSocket {
     this.onclose = null;
     this.onerror = null;
     this._messageHandler = this._handleMessage.bind(this);
+    this._fallbackAttempted = false;
+    this._gotError = false;
     window.addEventListener('message', this._messageHandler);
     this._connect();
+  }
+
+  /**
+   * 通过 bridge → background 探测本机局域网 IP（MAIN world 中 WebRTC 可能被反检测拦截）
+   * @returns {Promise<string|null>}
+   */
+  static detectLocalIP() {
+    if (BackgroundWebSocket._cachedIP) return Promise.resolve(BackgroundWebSocket._cachedIP);
+
+    return new Promise((resolve) => {
+      const requestId = 'detectip_' + Math.random().toString(36).substr(2, 9);
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }, 5000);
+
+      function handler(event) {
+        if (event.source !== window) return;
+        const data = event.data;
+        if (!data || data.source !== 'crawler_rpc_bridge') return;
+        if (data.requestId !== requestId) return;
+
+        clearTimeout(timeout);
+        window.removeEventListener('message', handler);
+
+        if (data.success && data.ip) {
+          BackgroundWebSocket._cachedIP = data.ip;
+          resolve(data.ip);
+        } else {
+          resolve(null);
+        }
+      }
+
+      window.addEventListener('message', handler);
+      window.postMessage({
+        source: 'crawler_rpc_main',
+        action: 'detectLocalIP',
+        requestId: requestId,
+        port: 5612
+      }, '*');
+    });
   }
 
 
@@ -117,13 +160,53 @@ class BackgroundWebSocket {
         if (this.onmessage) this.onmessage({ data: msg.data });
         break;
       case 'close':
+        // localhost WS 连接失败时的回退机制：
+        // 如果之前收到了 error 且目标是 localhost，尝试用局域网 IP 重连
+        if (this._gotError && !this._fallbackAttempted && this._isLocalhost()) {
+          this._fallbackAttempted = true;
+          this._gotError = false;
+          BackgroundWebSocket.detectLocalIP().then((localIP) => {
+            if (localIP) {
+              try {
+                const u = new URL(this.url);
+                u.hostname = localIP;
+                const fallbackURL = u.toString();
+                this.url = fallbackURL;
+                // 用新的 connId 重新连接，避免 bridge 侧状态混乱
+                this.connId = 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+                this.readyState = WebSocket.CONNECTING;
+                this._connect();
+                return; // 不触发 onclose，等待回退连接结果
+              } catch (_) {}
+            }
+            // 回退失败，正常触发 onclose
+            this.readyState = WebSocket.CLOSED;
+            window.removeEventListener('message', this._messageHandler);
+            if (this.onclose) this.onclose({ code: msg.code, reason: msg.reason });
+          });
+          return;
+        }
         this.readyState = WebSocket.CLOSED;
         window.removeEventListener('message', this._messageHandler);
         if (this.onclose) this.onclose({ code: msg.code, reason: msg.reason });
         break;
       case 'error':
+        this._gotError = true;
         if (this.onerror) this.onerror(msg);
         break;
+    }
+  }
+
+  /**
+   * 判断当前 URL 是否指向 localhost
+   * @returns {boolean}
+   */
+  _isLocalhost() {
+    try {
+      const h = new URL(this.url).hostname;
+      return h === '127.0.0.1' || h === 'localhost' || h === '0.0.0.0' || h === '[::1]';
+    } catch (_) {
+      return false;
     }
   }
 }
@@ -624,6 +707,7 @@ class BaseClient {
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
+
       try {
         while (true) {
           const { value, done } = await reader.read();
@@ -639,7 +723,11 @@ class BaseClient {
       } catch (e) {
         self._sendStreamEnd(seq, e instanceof Error ? e.message : String(e));
       } finally {
-        try { reader.releaseLock(); } catch (e) { /* ignore */ }
+        try {
+          reader.releaseLock();
+        } catch (e) {
+          // 忽略释放锁的错误
+        }
       }
     };
   }
