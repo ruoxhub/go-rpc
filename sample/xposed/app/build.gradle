@@ -2,6 +2,10 @@ apply plugin: 'com.android.application'
 
 android {
     compileSdkVersion 28
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
     defaultConfig {
         applicationId "cn.iinti.sekiro.demoapp"
         minSdkVersion 19
@@ -32,6 +36,26 @@ android {
         }
     }
 
+    sourceSets {
+        main.java {
+            // Keep the unpacked legacy Netty SDK as reference only. The demo uses
+            // the WebSocket implementation in RpcClient and interfaze/Rpc*.
+            exclude 'cn/iinti/sekiro3/business/api/ClusterSekiroClient.java'
+            exclude 'cn/iinti/sekiro3/business/api/SekiroClient.java'
+            exclude 'cn/iinti/sekiro3/business/api/SekiroInvoker.java'
+            exclude 'cn/iinti/sekiro3/business/api/core/**'
+            exclude 'cn/iinti/sekiro3/business/api/invoker/**'
+            exclude 'cn/iinti/sekiro3/business/api/log/**'
+            exclude 'cn/iinti/sekiro3/business/api/protocol/**'
+            exclude 'cn/iinti/sekiro3/business/api/util/**'
+            exclude 'cn/iinti/sekiro3/business/api/interfaze/CommonRes.java'
+            exclude 'cn/iinti/sekiro3/business/api/interfaze/Compressor.java'
+            exclude 'cn/iinti/sekiro3/business/api/interfaze/SekiroRequest.java'
+            exclude 'cn/iinti/sekiro3/business/api/interfaze/SekiroRequestInitializer.java'
+            exclude 'cn/iinti/sekiro3/business/api/interfaze/SekiroResponse.java'
+        }
+    }
+
 
     //在apk文件后边生成版本号信息
     android.applicationVariants.all { variant ->
@@ -53,7 +77,9 @@ dependencies {
 
 
     compileOnly 'de.robv.android.xposed:api:82'
-    implementation('cn.iinti.sekiro3.business:sekiro-business-api:1.0')
+    implementation 'com.squareup.okhttp3:okhttp:3.12.13'
+    implementation 'com.alibaba:fastjson:1.2.83'
+    testImplementation 'junit:junit:4.13.2'
 
 }
 
