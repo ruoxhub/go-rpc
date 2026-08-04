@@ -83,6 +83,71 @@ func TestHandler_GetTimeoutManager(t *testing.T) {
 	}
 }
 
+func TestSendInvokeRequestIncludesTraceID(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	conn := &mockConn{}
+	rpcClient := client.NewRpcClient("test-group", "client-1", conn)
+	err := handler.SendInvokeRequest(
+		rpcClient,
+		"seq-1",
+		"test-group",
+		"client-1",
+		[]byte(`{"action":"test","params":{}}`),
+		"trace-fixed-123",
+	)
+	if err != nil {
+		t.Fatalf("SendInvokeRequest() error = %v", err)
+	}
+
+	sent := conn.getSent()
+	if len(sent) != 1 {
+		t.Fatalf("sent message count = %d, want 1", len(sent))
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal(sent[0], &payload); err != nil {
+		t.Fatalf("unmarshal sent message: %v", err)
+	}
+	if payload["trace_id"] != "trace-fixed-123" {
+		t.Fatalf("trace_id = %v, want trace-fixed-123", payload["trace_id"])
+	}
+}
+
+func TestHandleInvokeResponseFallsBackToRecordedTraceID(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	record := timeoutMgr.Add("seq-1", "test-group", "client-1", nil)
+	record.TraceID = "trace-recorded-123"
+
+	msg := &RpcMessage{
+		Type:     MessageTypeInvokeResponse,
+		Sequence: "seq-1",
+		Group:    "test-group",
+		ClientID: "client-1",
+		Data:     json.RawMessage(`{"ok":true}`),
+		Status:   0,
+	}
+	handler.handleInvokeResponse(msg, []byte(`{"data":{"ok":true}}`))
+
+	select {
+	case response := <-record.ResponseChan:
+		if response == nil {
+			t.Fatal("response is nil")
+		}
+		if response.TraceID != "trace-recorded-123" {
+			t.Fatalf("response trace ID = %q, want trace-recorded-123", response.TraceID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for invoke response")
+	}
+}
+
 func TestHandler_Shutdown(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)

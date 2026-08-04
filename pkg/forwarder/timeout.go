@@ -12,6 +12,7 @@ type InvokeRecord struct {
 	ID           string
 	Group        string
 	ClientID     string
+	TraceID      string
 	Data         []byte
 	CreatedAt    time.Time
 	Timeout      time.Duration
@@ -24,17 +25,19 @@ type InvokeRecord struct {
 
 // InvokeResponse holds the result of an invoke request.
 type InvokeResponse struct {
-	Data   []byte
-	Error  string
-	Status int
+	Data    []byte
+	Error   string
+	Status  int
+	TraceID string
 }
 
 // StreamChunk represents one streaming response chunk.
 type StreamChunk struct {
-	Data   []byte
-	Error  string
-	Status int
-	Done   bool
+	Data    []byte
+	Error   string
+	Status  int
+	Done    bool
+	TraceID string
 }
 
 // StreamRecord tracks a streaming invoke request.
@@ -42,6 +45,7 @@ type StreamRecord struct {
 	ID        string
 	Group     string
 	ClientID  string
+	TraceID   string
 	CreatedAt time.Time
 	Timeout   time.Duration
 	ChunkChan chan *StreamChunk

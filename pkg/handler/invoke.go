@@ -258,7 +258,7 @@ func parseBoolQuery(v string) bool {
 	return false
 }
 
-func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, constantInvoke, action string, payload interface{}) (*client.RpcClient, error) {
+func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, constantInvoke, action string, payload interface{}, requestTraceID string) (*client.RpcClient, error) {
 	group := h.clientManager.GetGroup(groupName)
 	if group == nil {
 		if clientID != "" {
@@ -282,10 +282,11 @@ func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, 
 		return nil, nil
 	}
 
+	requestLogger := logger.WithTraceID(requestTraceID)
 	if clientID != "" {
-		logger.Debugf("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
+		requestLogger.Debugf("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
 	} else {
-		logger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
+		requestLogger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
 	}
 	return selected, nil
 }
@@ -362,7 +363,9 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 	constantInvoke := builder.GetConstantInvoke()
 
 	reqAction, reqParams, buildErr := builder.BuildRequestData()
-	logger.Debugf("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
+	requestTraceID := traceID(c)
+	requestLogger := logger.WithTraceID(requestTraceID)
+	requestLogger.Debugf("Request: group=%s, clientId=%s, action=%s", group, clientID, reqAction)
 
 	if group == "" {
 		BadRequest(c, "group parameter required")
@@ -383,7 +386,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(group, clientID, builder.IsFuzzy(), constantInvoke, reqAction, reqParams)
+	targetClient, err := h.selectTargetClient(group, clientID, builder.IsFuzzy(), constantInvoke, reqAction, reqParams, requestTraceID)
 	if err != nil {
 		Fail(c, errorcode.NoClientAvailable, err.Error())
 		return
@@ -430,15 +433,17 @@ func (h *APIHandler) forwardStream(c *gin.Context, builder RequestBuilder, group
 	targetClient *client.RpcClient, sequence string, reqDataJSON []byte,
 	timeout time.Duration, startTime time.Time, reqAction string) {
 
+	requestTraceID := traceID(c)
 	streamRec := h.timeoutManager.RegisterStream(sequence, group, targetClient.ClientID, timeout)
+	streamRec.TraceID = requestTraceID
 
-	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, traceID(c)); err != nil {
+	if err := h.wsHandler.SendInvokeRequest(targetClient, sequence, group, targetClient.ClientID, reqDataJSON, requestTraceID); err != nil {
 		h.timeoutManager.RemoveStream(sequence)
 		targetClient.MarkFailure()
 		h.writeForwardError(c, group, targetClient.ClientID, fmt.Errorf("Failed to send request: %w", err))
 		return
 	}
-	logger.Debugf("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+	logger.WithTraceID(requestTraceID).Debugf("Stream request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 	h.streamSSEResponse(c, streamRec, group, targetClient, builder, startTime, reqAction)
 }
 
@@ -483,7 +488,7 @@ func (h *APIHandler) dispatchInvokeRequest(
 		}
 		return nil, false
 	}
-	logger.Debugf("Request sent: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
+	logger.WithTraceID(traceID).Debugf("Request completed: sequence=%s, group=%s, clientId=%s", sequence, group, targetClient.ClientID)
 	return resp, true
 }
 

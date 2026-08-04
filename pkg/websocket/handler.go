@@ -351,11 +351,18 @@ func (h *Handler) handleInvokeStream(msg *RpcMessage) {
 		return
 	}
 
+	requestTraceID := msg.TraceID
+	if requestTraceID == "" {
+		if record := h.timeoutManager.GetStream(sequence); record != nil {
+			requestTraceID = record.TraceID
+		}
+	}
 	chunk := &forwarder.StreamChunk{
-		Data:   msg.Data,
-		Error:  msg.Error,
-		Status: msg.Status,
-		Done:   msg.Done,
+		Data:    msg.Data,
+		Error:   msg.Error,
+		Status:  msg.Status,
+		Done:    msg.Done,
+		TraceID: requestTraceID,
 	}
 	if !h.timeoutManager.PushStreamChunk(sequence, chunk) {
 		logger.Debugf("Invoke stream chunk for missing request: sequence=%s", sequence)
@@ -399,6 +406,14 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 		return
 	}
 
+	requestTraceID := msg.TraceID
+	if requestTraceID == "" {
+		if record := h.timeoutManager.Get(sequence); record != nil {
+			requestTraceID = record.TraceID
+		}
+	}
+	requestLogger := logger.WithTraceID(requestTraceID)
+
 	var responseData []byte
 	var errorMessage string
 
@@ -435,19 +450,16 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 		} else {
 			responseData = []byte("{}")
 		}
-		logger.Debugf("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
+		requestLogger.Debugf("Invoke response with empty data but status>=0, handler may have returned object: sequence=%s", sequence)
 	}
 
-	if msg.TraceID != "" {
-		logger.Debugf("Invoke response received: trace=%s, sequence=%s, status=%d, Error=%s", msg.TraceID, sequence, msg.Status, errorMessage)
-	} else {
-		logger.Debugf("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
-	}
+	requestLogger.Debugf("Invoke response received: sequence=%s, status=%d, Error=%s", sequence, msg.Status, errorMessage)
 
 	response := &forwarder.InvokeResponse{
-		Data:   responseData,
-		Error:  errorMessage,
-		Status: msg.Status,
+		Data:    responseData,
+		Error:   errorMessage,
+		Status:  msg.Status,
+		TraceID: requestTraceID,
 	}
 
 	if sc := h.clientManager.GetClient(msg.Group, msg.ClientID); sc != nil {
@@ -459,7 +471,7 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 	}
 
 	if !h.timeoutManager.Complete(sequence, response) {
-		logger.Debugf("Invoke response for expired request: sequence=%s", sequence)
+		requestLogger.Debugf("Invoke response for expired request: sequence=%s", sequence)
 	}
 }
 
@@ -525,13 +537,11 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 		return err
 	}
 
-	if traceID != "" {
-		logger.Debugf("Sending invoke message: trace=%s", traceID)
-	} else {
-		logger.Debugf("Sending invoke message")
-	}
+	requestLogger := logger.WithTraceID(traceID)
+	requestLogger.Debugf("Sending invoke message: sequence=%s, group=%s, clientId=%s", sequence, group, clientID)
 
 	if sekiroClient == nil || sekiroClient.Connection == nil {
+		requestLogger.Debugf("Invoke send failed: sequence=%s, err=invalid client connection", sequence)
 		return errors.New("invalid client connection")
 	}
 
@@ -540,7 +550,7 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	// causing a 30s invoke timeout. The PingProbe fails fast (~3s) on dead connections.
 	if wsConn, ok := sekiroClient.Connection.(*transport.WSConnection); ok {
 		if err := wsConn.PingProbe(); err != nil {
-			logger.Warnf("Pre-send ping probe failed: group=%s, clientId=%s, err=%v", group, clientID, err)
+			requestLogger.Warnf("Pre-send ping probe failed: group=%s, clientId=%s, err=%v", group, clientID, err)
 			return fmt.Errorf("connection probe failed: %w", err)
 		}
 	}

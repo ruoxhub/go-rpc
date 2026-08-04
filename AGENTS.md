@@ -11,7 +11,8 @@
 - `go build -o rpc-server ./main.go`: build the server binary.
 - `go test ./...`: run the complete Go test suite.
 - `go test -run TestRpcPacket ./pkg/protocol/...`: run one named test.
-- `go run main.go -c config.yaml`: start the server; runtime features require PostgreSQL.
+- `Copy-Item .env.example .env; go run main.go`: start the server from the environment template; database-backed features require PostgreSQL.
+- `powershell -File scripts/verify.ps1 -ImpactAnalysisEvidence "<result>"`: run the repository validation gate after GitNexus change detection; if GitNexus is unavailable, record the manual review used instead.
 - `cd web && npm run dev`: start Vite on port 3000. Its proxy targets server port 5613, while the server defaults to 5612.
 
 ## Coding Style & Naming Conventions

@@ -28,12 +28,12 @@ SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台�
 适合快速验证或部署。
 
 ```bash
-# 1. 准备 PostgreSQL（仓库中的 docker-compose.yaml 默认未启用内置 postgres，
-#    取消注释或自行准备 PostgreSQL 实例后填写连接信息到 config.yaml）
+# 1. 准备 PostgreSQL（可使用 deploy/postgres/docker-compose.local.yaml，
+#    或自行准备 PostgreSQL 实例后在 .env 中填写 RPC_DB_* 连接信息）
 
-# 2. 准备配置文件
-cp config.yaml.example config.yaml
-# 编辑 Database 段指向可用的 PostgreSQL
+# 2. 准备环境变量
+cp .env.example .env
+# 设置 RPC_DISABLE_DATABASE=false 并编辑 RPC_DB_* 指向可用的 PostgreSQL
 
 # 3. 启动
 docker compose up -d
@@ -56,8 +56,8 @@ psql -U postgres -f deploy/postgres/migration.sql
 # 3. 构建前端（go build 需要 web/dist 存在）
 cd web && npm install && npm run build && cd ..
 
-# 4. 配置文件
-cp config.yaml.example config.yaml   # 修改 Database 段
+# 4. 环境变量
+cp .env.example .env   # DB-less 模式可直接启动；数据库模式修改 RPC_DB_* 字段
 
 # 5. 启动服务器（默认端口 5612）
 go run main.go
@@ -71,11 +71,10 @@ go build -o rpcserver . && ./rpcserver
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `-port` | 服务器端口（覆盖 config.yaml） | 0（用配置文件） |
-| `-host` | 服务器主机 | 空（用配置文件） |
+| `-port` | 服务器端口（覆盖 `RPC_PORT`） | 0（使用环境变量） |
+| `-host` | 服务器主机（覆盖 `RPC_HOST`） | 空（使用环境变量） |
 | `-debug` | 启用调试日志 | false |
 | `-local-debug` | 启用本地调试模式 | false |
-| `-c` | 配置文件路径 | `config.yaml` |
 
 ### 验证服务
 
@@ -96,57 +95,16 @@ curl -X POST http://localhost:5612/business/invoke \
 
 ## 配置说明
 
-完整示例见 `config.yaml.example`，关键字段如下：
+完整示例见 `.env.example`。服务启动时读取工作目录中的 `.env`，已存在的系统环境变量优先且不会被覆盖。关键字段如下：
 
-```yaml
-# 监听
-BasicListen: ":5612"        # 监听地址（与 Host/Port 二选一）
-Host: "0.0.0.0"
-Port: 5612
-DefaultTimeOut: 30          # RPC 默认超时（秒）
-
-# 运行模式
-Mode: release               # debug | release
-Cors: true                  # 启用 CORS
-CloseLog: false
-CloseWebLog: false
-
-# 模块开关（DB-less 部署时实用）
-DisableWebAdmin: false      # 关闭 /api 路由和 Web 后台
-DisableMetrics:  false      # 关闭指标采集
-DisableAlert:    false      # 关闭告警引擎
-DisableDatabase: false      # 跳过 DB 初始化（同时关闭依赖 DB 的路由）
-
-# HTTPS（可选）
-HttpsServices:
-  IsEnable: false
-  HttpsListen: ":5643"
-  PemPath: "certs/server.pem"
-  KeyPath: "certs/server.key"
-
-# 反向代理前缀剥离
-RouterReplace:
-  IsEnable: false
-  ReplaceRoute: "/sekiro"
-
-# 数据库（DisableDatabase=false 时必填）
-Database:
-  Host: "localhost"
-  Port: 5432
-  User: "postgres"
-  Password: "postgres"
-  DBName: "sekiro"
-  SSLMode: "disable"
-
-# 告警 SMTP（DisableAlert=false 时生效）
-Alert:
-  SMTP:
-    Host: "smtp.example.com"
-    Port: 587
-    Username: "alert@example.com"
-    Password: "password"
-    From:     "alert@example.com"
-    UseTLS:   true
+```dotenv
+RPC_HOST=0.0.0.0
+RPC_PORT=5612
+RPC_MODE=debug
+RPC_DISABLE_DATABASE=true
+RPC_DB_HOST=localhost
+RPC_DB_PORT=5432
+RPC_DB_NAME=sekiro
 ```
 
 字段定义见 `internal/config/config.go`。
@@ -156,13 +114,13 @@ Alert:
 ```
 go-rpc/
 ├── main.go                     # 服务器入口（引导逻辑 + 路由注册）
-├── config.yaml.example         # 配置模板
+├── .env.example                # 本地环境变量模板（不含生产凭据）
 ├── docker-compose.yaml         # Docker 编排
 ├── Dockerfile
 ├── deploy/postgres/migration.sql
 ├── docs/                       # 设计文档与实施计划
 ├── internal/
-│   ├── config/                 # YAML 配置加载
+│   ├── config/                 # 环境变量与 .env 配置加载
 │   ├── prompt/                 # Prompt 模板
 │   ├── promptcompat/           # Prompt 兼容适配
 │   ├── toolcall/               # Tool Call 解析
@@ -480,6 +438,20 @@ invoker.Invoke(&client.InvokeRequest{Group: "g", ClientID: "node", Api: "a"})
 
 ## 测试
 
+提交前可运行统一验证门禁：
+
+```powershell
+# 先通过已安装的 GitNexus 入口运行 change detection，再记录结果
+powershell -File scripts/verify.ps1 `
+  -ImpactAnalysisEvidence "GitNexus: no high-risk dependents"
+
+# GitNexus 不可用时，记录采用的人工影响分析依据
+powershell -File scripts/verify.ps1 `
+  -ImpactAnalysisEvidence "GitNexus unavailable; reviewed git diff and affected package references"
+```
+
+该入口依次执行 Go 全量测试、核心包 race 测试、前端 lint 和前端 build；任一检查失败都会返回非零状态。
+
 ```bash
 # 全量测试
 go test ./...
@@ -542,7 +514,7 @@ go test -run TestRpcPacket ./pkg/protocol/...
 先构建前端：`cd web && npm install && npm run build`。`web/embed.go` 通过 `//go:embed dist` 嵌入构建产物。
 
 **Q：能否不依赖 PostgreSQL 运行？**
-可以。`config.yaml` 设 `DisableDatabase: true`，依赖数据库的路由（用户/分组/告警/追踪等）会自动关闭，仅保留 `/business/*` 等核心 RPC 路径。
+可以。在 `.env` 中设 `RPC_DISABLE_DATABASE=true`，依赖数据库的路由（用户/分组/告警/追踪等）会自动关闭，仅保留 `/business/*` 等核心 RPC 路径。
 
 **Q：仅当作 RPC 引擎，不要 Web 后台怎么办？**
 设 `DisableWebAdmin: true`，所有 `/api` 路由和静态文件都不会注册。

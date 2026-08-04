@@ -82,7 +82,7 @@ func (h *APIHandler) HandleQwenChatCompletions(c *gin.Context) {
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(qwenGroup, clientID, false, constantInvoke, qwenActionChat, nil)
+	targetClient, err := h.selectTargetClient(qwenGroup, clientID, false, constantInvoke, qwenActionChat, nil, traceID(c))
 	if err != nil {
 		writeChatError(c, http.StatusOK, err.Error())
 		return

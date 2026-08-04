@@ -184,9 +184,11 @@ func (h *APIHandler) waitUnaryInvoke(
 	}
 	rec := h.timeoutManager.Add(sequence, group, target.ClientID, reqDataJSON)
 	rec.Timeout = timeout
+	rec.TraceID = traceID
 
 	if err := h.wsHandler.SendInvokeRequest(target, sequence, group, target.ClientID, reqDataJSON, traceID); err != nil {
 		h.timeoutManager.Remove(sequence)
+		logger.WithTraceID(traceID).Debugf("Invoke send failed: sequence=%s, group=%s, clientId=%s, err=%v", sequence, group, target.ClientID, err)
 		return nil, fmt.Errorf("Failed to send request: %w", err)
 	}
 
@@ -199,6 +201,7 @@ func (h *APIHandler) waitUnaryInvoke(
 		// then Remove closes ResponseChan (sync.Once).
 		rec.SetTimedOut()
 		h.timeoutManager.Remove(sequence)
+		logger.WithTraceID(traceID).Debugf("Invoke timed out: sequence=%s, group=%s, clientId=%s", sequence, group, target.ClientID)
 		return nil, errInvokeTimeout
 	case resp, ok := <-rec.ResponseChan:
 		if !ok {
