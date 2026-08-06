@@ -287,6 +287,7 @@ func (s *Server) Start() error {
 		}
 	} else {
 		logger.Info("Running in DB-less mode (DisableDatabase=true)")
+		logger.Warn("SECURITY: DB-less mode allows anonymous access to /business/*; do not expose this server to untrusted networks")
 		logger.Warn("数据库未初始化，跳过配置刷新")
 		// DB-less 模式下仍创建无 store 的 collector（flush 时 warn，不落库），保留原行为
 		if !disableMetrics {
