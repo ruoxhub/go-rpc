@@ -77,3 +77,34 @@ func TestShutdown_NilDatabaseNoPanic(t *testing.T) {
 	s := &Server{}
 	s.Shutdown()
 }
+
+func TestAuthorizeRegisterAccess_DBlessAllowsAnonymousRegistration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := &Server{serverConfig: &config.ServerConfig{DisableDatabase: true}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/register?group=kalodata&clientId=test", nil)
+	if !s.authorizeRegisterAccess(c, "kalodata") {
+		t.Fatalf("authorizeRegisterAccess() = false in DB-less mode; status=%d body=%s", w.Code, w.Body.String())
+	}
+	if w.Code == http.StatusServiceUnavailable {
+		t.Fatalf("DB-less registration returned 503: %s", w.Body.String())
+	}
+}
+
+func TestAuthorizeRegisterAccess_DatabaseModeWithoutDependenciesFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := &Server{serverConfig: &config.ServerConfig{DisableDatabase: false}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/register?group=kalodata&clientId=test", nil)
+	if s.authorizeRegisterAccess(c, "kalodata") {
+		t.Fatal("authorizeRegisterAccess() = true without database authorization dependencies")
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "group access verification unavailable") {
+		t.Fatalf("unexpected response body: %s", w.Body.String())
+	}
+}

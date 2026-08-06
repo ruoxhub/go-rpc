@@ -641,6 +641,13 @@ func (s *Server) handleRegister(c *gin.Context) {
 }
 
 func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool {
+	// DB-less mode intentionally exposes /business/* without authentication.
+	// Check the explicit mode flag rather than inferring it from nil repositories,
+	// so broken database-mode dependency wiring remains fail-closed.
+	if s.serverConfig != nil && s.serverConfig.DisableDatabase {
+		return true
+	}
+
 	// 1) 全局 IP 白名单优先：命中即放行，跳过一切 DB 查询与 token/子协议校验。
 	if s.configService != nil {
 		if globalIPs := s.configService.GetConfig(pkgconfig.ConfigKeyAllowedIPs); globalIPs != "" {
