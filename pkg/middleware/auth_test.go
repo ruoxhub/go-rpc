@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -72,12 +73,25 @@ func TestExtractAuthTokenFromRequestAuthorizationTakesPriority(t *testing.T) {
 	}
 }
 
+func TestExtractAuthTokenFromRequestFormFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/business/invoke", strings.NewReader("sekiro_token=form-token"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	c.Request = req
+
+	if got := ExtractAuthTokenFromRequest(c, true); got != "form-token" {
+		t.Fatalf("ExtractAuthTokenFromRequest() = %q, want %q", got, "form-token")
+	}
+}
+
 func TestIPInList(t *testing.T) {
 	tests := []struct {
-		name   string
-		ip     string
-		list   string
-		want   bool
+		name string
+		ip   string
+		list string
+		want bool
 	}{
 		{"exact match", "10.0.0.5", "10.0.0.5,192.168.1.1", true},
 		{"exact miss", "10.0.0.6", "10.0.0.5,192.168.1.1", false},

@@ -93,15 +93,15 @@ func ExtractAuthTokenFromRequest(c *gin.Context, allowQueryToken bool) string {
 	if token := ExtractBearerToken(c.GetHeader("Authorization")); token != "" {
 		return token
 	}
-	if token := c.GetHeader("token"); token != "" {
+	if token := c.GetHeader("sekiro-token"); token != "" {
 		return token
 	}
 	if allowQueryToken {
-		if token := c.Query("token"); token != "" {
+		if token := c.Query("sekiro_token"); token != "" {
 			return token
 		}
 	}
-	if token := c.PostForm("token"); token != "" {
+	if token := c.PostForm("sekiro_token"); token != "" {
 		return token
 	}
 	return ""
