@@ -14,36 +14,10 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 )
 
-// fixtureRoot resolves the repository root by walking up from the package
-// directory until go.mod is found. The qwenai_completions_response.txt and
-// completions_request_body.json fixtures live in the repo root.
-func fixtureRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	for i := 0; i < 8; i++ {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	t.Fatalf("repo root (containing go.mod) not found from %s", dir)
-	return ""
-}
-
-// TestQwenSSEParser_RealFixture feeds the recorded qwenai_completions_response.txt
-// into the parser and verifies that the concatenated content reconstructs the
-// upstream answer exactly. This pins behavior against the real qwen SSE shape
-// (response.created envelope + delta.{role,content,phase,status} per chunk).
+// TestQwenSSEParser_RealFixture feeds a representative Qwen SSE fixture into
+// the parser and verifies the concatenated response shape.
 func TestQwenSSEParser_RealFixture(t *testing.T) {
-	root := fixtureRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "qwenai_completions_response.txt"))
+	data, err := os.ReadFile(filepath.Join("testdata", "qwen_sse_response.txt"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -208,14 +182,12 @@ func TestFlattenMessagesToPrompt_Basic(t *testing.T) {
 	}
 }
 
-// TestFlattenMessagesToPrompt_RealRequest verifies the shape from the
-// completions_request_body.json fixture (the test-data file referenced in
-// prd.md). We avoid loading the whole 435 KB blob into the parser; instead we
-// pick the system + user roles directly via the json decoder used by the
-// handler and ensure they survive flattening.
+// TestFlattenMessagesToPrompt_RealRequest verifies the shape from a
+// representative completions request fixture. We pick the system + user roles
+// directly via the json decoder used by the handler and ensure they survive
+// flattening.
 func TestFlattenMessagesToPrompt_RealRequest(t *testing.T) {
-	root := fixtureRoot(t)
-	body, err := os.ReadFile(filepath.Join(root, "completions_request_body.json"))
+	body, err := os.ReadFile(filepath.Join("testdata", "completions_request_body.json"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
@@ -287,13 +259,12 @@ func TestQwenSSEParser_PhaseSurfacing(t *testing.T) {
 	}
 }
 
-// TestQwenSSEParser_RealFixturePhase locks in the assertion that the recorded
-// qwenai_completions_response.txt fixture only carries phase="answer" content.
-// If qwen ever adds an upstream "thinking" preamble, this test will trip and
-// flag the change so we can audit reasoning_content routing behavior.
+// TestQwenSSEParser_RealFixturePhase locks in the assertion that the
+// representative fixture only carries phase="answer" content. If Qwen ever
+// adds an upstream "thinking" preamble, this test will trip and flag the change
+// so we can audit reasoning_content routing behavior.
 func TestQwenSSEParser_RealFixturePhase(t *testing.T) {
-	root := fixtureRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "qwenai_completions_response.txt"))
+	data, err := os.ReadFile(filepath.Join("testdata", "qwen_sse_response.txt"))
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}

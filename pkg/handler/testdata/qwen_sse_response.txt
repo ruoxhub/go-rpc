@@ -1,0 +1,7 @@
+data: {"choices":[{"delta":{"role":"assistant","content":"Hello! ","phase":"answer"}}]}
+
+data: {"choices":[{"delta":{"content":"How can I help you today?","phase":"answer"}}]}
+
+data: {"choices":[{"delta":{"status":"finished"}}]}
+
+: end
