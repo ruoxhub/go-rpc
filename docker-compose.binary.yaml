@@ -1,0 +1,62 @@
+services:
+  rpc-server:
+    image: alpine:3.19
+    platform: linux/amd64
+    container_name: rpc-server
+    restart: unless-stopped
+    ports:
+      - "${RPC_PORT:-5612}:5612"
+    environment:
+      PUID: 1000
+      PGID: 1000
+      TZ: Asia/Shanghai
+      RPC_HOST: ${RPC_HOST:-0.0.0.0}
+      RPC_PORT: ${RPC_PORT:-5612}
+      RPC_MODE: ${RPC_MODE:-release}
+      RPC_TIMEOUT: ${RPC_TIMEOUT:-30}
+      RPC_CLOSE_LOG: ${RPC_CLOSE_LOG:-false}
+      RPC_CLOSE_WEB_LOG: ${RPC_CLOSE_WEB_LOG:-false}
+      RPC_LOG_DIR: ${RPC_LOG_DIR:-logs}
+      RPC_LOG_FILENAME: ${RPC_LOG_FILENAME:-rpc.log}
+      RPC_LOG_MAX_SIZE: ${RPC_LOG_MAX_SIZE:-100}
+      RPC_LOG_MAX_BACKUPS: ${RPC_LOG_MAX_BACKUPS:-7}
+      RPC_LOG_MAX_AGE: ${RPC_LOG_MAX_AGE:-30}
+      RPC_LOG_COMPRESS: ${RPC_LOG_COMPRESS:-true}
+      RPC_CORS: ${RPC_CORS:-true}
+      RPC_DISABLE_WEB_ADMIN: ${RPC_DISABLE_WEB_ADMIN:-false}
+      RPC_DISABLE_METRICS: ${RPC_DISABLE_METRICS:-false}
+      RPC_DISABLE_ALERT: ${RPC_DISABLE_ALERT:-false}
+      RPC_DISABLE_DATABASE: ${RPC_DISABLE_DATABASE:-false}
+      RPC_DISABLE_AUTO_MIGRATE: ${RPC_DISABLE_AUTO_MIGRATE:-false}
+      RPC_ROUTE_REPLACE_ENABLE: ${RPC_ROUTE_REPLACE_ENABLE:-false}
+      RPC_HTTPS_ENABLE: ${RPC_HTTPS_ENABLE:-false}
+      RPC_HTTPS_LISTEN: ${RPC_HTTPS_LISTEN:-:5643}
+      RPC_DB_HOST: ${RPC_DB_HOST:-localhost}
+      RPC_DB_PORT: ${RPC_DB_PORT:-5432}
+      RPC_DB_USER: ${RPC_DB_USER:-postgres}
+      RPC_DB_PASSWORD: ${RPC_DB_PASSWORD:-postgres}
+      RPC_DB_NAME: ${RPC_DB_NAME:-sekiro}
+      RPC_DB_SSL_MODE: ${RPC_DB_SSL_MODE:-disable}
+      RPC_DB_CONN_MAX_IDLE_TIME_SECONDS: ${RPC_DB_CONN_MAX_IDLE_TIME_SECONDS:-300}
+      RPC_SMTP_HOST: ${RPC_SMTP_HOST:-localhost}
+      RPC_SMTP_PORT: ${RPC_SMTP_PORT:-25}
+      RPC_SMTP_FROM: ${RPC_SMTP_FROM:-alert@sekiro.local}
+      RPC_SMTP_USE_TLS: ${RPC_SMTP_USE_TLS:-false}
+      RPC_PROVIDER_QWEN_TIMEOUT: ${RPC_PROVIDER_QWEN_TIMEOUT:-120}
+      RPC_PROVIDER_QWEN_LOG_CHUNKS: ${RPC_PROVIDER_QWEN_LOG_CHUNKS:-false}
+    volumes:
+      - ./logs:/app/logs
+      - ./build/go-rpc-linux-amd64:/app/rpc-server:ro
+    entrypoint: ["/app/rpc-server"]
+    networks:
+      - 1panel-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:5612/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+networks:
+  1panel-network:
+    external: true
