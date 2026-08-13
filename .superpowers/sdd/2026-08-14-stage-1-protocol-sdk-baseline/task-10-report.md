@@ -84,3 +84,18 @@ go run ./conformance/runner  PASS Go / PASS TypeScript/Web / PASS Python / PASS 
 The worktree was clean before the final commit; generated Java/Python caches
 were removed before staging. No dependency installation or remote write was
 performed.
+
+## Fix Round 2
+
+- `runLegacy` now installs one all-return-path `defer` immediately after the
+  HTTP goroutine starts; it cancels the request context and waits for the
+  buffered-result goroutine before every return. WebSocket deadlines remain
+  bounded by the parent context.
+- Java `postInvoke` is normally indented and disconnects from an all-path
+  `finally`.
+- Re-ran the runner/handler focused tests, isolated-cache Java test, and the
+  real runner; all passed. The existing timeout test verifies cancellation
+  propagation but does not assert a separately spawned descendant PID. The
+  current cross-platform helper has no portable child-PID injection seam;
+  adding shell/platform process fixtures would be brittle and outside this
+  minimal fix.

@@ -117,28 +117,28 @@ public class RpcClientTest {
         URL url = URI.create(baseUrl + "/business/invoke").toURL();
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         try {
-        connection.setRequestMethod("POST");
-        connection.setDoOutput(true);
-        connection.setConnectTimeout(5000);
-        connection.setReadTimeout(10000);
-        connection.setRequestProperty("Content-Type", "application/json");
-        byte[] body = ("{\"group\":\"" + group + "\",\"action\":\"conformance.echo\","
-                + "\"params\":{\"echo\":\"java\"}}").getBytes(StandardCharsets.UTF_8);
-        try (OutputStream output = connection.getOutputStream()) {
-            output.write(body);
-        }
-        StringBuilder text = new StringBuilder();
-        if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
-            throw new IllegalStateException("HTTP status " + connection.getResponseCode());
-        }
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                connection.getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                text.append(line);
+            connection.setRequestMethod("POST");
+            connection.setDoOutput(true);
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(10000);
+            connection.setRequestProperty("Content-Type", "application/json");
+            byte[] body = ("{\"group\":\"" + group + "\",\"action\":\"conformance.echo\","
+                    + "\"params\":{\"echo\":\"java\"}}").getBytes(StandardCharsets.UTF_8);
+            try (OutputStream output = connection.getOutputStream()) {
+                output.write(body);
             }
-        }
-        return JSON.parseObject(text.toString());
+            StringBuilder text = new StringBuilder();
+            if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+                throw new IllegalStateException("HTTP status " + connection.getResponseCode());
+            }
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    connection.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    text.append(line);
+                }
+            }
+            return JSON.parseObject(text.toString());
         } finally {
             connection.disconnect();
         }

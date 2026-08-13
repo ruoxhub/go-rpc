@@ -318,6 +318,10 @@ func runLegacy(ctx context.Context, baseURL string) error {
 		}
 		responseCh <- nil
 	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
 	_ = conn.SetReadDeadline(readDeadline(ctx, 10*time.Second))
 	_, message, err := conn.ReadMessage()
 	if err != nil {
@@ -335,12 +339,8 @@ func runLegacy(ctx context.Context, baseURL string) error {
 	}
 	select {
 	case err := <-responseCh:
-		cancel()
-		<-done
 		return err
 	case <-ctx.Done():
-		cancel()
-		<-done
 		return ctx.Err()
 	}
 }
