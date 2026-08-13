@@ -125,6 +125,129 @@ func TestSendInvokeRequestIncludesTraceID(t *testing.T) {
 	}
 }
 
+func TestSendInvokeRequestInjectsInvocationContext(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	conn := &mockConn{}
+	target := client.NewRpcClient("g", "c", conn)
+	target.SetProtocol(1, []string{protocol.CapabilityInvocationContextV1})
+	record := timeoutMgr.Add("seq-1", "g", "c", []byte(`{"action":"echo"}`))
+	record.Timeout = 3 * time.Second
+	if err := handler.SendInvokeRequest(target, "seq-1", "g", "c", []byte(`{"action":"echo","value":1}`), "trace-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	sent := conn.getSent()
+	if len(sent) != 1 {
+		t.Fatalf("sent message count = %d, want 1", len(sent))
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(sent[0], &payload); err != nil {
+		t.Fatalf("unmarshal sent message: %v", err)
+	}
+	var wire protocol.WireInvocationContext
+	if err := json.Unmarshal(payload["__rpc_context__"], &wire); err != nil {
+		t.Fatalf("unmarshal invocation context: %v", err)
+	}
+	if wire.DeadlineUnixMS != record.CreatedAt.Add(record.Timeout).UnixMilli() {
+		t.Fatalf("deadline = %d, want %d", wire.DeadlineUnixMS, record.CreatedAt.Add(record.Timeout).UnixMilli())
+	}
+	if wire.Action != "echo" || wire.TraceID != "trace-1" {
+		t.Fatalf("wire context = %#v", wire)
+	}
+	var sequence, traceID string
+	if err := json.Unmarshal(payload["__sekiro_seq__"], &sequence); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(payload["trace_id"], &traceID); err != nil {
+		t.Fatal(err)
+	}
+	if sequence != "seq-1" || traceID != "trace-1" {
+		t.Fatalf("outer sequence/trace = %q/%q", sequence, traceID)
+	}
+}
+
+func TestSendInvokeRequestLegacyOmitsInvocationContext(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	conn := &mockConn{}
+	target := client.NewRpcClient("g", "c", conn)
+	timeoutMgr.Add("seq-1", "g", "c", nil)
+	if err := handler.SendInvokeRequest(target, "seq-1", "g", "c", []byte(`{"action":"echo"}`), "trace-1"); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(conn.getSent()[0], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["__rpc_context__"]; ok {
+		t.Fatal("legacy invoke unexpectedly included __rpc_context__")
+	}
+}
+
+func TestSendInvokeRequestInjectsStreamInvocationDeadline(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	conn := &mockConn{}
+	target := client.NewRpcClient("g", "c", conn)
+	target.SetProtocol(1, []string{protocol.CapabilityInvocationContextV1})
+	record := timeoutMgr.RegisterStream("seq-stream", "g", "c", 4*time.Second)
+	if err := handler.SendInvokeRequest(target, "seq-stream", "g", "c", []byte(`{"action":"echo"}`), "trace-stream"); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(conn.getSent()[0], &payload); err != nil {
+		t.Fatal(err)
+	}
+	var wire protocol.WireInvocationContext
+	if err := json.Unmarshal(payload["__rpc_context__"], &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.DeadlineUnixMS != record.CreatedAt.Add(record.Timeout).UnixMilli() {
+		t.Fatalf("stream deadline = %d, want %d", wire.DeadlineUnixMS, record.CreatedAt.Add(record.Timeout).UnixMilli())
+	}
+}
+
+func TestSendInvokeRequestVersionedRequiresContextInputs(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{name: "missing timeout record", data: []byte(`{"action":"echo"}`)},
+		{name: "missing action", data: []byte(`{"value":1}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager := client.NewClientManager()
+			timeoutMgr := forwarder.NewTimeoutManager(nil)
+			handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+			defer handler.Shutdown()
+
+			conn := &mockConn{}
+			target := client.NewRpcClient("g", "c", conn)
+			target.SetProtocol(1, []string{protocol.CapabilityInvocationContextV1})
+			if tt.name == "missing action" {
+				timeoutMgr.Add("seq-1", "g", "c", nil)
+			}
+			if err := handler.SendInvokeRequest(target, "seq-1", "g", "c", tt.data, "trace-1"); err == nil {
+				t.Fatal("SendInvokeRequest() error = nil, want failure")
+			}
+			if sent := conn.getSent(); len(sent) != 0 {
+				t.Fatalf("sent %d messages after validation failure", len(sent))
+			}
+		})
+	}
+}
+
 func TestHandleInvokeResponseFallsBackToRecordedTraceID(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)

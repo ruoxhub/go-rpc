@@ -17,6 +17,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/invocation"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 	"github.com/mrh30000/go-rpc/pkg/transport"
@@ -536,11 +537,24 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	fullMsg["group"] = group
 	fullMsg["clientId"] = clientID
 	fullMsg["timestamp"] = time.Now().UnixMilli()
+	for k, v := range msgData {
+		fullMsg[k] = v
+	}
 	if traceID != "" {
 		fullMsg["trace_id"] = traceID
 	}
-	for k, v := range msgData {
-		fullMsg[k] = v
+
+	if sekiroClient != nil && sekiroClient.SupportsCapability(protocol.CapabilityInvocationContextV1) {
+		action, ok := reqData["action"].(string)
+		if !ok || action == "" {
+			return errors.New("invoke action missing for invocation context")
+		}
+		deadline, ok := h.invocationDeadline(sequence)
+		if !ok {
+			return errors.New("invoke deadline not registered")
+		}
+		rpcContext := invocation.New(sequence, traceID, group, action, clientID, deadline)
+		fullMsg["__rpc_context__"] = rpcContext.Wire()
 	}
 
 	msgDataJSON, err := json.Marshal(fullMsg)
@@ -568,6 +582,16 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	}
 
 	return sekiroClient.Connection.Send(msgDataJSON)
+}
+
+func (h *Handler) invocationDeadline(sequence string) (time.Time, bool) {
+	if record := h.timeoutManager.Get(sequence); record != nil {
+		return record.CreatedAt.Add(record.Timeout), true
+	}
+	if record := h.timeoutManager.GetStream(sequence); record != nil {
+		return record.CreatedAt.Add(record.Timeout), true
+	}
+	return time.Time{}, false
 }
 
 // GetTimeoutManager returns the timeout manager
