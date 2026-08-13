@@ -3,11 +3,14 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -289,7 +292,7 @@ func TestHandleConnectionWithRegistrationSendsConfirmationBeforeReady(t *testing
 	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
-	serverConn, clientConn := newHandlerWebSocketPair(t)
+	serverConn, clientConn, _ := newHandlerWebSocketPair(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -350,13 +353,17 @@ func TestHandleConnectionWithRegistrationSendFailureDoesNotRegister(t *testing.T
 	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
-	serverConn, clientConn := newHandlerWebSocketPair(t)
-	clientConn.Close()
-	serverConn.Close()
+	serverConn, _, tracked := newHandlerWebSocketPair(t)
+	tracked.failWrites.Store(true)
 	handler.HandleConnectionWithRegistration(context.Background(), serverConn, "group", "client", protocol.Registration{
 		ProtocolVersion: protocol.CurrentProtocolVersion,
 		Capabilities:    []string{protocol.CapabilityInvocationContextV1},
 	})
+	select {
+	case <-tracked.closed:
+	default:
+		t.Fatal("transport was not closed after confirmation failure")
+	}
 	if got := manager.GetClient("group", "client"); got != nil {
 		t.Fatalf("client registered after confirmation failure: %#v", got)
 	}
@@ -368,7 +375,7 @@ func TestHandleConnectionLegacyDelegateDoesNotSendConfirmation(t *testing.T) {
 	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
 	defer handler.Shutdown()
 
-	serverConn, clientConn := newHandlerWebSocketPair(t)
+	serverConn, clientConn, _ := newHandlerWebSocketPair(t)
 	done := make(chan struct{})
 	go func() {
 		handler.HandleConnection(context.Background(), serverConn, "group", "client")
@@ -386,17 +393,57 @@ func TestHandleConnectionLegacyDelegateDoesNotSendConfirmation(t *testing.T) {
 	}
 }
 
-func newHandlerWebSocketPair(t *testing.T) (*gorillawebsocket.Conn, *gorillawebsocket.Conn) {
+type trackedWebSocketConn struct {
+	net.Conn
+	closed     chan struct{}
+	closeOnce  sync.Once
+	failWrites atomic.Bool
+}
+
+func (c *trackedWebSocketConn) Write(data []byte) (int, error) {
+	if c.failWrites.Load() {
+		return 0, errors.New("injected websocket write failure")
+	}
+	return c.Conn.Write(data)
+}
+
+func (c *trackedWebSocketConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+type trackedWebSocketListener struct {
+	net.Listener
+	accepted chan *trackedWebSocketConn
+}
+
+func (l *trackedWebSocketListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tracked := &trackedWebSocketConn{Conn: conn, closed: make(chan struct{})}
+	l.accepted <- tracked
+	return tracked, nil
+}
+
+func newHandlerWebSocketPair(t *testing.T) (*gorillawebsocket.Conn, *gorillawebsocket.Conn, *trackedWebSocketConn) {
 	t.Helper()
 	upgrader := gorillawebsocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	serverConns := make(chan *gorillawebsocket.Conn, 1)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 		serverConns <- conn
 	}))
+	trackedListener := &trackedWebSocketListener{
+		Listener: server.Listener,
+		accepted: make(chan *trackedWebSocketConn, 1),
+	}
+	server.Listener = trackedListener
+	server.Start()
 	t.Cleanup(server.Close)
 
 	url := "ws" + strings.TrimPrefix(server.URL, "http")
@@ -406,15 +453,16 @@ func newHandlerWebSocketPair(t *testing.T) (*gorillawebsocket.Conn, *gorillawebs
 	}
 	select {
 	case serverConn := <-serverConns:
+		tracked := <-trackedListener.accepted
 		t.Cleanup(func() {
 			serverConn.Close()
 			clientConn.Close()
 		})
-		return serverConn, clientConn
+		return serverConn, clientConn, tracked
 	case <-time.After(time.Second):
 		clientConn.Close()
 		t.Fatal("server websocket connection was not established")
-		return nil, nil
+		return nil, nil, nil
 	}
 }
 

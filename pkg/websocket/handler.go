@@ -126,6 +126,12 @@ func (h *Handler) HandleConnectionWithRegistration(ctx context.Context, conn *we
 	// Wrap the WebSocket connection in a transport.Connection for the RpcClient.
 	// Keep the raw *websocket.Conn for read-side operations (ReadMessage, SetReadDeadline).
 	wsTransport := transport.NewWSConnection(conn)
+	confirmationSent := registration.Legacy
+	defer func() {
+		if !confirmationSent {
+			wsTransport.Close()
+		}
+	}()
 	sekiroClient := client.NewRpcClient(group, clientID, wsTransport)
 	sekiroClient.SetProtocol(registration.ProtocolVersion, registration.Capabilities)
 
@@ -140,6 +146,7 @@ func (h *Handler) HandleConnectionWithRegistration(ctx context.Context, conn *we
 			logger.Warnf("Registration confirmation failed: group=%s, clientId=%s, err=%v", group, clientID, err)
 			return
 		}
+		confirmationSent = true
 	}
 
 	sekiroClient.SetStatus(client.StatusOnline)

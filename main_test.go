@@ -324,17 +324,32 @@ func TestBusinessRegisterRouteNegotiationRejectsBeforeUpgrade(t *testing.T) {
 
 func TestBusinessRegisterRouteAuthorizationPrecedesNegotiation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	middleware.InvalidateAllGroups()
+	middleware.InvalidateAllTokens()
+	t.Cleanup(func() {
+		middleware.InvalidateAllGroups()
+		middleware.InvalidateAllTokens()
+	})
 	s := newRegisterTestServer(t, false)
 	s.serverConfig.CapabilityNegotiation = true
+	s.groupRepo = &registerGroupRepositoryStub{}
+	s.authMW = newRegisterAuthMiddleware(
+		registerTokenLookupFunc(func(string) (*model.UserInfo, error) {
+			return nil, errors.New("token not found")
+		}),
+		func(string) (*model.GroupConfig, error) {
+			return &model.GroupConfig{GroupName: "registered", UserName: "owner"}, nil
+		},
+	)
 	s.registerRoutes()
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/business/register?group=registered&clientId=device-1&protocol_version=2", nil)
 	s.httpServer.Engine().ServeHTTP(w, req)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusUnauthorized, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "group access verification unavailable") {
+	if !strings.Contains(w.Body.String(), "registered group requires a valid rpc token") {
 		t.Fatalf("unexpected response body: %s", w.Body.String())
 	}
 }
