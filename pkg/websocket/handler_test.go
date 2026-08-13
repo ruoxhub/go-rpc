@@ -191,6 +191,28 @@ func TestSendInvokeRequestLegacyOmitsInvocationContext(t *testing.T) {
 	}
 }
 
+func TestSendInvokeRequestLegacyFiltersCallerInvocationContext(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	conn := &mockConn{}
+	target := client.NewRpcClient("g", "c", conn)
+	timeoutMgr.Add("seq-1", "g", "c", nil)
+	data := []byte(`{"action":"echo","__rpc_context__":{"sequence":"spoof"}}`)
+	if err := handler.SendInvokeRequest(target, "seq-1", "g", "c", data, "trace-1"); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(conn.getSent()[0], &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["__rpc_context__"]; ok {
+		t.Fatal("legacy invoke forwarded caller-supplied __rpc_context__")
+	}
+}
+
 func TestSendInvokeRequestInjectsStreamInvocationDeadline(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)

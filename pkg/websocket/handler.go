@@ -538,6 +538,9 @@ func (h *Handler) SendInvokeRequest(sekiroClient *client.RpcClient, sequence, gr
 	fullMsg["clientId"] = clientID
 	fullMsg["timestamp"] = time.Now().UnixMilli()
 	for k, v := range msgData {
+		if k == "__rpc_context__" {
+			continue
+		}
 		fullMsg[k] = v
 	}
 	if traceID != "" {
