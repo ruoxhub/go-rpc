@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 type WSConnection struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	closed  bool
 }
 
 // NewWSConnection creates a new WSConnection.
@@ -21,6 +23,9 @@ func NewWSConnection(conn *websocket.Conn) *WSConnection {
 func (w *WSConnection) Send(data []byte) error {
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
+	if w.closed {
+		return fmt.Errorf("connection closed")
+	}
 	w.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	return w.conn.WriteMessage(websocket.TextMessage, data)
 }
@@ -31,6 +36,9 @@ func (w *WSConnection) Send(data []byte) error {
 func (w *WSConnection) PingProbe() error {
 	w.writeMu.Lock()
 	defer w.writeMu.Unlock()
+	if w.closed {
+		return fmt.Errorf("connection closed")
+	}
 	return w.conn.WriteControl(
 		websocket.PingMessage, nil,
 		time.Now().Add(3*time.Second),
@@ -38,9 +46,16 @@ func (w *WSConnection) PingProbe() error {
 }
 
 func (w *WSConnection) Close() error {
-	if w.conn == nil {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	if w.closed {
 		return nil
 	}
+	if w.conn == nil {
+		w.closed = true
+		return nil
+	}
+	w.closed = true
 	// 先给 close 握手帧一个短 deadline，避免半开（zombie）连接上 Close 永久挂起，
 	// 进而阻塞调用方（曾导致 actor 循环卡死、整组请求冻结）。
 	w.conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
