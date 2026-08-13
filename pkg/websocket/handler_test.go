@@ -3,14 +3,20 @@ package websocket
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	gorillawebsocket "github.com/gorilla/websocket"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 )
 
 func TestRpcMessage_Marshal(t *testing.T) {
@@ -277,6 +283,141 @@ func TestDefaultHandlerConfig(t *testing.T) {
 	}
 }
 
+func TestHandleConnectionWithRegistrationSendsConfirmationBeforeReady(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	serverConn, clientConn := newHandlerWebSocketPair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		handler.HandleConnectionWithRegistration(ctx, serverConn, "group", "client", protocol.Registration{
+			ProtocolVersion: protocol.CurrentProtocolVersion,
+			Capabilities:    []string{protocol.CapabilityInvocationContextV1},
+		})
+		close(done)
+	}()
+
+	_, payload, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read registration confirmation: %v", err)
+	}
+	var registered RpcMessage
+	if err := json.Unmarshal(payload, &registered); err != nil {
+		t.Fatalf("unmarshal registration confirmation: %v", err)
+	}
+	if registered.Type != MessageTypeRegistered ||
+		registered.ProtocolVersion != protocol.CurrentProtocolVersion ||
+		!slices.Equal(registered.Capabilities, []string{protocol.CapabilityInvocationContextV1}) {
+		t.Fatalf("registered = %#v", registered)
+	}
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready := manager.GetClient("group", "client")
+		if ready != nil {
+			if ready.GetStatus() != client.StatusOnline {
+				t.Fatalf("client status = %v, want online", ready.GetStatus())
+			}
+			if ready.ProtocolVersion() != protocol.CurrentProtocolVersion || !ready.SupportsCapability(protocol.CapabilityInvocationContextV1) {
+				t.Fatalf("client protocol metadata = version %d, capabilities %v", ready.ProtocolVersion(), ready.Capabilities())
+			}
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("client was not registered after confirmation")
+		case <-ticker.C:
+		}
+	}
+	clientConn.Close()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not stop")
+	}
+}
+
+func TestHandleConnectionWithRegistrationSendFailureDoesNotRegister(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	serverConn, clientConn := newHandlerWebSocketPair(t)
+	clientConn.Close()
+	serverConn.Close()
+	handler.HandleConnectionWithRegistration(context.Background(), serverConn, "group", "client", protocol.Registration{
+		ProtocolVersion: protocol.CurrentProtocolVersion,
+		Capabilities:    []string{protocol.CapabilityInvocationContextV1},
+	})
+	if got := manager.GetClient("group", "client"); got != nil {
+		t.Fatalf("client registered after confirmation failure: %#v", got)
+	}
+}
+
+func TestHandleConnectionLegacyDelegateDoesNotSendConfirmation(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	serverConn, clientConn := newHandlerWebSocketPair(t)
+	done := make(chan struct{})
+	go func() {
+		handler.HandleConnection(context.Background(), serverConn, "group", "client")
+		close(done)
+	}()
+	clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, _, err := clientConn.ReadMessage(); err == nil {
+		t.Fatal("legacy connection unexpectedly received registration confirmation")
+	}
+	clientConn.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("legacy handler did not stop")
+	}
+}
+
+func newHandlerWebSocketPair(t *testing.T) (*gorillawebsocket.Conn, *gorillawebsocket.Conn) {
+	t.Helper()
+	upgrader := gorillawebsocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	serverConns := make(chan *gorillawebsocket.Conn, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		serverConns <- conn
+	}))
+	t.Cleanup(server.Close)
+
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := gorillawebsocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial test websocket: %v", err)
+	}
+	select {
+	case serverConn := <-serverConns:
+		t.Cleanup(func() {
+			serverConn.Close()
+			clientConn.Close()
+		})
+		return serverConn, clientConn
+	case <-time.After(time.Second):
+		clientConn.Close()
+		t.Fatal("server websocket connection was not established")
+		return nil, nil
+	}
+}
+
 // --- Mock types for handler tests ---
 
 // mockConn implements transport.Connection for testing.
@@ -293,7 +434,7 @@ func (m *mockConn) Send(data []byte) error {
 	return nil
 }
 
-func (m *mockConn) Close() error      { return nil }
+func (m *mockConn) Close() error       { return nil }
 func (m *mockConn) RemoteAddr() string { return "127.0.0.1:12345" }
 
 func (m *mockConn) getSent() [][]byte {
@@ -325,8 +466,8 @@ func (m *mockGroupRepo) CreateGroup(*model.GroupConfig) error { return nil }
 func (m *mockGroupRepo) UpdateGroup(string, map[string]interface{}) error {
 	return nil
 }
-func (m *mockGroupRepo) DeleteGroup(string) error              { return nil }
-func (m *mockGroupRepo) CountGroups() (int64, error)           { return 0, nil }
+func (m *mockGroupRepo) DeleteGroup(string) error    { return nil }
+func (m *mockGroupRepo) CountGroups() (int64, error) { return 0, nil }
 func (m *mockGroupRepo) GetGroupStats(string, bool, string) ([]repository.GroupStats, error) {
 	return nil, nil
 }
@@ -343,8 +484,8 @@ func (m *mockGroupRepo) CreateDevice(*model.GroupDevice) error { return nil }
 func (m *mockGroupRepo) UpdateDevice(string, string, map[string]interface{}) error {
 	return nil
 }
-func (m *mockGroupRepo) DeleteDevice(string, string) error    { return nil }
-func (m *mockGroupRepo) DeleteDevicesByGroup(string) error    { return nil }
+func (m *mockGroupRepo) DeleteDevice(string, string) error { return nil }
+func (m *mockGroupRepo) DeleteDevicesByGroup(string) error { return nil }
 func (m *mockGroupRepo) CountOnlineDevices(string) (int64, error) {
 	return 0, nil
 }
@@ -362,8 +503,8 @@ func (m *mockGroupRepo) UpsertAction(*model.GroupAction) error { return nil }
 func (m *mockGroupRepo) UpdateActionParams(string, string, string) error {
 	return nil
 }
-func (m *mockGroupRepo) DeleteAction(string, string) error     { return nil }
-func (m *mockGroupRepo) DeleteActionsByGroup(string) error     { return nil }
+func (m *mockGroupRepo) DeleteAction(string, string) error { return nil }
+func (m *mockGroupRepo) DeleteActionsByGroup(string) error { return nil }
 func (m *mockGroupRepo) FindAnonymousDeviceGroups(string) ([]repository.AnonymousGroupStats, error) {
 	return nil, nil
 }

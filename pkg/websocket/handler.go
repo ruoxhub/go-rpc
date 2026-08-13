@@ -18,6 +18,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 	"github.com/mrh30000/go-rpc/pkg/transport"
 )
 
@@ -44,40 +45,17 @@ func (h *Handler) isGroupRegistered(groupName string) bool {
 	return registered
 }
 
-// MessageType defines Rpc message types
-type MessageType string
+type MessageType = protocol.WSMessageType
+type RpcMessage = protocol.WSMessage
 
 const (
-	MessageTypeHeartbeat      MessageType = "heartbeat"
-	MessageTypeInvoke         MessageType = "invoke"
-	MessageTypeInvokeResponse MessageType = "invoke_response"
-	MessageTypeInvokeStream   MessageType = "invoke_stream"
-	MessageTypeBind           MessageType = "bind"
+	MessageTypeRegistered     = protocol.MessageTypeRegistered
+	MessageTypeHeartbeat      = protocol.MessageTypeHeartbeat
+	MessageTypeInvoke         = protocol.MessageTypeInvoke
+	MessageTypeInvokeResponse = protocol.MessageTypeInvokeResponse
+	MessageTypeInvokeStream   = protocol.MessageTypeInvokeStream
+	MessageTypeBind           = protocol.MessageTypeBind
 )
-
-// RpcMessage represents a Rpc protocol message
-type RpcMessage struct {
-	Type          MessageType     `json:"type"`
-	Sequence      string          `json:"sequence,omitempty"`
-	RpcSeq        string          `json:"__sekiro_seq__,omitempty"`
-	Group         string          `json:"group,omitempty"`
-	ClientID      string          `json:"clientId,omitempty"`
-	Actions       []string        `json:"actions,omitempty"`
-	Data          json.RawMessage `json:"data,omitempty"`
-	Error         string          `json:"error,omitempty"`
-	Status        int             `json:"status,omitempty"`
-	Done          bool            `json:"done,omitempty"`
-	Timestamp     int64           `json:"timestamp,omitempty"`
-	TraceID       string          `json:"trace_id,omitempty"`
-}
-
-// GetSequence 获取消息序列号，兼容两种字段格式
-func (m *RpcMessage) GetSequence() string {
-	if m.RpcSeq != "" {
-		return m.RpcSeq
-	}
-	return m.Sequence
-}
 
 // extractRemoteIP extracts the remote IP address from WebSocket connection
 func extractRemoteIP(conn *websocket.Conn) string {
@@ -132,8 +110,13 @@ func NewHandler(manager *client.ClientManager, timeoutMgr *forwarder.TimeoutMana
 	}
 }
 
-// HandleConnection handles a WebSocket connection
+// HandleConnection handles a legacy WebSocket connection.
 func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, group, clientID string) {
+	h.HandleConnectionWithRegistration(ctx, conn, group, clientID, protocol.LegacyRegistration())
+}
+
+// HandleConnectionWithRegistration handles a WebSocket connection with negotiated metadata.
+func (h *Handler) HandleConnectionWithRegistration(ctx context.Context, conn *websocket.Conn, group, clientID string, registration protocol.Registration) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Warnf("WebSocket handler recovered from panic: group=%s, clientId=%s, error=%v", group, clientID, r)
@@ -144,6 +127,21 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 	// Keep the raw *websocket.Conn for read-side operations (ReadMessage, SetReadDeadline).
 	wsTransport := transport.NewWSConnection(conn)
 	sekiroClient := client.NewRpcClient(group, clientID, wsTransport)
+	sekiroClient.SetProtocol(registration.ProtocolVersion, registration.Capabilities)
+
+	if !registration.Legacy {
+		registered := &RpcMessage{
+			Type:            MessageTypeRegistered,
+			ProtocolVersion: registration.ProtocolVersion,
+			Capabilities:    registration.Capabilities,
+			Timestamp:       time.Now().UnixMilli(),
+		}
+		if err := h.sendMessage(sekiroClient, registered); err != nil {
+			logger.Warnf("Registration confirmation failed: group=%s, clientId=%s, err=%v", group, clientID, err)
+			return
+		}
+	}
+
 	sekiroClient.SetStatus(client.StatusOnline)
 
 	// 设置熔断器状态变更回调，通过 EventBus 发布事件
@@ -214,16 +212,16 @@ func (h *Handler) HandleConnection(ctx context.Context, conn *websocket.Conn, gr
 		default:
 		}
 
-	// 读取 LastActive 走 getter,避免与 UpdateActive 的写操作产生 data race。
-	if time.Since(sekiroClient.GetLastActive()) > h.heartbeatTimeout {
-		logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
-		return
-	}
+		// 读取 LastActive 走 getter,避免与 UpdateActive 的写操作产生 data race。
+		if time.Since(sekiroClient.GetLastActive()) > h.heartbeatTimeout {
+			logger.Warnf("Heartbeat timeout: group=%s, clientId=%s", group, clientID)
+			return
+		}
 
-	// 限制单条消息大小,防止恶意客户端发送超大帧导致 OOM。
-	// 与 TCP 协议层 bodyLen 上限 (10MB) 对齐。
-	conn.SetReadLimit(10 * 1024 * 1024)
-	conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
+		// 限制单条消息大小,防止恶意客户端发送超大帧导致 OOM。
+		// 与 TCP 协议层 bodyLen 上限 (10MB) 对齐。
+		conn.SetReadLimit(10 * 1024 * 1024)
+		conn.SetReadDeadline(time.Now().Add(h.heartbeatTimeout / 2))
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
@@ -395,7 +393,9 @@ func (h *Handler) handleHeartbeat(sekiroClient *client.RpcClient, msg *RpcMessag
 		Type:      MessageTypeHeartbeat,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(sekiroClient, &response)
+	if err := h.sendMessage(sekiroClient, &response); err != nil {
+		logger.Debugf("Failed to send heartbeat response: %v", err)
+	}
 }
 
 // handleInvokeResponse handles invoke response messages
@@ -476,21 +476,24 @@ func (h *Handler) handleInvokeResponse(msg *RpcMessage, rawData []byte) {
 }
 
 // sendMessage sends a message to the client via its transport connection.
-func (h *Handler) sendMessage(sekiroClient *client.RpcClient, msg *RpcMessage) {
+func (h *Handler) sendMessage(sekiroClient *client.RpcClient, msg *RpcMessage) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		logger.Errorf("Failed to marshal message: %v", err)
-		return
+		return err
 	}
 
 	if sekiroClient == nil || sekiroClient.Connection == nil {
-		logger.Warnf("sendMessage called with nil client or connection")
-		return
+		err := errors.New("sendMessage called with nil client or connection")
+		logger.Warnf("%v", err)
+		return err
 	}
 
 	if err := sekiroClient.Connection.Send(data); err != nil {
 		logger.Debugf("Failed to send message: %v", err)
+		return err
 	}
+	return nil
 }
 
 // sendError sends an error message to the client
@@ -501,7 +504,9 @@ func (h *Handler) sendError(sekiroClient *client.RpcClient, errorMsg, sequence s
 		Sequence:  sequence,
 		Timestamp: time.Now().UnixMilli(),
 	}
-	h.sendMessage(sekiroClient, &msg)
+	if err := h.sendMessage(sekiroClient, &msg); err != nil {
+		logger.Debugf("Failed to send error response: %v", err)
+	}
 }
 
 // SendInvokeRequest sends an invoke request to a client.

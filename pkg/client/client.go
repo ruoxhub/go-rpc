@@ -1,6 +1,7 @@
 package client
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -27,6 +28,46 @@ type RpcClient struct {
 	cb              *CircuitBreaker
 	mu              sync.RWMutex
 	writeMu         sync.Mutex
+	protocolVersion int
+	capabilities    map[string]struct{}
+}
+
+// SetProtocol stores the negotiated protocol metadata.
+func (c *RpcClient) SetProtocol(version int, capabilities []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.protocolVersion = version
+	c.capabilities = make(map[string]struct{}, len(capabilities))
+	for _, capability := range capabilities {
+		c.capabilities[capability] = struct{}{}
+	}
+}
+
+// ProtocolVersion returns the negotiated protocol version.
+func (c *RpcClient) ProtocolVersion() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.protocolVersion
+}
+
+// Capabilities returns a sorted copy of the negotiated capabilities.
+func (c *RpcClient) Capabilities() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	capabilities := make([]string, 0, len(c.capabilities))
+	for capability := range c.capabilities {
+		capabilities = append(capabilities, capability)
+	}
+	sort.Strings(capabilities)
+	return capabilities
+}
+
+// SupportsCapability reports whether the client negotiated a capability.
+func (c *RpcClient) SupportsCapability(capability string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	_, ok := c.capabilities[capability]
+	return ok
 }
 
 // NewRpcClient creates a new RpcClient

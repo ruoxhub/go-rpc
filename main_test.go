@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +261,81 @@ func TestBusinessRegisterRoute_DBlessValidationAndUpgrade(t *testing.T) {
 	defer conn.Close()
 	if response.StatusCode != http.StatusSwitchingProtocols {
 		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusSwitchingProtocols)
+	}
+	conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("legacy connection unexpectedly received registration confirmation")
+	}
+
+	s.serverConfig.CapabilityNegotiation = true
+	versionedURL := "ws" + strings.TrimPrefix(httpTestServer.URL, "http") +
+		"/business/register?group=anonymous-group&clientId=device-2&protocol_version=1&capabilities=unknown.v1%2Cinvocation_context.v1"
+	versionedConn, versionedResponse, err := gorillawebsocket.DefaultDialer.Dial(versionedURL, nil)
+	if err != nil {
+		status := 0
+		if versionedResponse != nil {
+			status = versionedResponse.StatusCode
+		}
+		t.Fatalf("versioned WebSocket dial failed with status %d: %v", status, err)
+	}
+	defer versionedConn.Close()
+	_, payload, err := versionedConn.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registered protocol.WSMessage
+	if err := json.Unmarshal(payload, &registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered.Type != protocol.MessageTypeRegistered ||
+		registered.ProtocolVersion != 1 ||
+		!slices.Equal(registered.Capabilities, []string{protocol.CapabilityInvocationContextV1}) {
+		t.Fatalf("registered = %#v", registered)
+	}
+}
+
+func TestBusinessRegisterRouteNegotiationRejectsBeforeUpgrade(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newRegisterTestServer(t, true)
+	s.serverConfig.CapabilityNegotiation = true
+	s.registerRoutes()
+
+	for _, tc := range []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{name: "unsupported version", query: "protocol_version=2", wantStatus: http.StatusUpgradeRequired},
+		{name: "invalid capabilities", query: "protocol_version=1&capabilities=a.v1,,b.v1", wantStatus: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/business/register?group=anonymous-group&clientId=device-1&"+tc.query, nil)
+			s.httpServer.Engine().ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tc.wantStatus, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), `"error"`) {
+				t.Fatalf("response body = %s, want JSON error", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestBusinessRegisterRouteAuthorizationPrecedesNegotiation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newRegisterTestServer(t, false)
+	s.serverConfig.CapabilityNegotiation = true
+	s.registerRoutes()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/business/register?group=registered&clientId=device-1&protocol_version=2", nil)
+	s.httpServer.Engine().ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "group access verification unavailable") {
+		t.Fatalf("unexpected response body: %s", w.Body.String())
 	}
 }
 

@@ -651,6 +651,10 @@ func (s *Server) handleRegister(c *gin.Context) {
 	if !s.authorizeRegisterAccess(c, group) {
 		return
 	}
+	registration, ok := s.negotiateRegistration(c)
+	if !ok {
+		return
+	}
 
 	wsConn, err := s.httpServer.WSUpgrader().Upgrade(c.Writer, c.Request, negotiateSubprotocol(c))
 	if err != nil {
@@ -661,7 +665,7 @@ func (s *Server) handleRegister(c *gin.Context) {
 		return
 	}
 
-	go s.wsHandler.HandleConnection(s.wsCtx, wsConn, group, clientID)
+	go s.wsHandler.HandleConnectionWithRegistration(s.wsCtx, wsConn, group, clientID, registration)
 }
 
 func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool {
