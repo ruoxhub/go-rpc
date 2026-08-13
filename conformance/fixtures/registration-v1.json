@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "declared_capabilities": ["unknown.v1", "invocation_context.v1"],
+  "enabled_capabilities": ["invocation_context.v1"],
+  "registered": {
+    "type": "registered",
+    "protocol_version": 1,
+    "capabilities": ["invocation_context.v1"]
+  }
+}

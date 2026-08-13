@@ -1,0 +1,21 @@
+{
+  "versioned_required_fields": [
+    "type",
+    "action",
+    "__sekiro_seq__",
+    "trace_id",
+    "__rpc_context__"
+  ],
+  "rpc_context_required_fields": [
+    "sequence",
+    "trace_id",
+    "group",
+    "action",
+    "client_id",
+    "deadline_unix_ms",
+    "idempotent",
+    "idempotency_key",
+    "attempt"
+  ],
+  "legacy_forbidden_fields": ["__rpc_context__"]
+}
