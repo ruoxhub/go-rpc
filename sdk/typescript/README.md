@@ -18,4 +18,4 @@ await client.start();
 
 从仓库构建后可用 `npm pack` 产生的本地 `.tgz` 安装：
 `npm install ./artifacts/sdk/mrh30000-go-rpc-sdk-0.1.0-experimental.1.tgz`。
-本阶段不发布到公共 npm。浏览器和 Node 共用 core；`_execjs` 不属于正式 SDK。
+本阶段不发布到公共 npm。浏览器和 Node 共用 core；实验性 JavaScript 执行桥不在该 SDK 的支持范围内。
