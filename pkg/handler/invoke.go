@@ -78,7 +78,16 @@ type InvokeRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware, dbLessMode bool) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *APIHandler {
+	return newAPIHandler(manager, wsHandler, timeoutMgr, metricsCollector, cfgSvc, eventBus, groupRepo, authMW, false)
+}
+
+// NewAPIHandlerWithDBLessMode explicitly enables the server's anonymous DB-less path.
+func NewAPIHandlerWithDBLessMode(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware, dbLessMode bool) *APIHandler {
+	return newAPIHandler(manager, wsHandler, timeoutMgr, metricsCollector, cfgSvc, eventBus, groupRepo, authMW, dbLessMode)
+}
+
+func newAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware, dbLessMode bool) *APIHandler {
 	h := &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(cfgSvc),

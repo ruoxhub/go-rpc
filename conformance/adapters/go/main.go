@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,19 +57,23 @@ func run() error {
 
 	invoker := client.NewRpcInvoker([]string{baseURL})
 	defer invoker.Destroy()
-	request := &client.InvokeRequest{Group: group, Api: "conformance.echo", Params: map[string]interface{}{"echo": "go"}, Timeout: 10 * time.Second}
-	var response *client.InvokeResponse
-	deadline := time.Now().Add(10 * time.Second)
-	var invokeErr error
+	waitDeadline := time.Now().Add(10 * time.Second)
 	for {
-		response, invokeErr = invoker.InvokeContext(context.Background(), request)
-		if invokeErr == nil || time.Now().After(deadline) || (!strings.Contains(invokeErr.Error(), "500") && !strings.Contains(invokeErr.Error(), "no client available")) {
+		ready, err := clientVisible(baseURL, group, clientID)
+		if err != nil {
+			return err
+		}
+		if ready {
 			break
+		}
+		if time.Now().After(waitDeadline) {
+			return fmt.Errorf("client %s did not become visible", clientID)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if invokeErr != nil {
-		return invokeErr
+	response, err := invoker.InvokeContext(context.Background(), &client.InvokeRequest{Group: group, Api: "conformance.echo", Params: map[string]interface{}{"echo": "go"}, Timeout: 10 * time.Second})
+	if err != nil {
+		return err
 	}
 	select {
 	case received := <-contextCh:
@@ -78,6 +84,39 @@ func run() error {
 		return fmt.Errorf("timed out waiting for invocation context")
 	}
 	return nil
+}
+
+func clientVisible(baseURL, group, clientID string) (bool, error) {
+	query := url.Values{"group": {group}}
+	request, err := http.NewRequest(http.MethodGet, baseURL+"/business/clientQueue?"+query.Encode(), nil)
+	if err != nil {
+		return false, err
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return false, fmt.Errorf("clientQueue returned HTTP status %s", response.Status)
+	}
+	var envelope struct {
+		Code int      `json:"code"`
+		Data []string `json:"data"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		return false, fmt.Errorf("decode clientQueue response: %w", err)
+	}
+	if envelope.Code != 0 {
+		return false, fmt.Errorf("clientQueue returned code %d", envelope.Code)
+	}
+	for _, current := range envelope.Data {
+		if current == clientID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func requestParamsEcho(request map[string]interface{}) interface{} {

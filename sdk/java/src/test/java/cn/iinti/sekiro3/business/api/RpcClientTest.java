@@ -116,6 +116,7 @@ public class RpcClientTest {
     private static JSONObject postInvoke(String baseUrl, String group) throws Exception {
         URL url = URI.create(baseUrl + "/business/invoke").toURL();
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        try {
         connection.setRequestMethod("POST");
         connection.setDoOutput(true);
         connection.setConnectTimeout(5000);
@@ -137,8 +138,7 @@ public class RpcClientTest {
                 text.append(line);
             }
         }
-        try {
-            return JSON.parseObject(text.toString());
+        return JSON.parseObject(text.toString());
         } finally {
             connection.disconnect();
         }

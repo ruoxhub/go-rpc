@@ -112,6 +112,9 @@ func run() error {
 	for _, adapter := range adapters {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		env := append(os.Environ(), "RPC_TEST_BASE_URL="+baseURL)
+		if adapter.name == "Python" {
+			env = append(env, "PYTHONDONTWRITEBYTECODE=1")
+		}
 		if err := runWithEnv(ctx, root, adapter.name, env, adapter.cmd...); err != nil {
 			cancel()
 			return withServerLog(err, logBuffer)
@@ -123,9 +126,12 @@ func run() error {
 		return withServerLog(err, logBuffer)
 	}
 	fmt.Println("PASS Java")
-	if err := runLegacy(baseURL); err != nil {
+	legacyCtx, legacyCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	if err := runLegacy(legacyCtx, baseURL); err != nil {
+		legacyCancel()
 		return withServerLog(fmt.Errorf("legacy adapter: %w", err), logBuffer)
 	}
+	legacyCancel()
 	fmt.Println("PASS legacy")
 	return nil
 }
@@ -234,16 +240,24 @@ func runJava(root, baseURL string) error {
 	if os.Getenv("GRADLE_USER_HOME") == "" {
 		env = append(env, "GRADLE_USER_HOME="+filepath.Join(os.TempDir(), "go-rpc-stage1-gradle-home"))
 	}
-	return runWithEnv(ctx, root, "Java", env, wrapper, "-p", "sdk/java", "test", "--rerun-tasks", "--no-daemon", "-Drpc.test.baseUrl="+baseURL)
-}
-
-func runLegacy(baseURL string) error {
-	wsURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/business/register?group=conformance-legacy&clientId=legacy-client"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	projectCache, err := os.MkdirTemp("", "go-rpc-stage1-gradle-project-")
 	if err != nil {
 		return err
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	defer os.RemoveAll(projectCache)
+	return runWithEnv(ctx, root, "Java", env, wrapper, "-p", "sdk/java", "--project-cache-dir", projectCache, "test", "--rerun-tasks", "--no-daemon", "-Drpc.test.baseUrl="+baseURL)
+}
+
+func runLegacy(ctx context.Context, baseURL string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	wsURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/business/register?group=conformance-legacy&clientId=legacy-client"
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+	if err != nil {
+		return err
+	}
+	_ = conn.SetReadDeadline(readDeadline(ctx, 100*time.Millisecond))
 	_, _, readErr := conn.ReadMessage()
 	_ = conn.Close()
 	var timeoutErr net.Error
@@ -252,7 +266,7 @@ func runLegacy(baseURL string) error {
 	}
 
 	secondURL := strings.Replace(baseURL, "http://", "ws://", 1) + "/business/register?" + url.Values{"group": {"conformance-legacy"}, "clientId": {"legacy-client-2"}}.Encode()
-	conn, _, err = websocket.DefaultDialer.Dial(secondURL, nil)
+	conn, _, err = websocket.DefaultDialer.DialContext(ctx, secondURL, nil)
 	if err != nil {
 		return err
 	}
@@ -261,10 +275,19 @@ func runLegacy(baseURL string) error {
 		return err
 	}
 	responseCh := make(chan error, 1)
+	done := make(chan struct{})
+	requestCtx, cancel := context.WithCancel(ctx)
 	go func() {
+		defer close(done)
 		payload := map[string]interface{}{"group": "conformance-legacy", "action": "conformance.echo", "params": map[string]interface{}{"echo": "legacy"}}
 		body, _ := json.Marshal(payload)
-		response, requestErr := http.Post(baseURL+"/business/invoke", "application/json", bytes.NewReader(body))
+		request, requestErr := http.NewRequestWithContext(requestCtx, http.MethodPost, baseURL+"/business/invoke", bytes.NewReader(body))
+		if requestErr != nil {
+			responseCh <- requestErr
+			return
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, requestErr := (&http.Client{Timeout: 10 * time.Second}).Do(request)
 		if requestErr != nil {
 			responseCh <- requestErr
 			return
@@ -295,7 +318,7 @@ func runLegacy(baseURL string) error {
 		}
 		responseCh <- nil
 	}()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetReadDeadline(readDeadline(ctx, 10*time.Second))
 	_, message, err := conn.ReadMessage()
 	if err != nil {
 		return err
@@ -312,8 +335,20 @@ func runLegacy(baseURL string) error {
 	}
 	select {
 	case err := <-responseCh:
+		cancel()
+		<-done
 		return err
-	case <-time.After(10 * time.Second):
-		return errors.New("legacy HTTP invoke timeout")
+	case <-ctx.Done():
+		cancel()
+		<-done
+		return ctx.Err()
 	}
+}
+
+func readDeadline(ctx context.Context, duration time.Duration) time.Time {
+	deadline := time.Now().Add(duration)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		return contextDeadline
+	}
+	return deadline
 }
