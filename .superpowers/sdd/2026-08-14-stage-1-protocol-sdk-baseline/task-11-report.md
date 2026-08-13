@@ -64,3 +64,5 @@ Artifact directories are ignored and are not committed. `artifacts/stage1-impact
 - No registry, Maven, PyPI, npm, GitHub, or other remote publication was performed.
 - Gradle dependency cache is preserved in the configured/prepared `GRADLE_USER_HOME`; each build uses and removes separate temporary project-cache directories.
 - The Python normalization is intentionally local to the artifact builder because the upstream setuptools sdist metadata is timestamped; source package contents are preserved while archive metadata is made deterministic.
+- Review fix: the builder now rejects every existing reparse-point segment from `artifacts/` through the selected output before creating, deleting, or building anything. A real junction-to-temp regression preserved its external sentinel and passed.
+- Review fix: the Xposed local-JAR example now resolves `artifacts/sdk` from the sample's Gradle `rootProject`.

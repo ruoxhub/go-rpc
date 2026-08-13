@@ -43,3 +43,4 @@ Task 9: review requested changes (2 Critical, 7 Important): restore legacy send/
 Task 10: added cross-SDK black-box runner, Go/TypeScript/Python/Java/legacy adapters, explicit DB-less injection, trace correlation fallback, and process cleanup; focused runner/handler tests and real runner all PASS.
 Task 10 fix round 1: restored NewAPIHandler compatibility, single Go invoke after clientQueue readiness, bounded/joined legacy lifecycle, isolated Java/Python caches, and all conformance passes.
 Task 11: added scoped reproducible artifact builder, verification matrix, SDK migration docs, fixed debug APK naming, and path-safety test; third/fourth artifact manifests are identical and full verify gate passes with portable CGO/race environment.
+Task 11 fix round 1: rejected junction/symlink output escapes with a real external-sentinel regression and corrected the Xposed local-JAR path.

@@ -23,6 +23,38 @@ if ($outputPath -eq $artifactsRoot -or
     throw "OutputDirectory must be a child directory of artifacts/: $OutputDirectory"
 }
 
+function Test-ArtifactPathNoReparse {
+    param(
+        [string]$RootPath,
+        [string]$TargetPath
+    )
+
+    $paths = New-Object System.Collections.Generic.List[string]
+    $current = $TargetPath
+    while ($true) {
+        $paths.Add($current)
+        if ($current -eq $RootPath) { break }
+        $parent = Split-Path -Path $current -Parent
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $current) {
+            throw "Unable to walk validated artifacts path: $TargetPath"
+        }
+        $current = $parent.TrimEnd([IO.Path]::DirectorySeparatorChar)
+    }
+
+    for ($index = $paths.Count - 1; $index -ge 0; $index--) {
+        $path = $paths[$index]
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        Write-Verbose "Checking artifact path segment $path"
+        $item = Get-Item -LiteralPath $path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "OutputDirectory crosses a reparse point: $path"
+        }
+    }
+}
+
+# Check every existing segment before creating the temp directory or touching output.
+Test-ArtifactPathNoReparse $artifactsRoot $outputPath
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("go-rpc-stage1-sdk-" + [Guid]::NewGuid().ToString("N"))
 $javaProjectCache = Join-Path $tempRoot "java-project-cache"
 $xposedProjectCache = Join-Path $tempRoot "xposed-project-cache"

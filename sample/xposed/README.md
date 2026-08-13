@@ -454,7 +454,7 @@ async def read_html(request: Request):
 自动 reconnect，也不会降级到旧 Netty/raw TCP。应用可用本地构建的 JAR：
 
 ```gradle
-implementation files("artifacts/sdk/go-rpc-sdk-0.1.0-experimental.1.jar")
+implementation files(rootProject.file("../../artifacts/sdk/go-rpc-sdk-0.1.0-experimental.1.jar"))
 ```
 
 此目录的历史 Sekiro/Xposed 片段仅作 legacy 参考；Stage 1 不发布公共 Maven 制品。
