@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -27,6 +28,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/handler"
 	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 	webui "github.com/mrh30000/go-rpc/web"
 	"gorm.io/gorm"
@@ -613,6 +615,27 @@ func negotiateSubprotocol(c *gin.Context) http.Header {
 		return h
 	}
 	return nil
+}
+
+func (s *Server) negotiateRegistration(c *gin.Context) (protocol.Registration, bool) {
+	if s.serverConfig == nil || !s.serverConfig.CapabilityNegotiation {
+		return protocol.LegacyRegistration(), true
+	}
+	registration, err := protocol.NegotiateRegistration(
+		c.Query("protocol_version"),
+		c.Query("capabilities"),
+		[]string{protocol.CapabilityInvocationContextV1},
+	)
+	switch {
+	case errors.Is(err, protocol.ErrUnsupportedProtocolVersion):
+		c.JSON(http.StatusUpgradeRequired, gin.H{"error": err.Error()})
+		return protocol.Registration{}, false
+	case err != nil:
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return protocol.Registration{}, false
+	default:
+		return registration, true
+	}
 }
 
 func (s *Server) handleRegister(c *gin.Context) {

@@ -19,6 +19,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/handler"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 )
 
@@ -113,6 +114,51 @@ func TestAuthorizeRegisterAccess_DatabaseModeWithoutDependenciesFailsClosed(t *t
 	}
 	if !strings.Contains(w.Body.String(), "group access verification unavailable") {
 		t.Fatalf("unexpected response body: %s", w.Body.String())
+	}
+}
+
+func TestNegotiateRegistrationRejectsInvalidRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		query      string
+		wantStatus int
+	}{
+		{query: "protocol_version=2", wantStatus: http.StatusUpgradeRequired},
+		{query: "protocol_version=1&capabilities=Cancel.v1", wantStatus: http.StatusBadRequest},
+		{query: "protocol_version=1&capabilities=a.v1,,b.v1", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.query, func(t *testing.T) {
+			s := newRegisterTestServer(t, true)
+			s.serverConfig.CapabilityNegotiation = true
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, "/business/register?"+tt.query, nil)
+
+			registration, ok := s.negotiateRegistration(c)
+			if ok {
+				t.Fatalf("negotiateRegistration() ok = true, registration = %#v", registration)
+			}
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), `"error"`) {
+				t.Fatalf("response body = %s, want JSON error", w.Body.String())
+			}
+		})
+	}
+}
+
+func TestNegotiateRegistrationDisabledUsesLegacy(t *testing.T) {
+	s := &Server{serverConfig: &config.ServerConfig{CapabilityNegotiation: false}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/business/register?protocol_version=2", nil)
+
+	registration, ok := s.negotiateRegistration(c)
+	if !ok || !registration.Legacy || registration.ProtocolVersion != protocol.CurrentProtocolVersion {
+		t.Fatalf("negotiateRegistration() = %#v, %v; want legacy success", registration, ok)
 	}
 }
 

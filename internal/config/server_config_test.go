@@ -4,6 +4,20 @@ import (
 	"testing"
 )
 
+func TestCapabilityNegotiationDefaultsOff(t *testing.T) {
+	t.Setenv("RPC_CAPABILITY_NEGOTIATION", "")
+	if DefaultServerConfig().CapabilityNegotiation {
+		t.Fatal("CapabilityNegotiation must default to false")
+	}
+}
+
+func TestCapabilityNegotiationReadsEnv(t *testing.T) {
+	t.Setenv("RPC_CAPABILITY_NEGOTIATION", "true")
+	if !LoadServerConfigFromEnv().CapabilityNegotiation {
+		t.Fatal("CapabilityNegotiation was not loaded")
+	}
+}
+
 func TestLoadServerConfigFromEnvReturnsDefaultsWhenEmpty(t *testing.T) {
 	conf := LoadServerConfigFromEnv()
 	defaults := DefaultServerConfig()

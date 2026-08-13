@@ -9,28 +9,29 @@ var DefaultTimeout = 30
 
 // ServerConfig holds server configuration loaded from environment variables.
 type ServerConfig struct {
-	Host               string         `env:"RPC_HOST"`
-	Port               int            `env:"RPC_PORT"`
-	HttpsServices      HttpsConfig    `env:"RPC_HTTPS_*"`
-	DefaultTimeOut     int            `env:"RPC_TIMEOUT"`
-	CloseLog           bool           `env:"RPC_CLOSE_LOG"`
-	CloseWebLog        bool           `env:"RPC_CLOSE_WEB_LOG"`
-	Mode               string         `env:"RPC_MODE"`
-	Cors               bool           `env:"RPC_CORS"`
-	RouterReplace      RouterReplace  `env:"RPC_ROUTE_REPLACE_*"`
-	DisableWebAdmin    bool           `env:"RPC_DISABLE_WEB_ADMIN"`
-	DisableMetrics     bool           `env:"RPC_DISABLE_METRICS"`
-	DisableAlert       bool           `env:"RPC_DISABLE_ALERT"`
-	DisableDatabase    bool           `env:"RPC_DISABLE_DATABASE"`
-	DisableTrace       bool           `env:"RPC_DISABLE_TRACE"`
-	DisableAutoMigrate bool           `env:"RPC_DISABLE_AUTO_MIGRATE"`
-	Database           DatabaseConfig `env:"RPC_DB_*"`
-	Log                LogConfig      `env:"RPC_LOG_*"`
-	Alert              AlertConfig    `env:"RPC_SMTP_*"`
-	Provider           ProviderConfig `env:"RPC_PROVIDER_*"`
-	CorsOrigins        []string       `env:"RPC_CORS_ORIGINS"`
-	TraceSampleRate    float64        `env:"RPC_TRACE_SAMPLE_RATE"`
-	TraceBatchSize     int            `env:"RPC_TRACE_BATCH_SIZE"`
+	Host                  string         `env:"RPC_HOST"`
+	Port                  int            `env:"RPC_PORT"`
+	HttpsServices         HttpsConfig    `env:"RPC_HTTPS_*"`
+	DefaultTimeOut        int            `env:"RPC_TIMEOUT"`
+	CloseLog              bool           `env:"RPC_CLOSE_LOG"`
+	CloseWebLog           bool           `env:"RPC_CLOSE_WEB_LOG"`
+	Mode                  string         `env:"RPC_MODE"`
+	Cors                  bool           `env:"RPC_CORS"`
+	RouterReplace         RouterReplace  `env:"RPC_ROUTE_REPLACE_*"`
+	DisableWebAdmin       bool           `env:"RPC_DISABLE_WEB_ADMIN"`
+	DisableMetrics        bool           `env:"RPC_DISABLE_METRICS"`
+	DisableAlert          bool           `env:"RPC_DISABLE_ALERT"`
+	DisableDatabase       bool           `env:"RPC_DISABLE_DATABASE"`
+	DisableTrace          bool           `env:"RPC_DISABLE_TRACE"`
+	DisableAutoMigrate    bool           `env:"RPC_DISABLE_AUTO_MIGRATE"`
+	CapabilityNegotiation bool           `env:"RPC_CAPABILITY_NEGOTIATION"`
+	Database              DatabaseConfig `env:"RPC_DB_*"`
+	Log                   LogConfig      `env:"RPC_LOG_*"`
+	Alert                 AlertConfig    `env:"RPC_SMTP_*"`
+	Provider              ProviderConfig `env:"RPC_PROVIDER_*"`
+	CorsOrigins           []string       `env:"RPC_CORS_ORIGINS"`
+	TraceSampleRate       float64        `env:"RPC_TRACE_SAMPLE_RATE"`
+	TraceBatchSize        int            `env:"RPC_TRACE_BATCH_SIZE"`
 }
 
 // ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
@@ -148,9 +149,10 @@ func DefaultServerConfig() *ServerConfig {
 			QwenTimeoutSeconds: 120,
 			QwenLogChunks:      false,
 		},
-		TraceSampleRate: 0.1,
-		TraceBatchSize:  100,
-		CorsOrigins:     []string{"*"},
+		TraceSampleRate:       0.1,
+		TraceBatchSize:        100,
+		CapabilityNegotiation: false,
+		CorsOrigins:           []string{"*"},
 	}
 }
 
@@ -160,20 +162,21 @@ func LoadServerConfigFromEnv() *ServerConfig {
 	d := DefaultServerConfig()
 
 	conf := &ServerConfig{
-		Host:            envString("RPC_HOST", d.Host),
-		Port:            envInt("RPC_PORT", d.Port),
-		DefaultTimeOut:  envInt("RPC_TIMEOUT", d.DefaultTimeOut),
-		CloseLog:        envBool("RPC_CLOSE_LOG", d.CloseLog),
-		CloseWebLog:     envBool("RPC_CLOSE_WEB_LOG", d.CloseWebLog),
-		Mode:            envString("RPC_MODE", d.Mode),
-		Cors:            envBool("RPC_CORS", d.Cors),
-		DisableWebAdmin: envBool("RPC_DISABLE_WEB_ADMIN", d.DisableWebAdmin),
-		DisableMetrics:  envBool("RPC_DISABLE_METRICS", d.DisableMetrics),
-		DisableAlert:    envBool("RPC_DISABLE_ALERT", d.DisableAlert),
-		DisableDatabase: envBool("RPC_DISABLE_DATABASE", d.DisableDatabase),
-		DisableTrace:    envBool("RPC_DISABLE_TRACE", d.DisableTrace),
-		DisableAutoMigrate: envBool("RPC_DISABLE_AUTO_MIGRATE", d.DisableAutoMigrate),
-		CorsOrigins:     envStringSlice("RPC_CORS_ORIGINS", d.CorsOrigins),
+		Host:                  envString("RPC_HOST", d.Host),
+		Port:                  envInt("RPC_PORT", d.Port),
+		DefaultTimeOut:        envInt("RPC_TIMEOUT", d.DefaultTimeOut),
+		CloseLog:              envBool("RPC_CLOSE_LOG", d.CloseLog),
+		CloseWebLog:           envBool("RPC_CLOSE_WEB_LOG", d.CloseWebLog),
+		Mode:                  envString("RPC_MODE", d.Mode),
+		Cors:                  envBool("RPC_CORS", d.Cors),
+		DisableWebAdmin:       envBool("RPC_DISABLE_WEB_ADMIN", d.DisableWebAdmin),
+		DisableMetrics:        envBool("RPC_DISABLE_METRICS", d.DisableMetrics),
+		DisableAlert:          envBool("RPC_DISABLE_ALERT", d.DisableAlert),
+		DisableDatabase:       envBool("RPC_DISABLE_DATABASE", d.DisableDatabase),
+		DisableTrace:          envBool("RPC_DISABLE_TRACE", d.DisableTrace),
+		DisableAutoMigrate:    envBool("RPC_DISABLE_AUTO_MIGRATE", d.DisableAutoMigrate),
+		CapabilityNegotiation: envBool("RPC_CAPABILITY_NEGOTIATION", d.CapabilityNegotiation),
+		CorsOrigins:           envStringSlice("RPC_CORS_ORIGINS", d.CorsOrigins),
 
 		HttpsServices: HttpsConfig{
 			IsEnable:    envBool("RPC_HTTPS_ENABLE", d.HttpsServices.IsEnable),
