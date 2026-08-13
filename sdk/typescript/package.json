@@ -2,7 +2,7 @@
   "name": "@mrh30000/go-rpc-sdk",
   "version": "0.1.0-experimental.1",
   "type": "module",
-  "files": ["dist", "README.md"],
+  "files": ["dist/browser", "dist/src", "README.md"],
   "exports": {
     ".": {"types": "./dist/src/browser.d.ts", "import": "./dist/src/browser.js"},
     "./node": {"types": "./dist/src/node.d.ts", "import": "./dist/src/node.js"}

@@ -87,15 +87,17 @@ export class RpcClient {
       }
       this.socket = socket;
       socket.onopen = () => undefined;
-      socket.onmessage = (event) => this.receive(socket, event.data);
+      socket.onmessage = (event) => {
+        if (this.socket === socket) this.receive(socket, event.data);
+      };
       socket.onerror = (event) => {
-        if (!this.started) this.failStart(new Error(`WebSocket error: ${String(event ?? "unknown")}`));
+        if (this.socket === socket && !this.started) this.failStart(new Error(`WebSocket error: ${String(event ?? "unknown")}`), socket);
       };
       socket.onclose = () => {
-        if (!this.started) this.failStart(new Error("registered confirmation was not received"));
+        if (this.socket === socket && !this.started) this.failStart(new Error("registered confirmation was not received"), socket);
       };
       this.confirmationTimer = setTimeout(() => {
-        this.failStart(new Error("registered confirmation timeout"));
+        if (this.socket === socket) this.failStart(new Error("registered confirmation timeout"), socket);
       }, this.options.confirmationTimeoutMs ?? 5000);
     });
     return this.startPromise;
@@ -131,17 +133,24 @@ export class RpcClient {
   }
 
   private receive(socket: WebSocketLike, data: unknown): void {
-    const text = toText(data);
+    if (this.socket !== socket) return;
+    if (typeof data !== "string") {
+      socket.close(1003, "unsupported data");
+      return;
+    }
+    const text = data;
     if (new TextEncoder().encode(text).byteLength > MAX_MESSAGE_BYTES) {
       socket.close(1009, "message too large");
       return;
     }
-    let message: InvokeMessage;
+    let parsed: unknown;
     try {
-      message = JSON.parse(text) as InvokeMessage;
+      parsed = JSON.parse(text);
     } catch {
       return;
     }
+    if (!isPlainRecord(parsed)) return;
+    const message = parsed as InvokeMessage;
     if (message.type === "registered") {
       this.confirm(socket, message);
       return;
@@ -151,8 +160,9 @@ export class RpcClient {
   }
 
   private confirm(socket: WebSocketLike, message: InvokeMessage): void {
+    if (this.socket !== socket || this.started) return;
     if (message.protocol_version !== CURRENT_PROTOCOL_VERSION || !Array.isArray(message.capabilities) || !message.capabilities.includes(INVOCATION_CONTEXT_CAPABILITY)) {
-      this.failStart(new Error("registered confirmation is missing protocol capability"));
+      this.failStart(new Error("registered confirmation is missing protocol capability"), socket);
       return;
     }
     this.clearConfirmationTimer();
@@ -163,7 +173,7 @@ export class RpcClient {
       this.startReject = undefined;
       this.resolveStart();
     } catch (error) {
-      this.failStart(error);
+      this.failStart(error, socket);
     }
   }
 
@@ -176,7 +186,8 @@ export class RpcClient {
 
   private startResolver?: () => void;
 
-  private failStart(error: unknown): void {
+  private failStart(error: unknown, expectedSocket?: WebSocketLike): void {
+    if (expectedSocket !== undefined && this.socket !== expectedSocket) return;
     this.clearConfirmationTimer();
     const socket = this.socket;
     this.socket = undefined;
@@ -203,7 +214,7 @@ export class RpcClient {
     const traceId = typeof message.trace_id === "string" ? message.trace_id : "";
     let result: unknown;
     let error: unknown;
-    if (!sequence || !action || !message.__rpc_context__) {
+    if (!sequence || !action || !isInvocationContext(message.__rpc_context__)) {
       error = new Error("invoke requires action, sequence, and context");
     } else {
       const context = message.__rpc_context__ as InvocationContext;
@@ -248,9 +259,18 @@ export class RpcClient {
   }
 }
 
-function toText(data: unknown): string {
-  if (typeof data === "string") return data;
-  if (data instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(data));
-  if (ArrayBuffer.isView(data)) return new TextDecoder().decode(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-  return String(data);
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function isInvocationContext(value: unknown): value is InvocationContext {
+  if (!isPlainRecord(value) || Object.keys(value).length !== 9) return false;
+  for (const key of ["sequence", "trace_id", "group", "action", "client_id", "idempotency_key"]) {
+    if (typeof value[key] !== "string") return false;
+  }
+  for (const key of ["deadline_unix_ms", "attempt"]) {
+    if (typeof value[key] !== "number" || !Number.isFinite(value[key]) || !Number.isInteger(value[key])) return false;
+  }
+  return typeof value.idempotent === "boolean";
 }

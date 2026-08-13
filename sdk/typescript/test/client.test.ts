@@ -37,7 +37,7 @@ class FakeWebSocket implements WebSocketLike {
   }
 
   message(value: unknown): void {
-    this.onmessage?.({ data: typeof value === "string" ? value : JSON.stringify(value) });
+    this.onmessage?.({ data: typeof value === "string" || value instanceof Uint8Array ? value : JSON.stringify(value) });
   }
 }
 
@@ -119,7 +119,7 @@ test("destroy aborts an active context handler and does not reconnect", async ()
   socket.open();
   socket.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
   await started;
-  socket.message({ type: "invoke", action: "wait", __sekiro_seq__: "seq-wait", group: "g", clientId: "c", __rpc_context__: { sequence: "seq-wait", action: "wait", group: "g", client_id: "c", deadline_unix_ms: 0, idempotent: false, idempotency_key: "", attempt: 1 } });
+  socket.message({ type: "invoke", action: "wait", __sekiro_seq__: "seq-wait", group: "g", clientId: "c", trace_id: "trace-wait", __rpc_context__: { sequence: "seq-wait", trace_id: "trace-wait", action: "wait", group: "g", client_id: "c", deadline_unix_ms: 0, idempotent: false, idempotency_key: "", attempt: 1 } });
   for (let i = 0; i < 20 && !signal; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
   client.destroy();
   await abortObserved;
@@ -138,5 +138,96 @@ test("oversized UTF-8 text closes with 1009 before JSON parsing", async () => {
   await started;
   socket.message("😀".repeat(Math.ceil((10 * 1024 * 1024) / 4) + 1));
   assert.equal(socket.closeCode, 1009);
+  client.destroy();
+});
+
+test("late events from failed socket do not affect the replacement socket", async () => {
+  FakeWebSocket.instances.length = 0;
+  const client = new RpcClient({ url: "ws://example.test/register", group: "g", clientId: "c", websocketFactory: factory, confirmationTimeoutMs: 5 });
+  const failed = client.start();
+  const socketA = latestSocket();
+  socketA.open();
+  await assert.rejects(failed, /registered confirmation/);
+  const replacement = client.start();
+  const socketB = latestSocket();
+  socketB.open();
+  socketB.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+  await replacement;
+  socketA.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+  socketA.onerror?.("late error");
+  socketA.onclose?.({ code: 1006 });
+  socketB.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+  assert.equal(socketA.sent.length, 0);
+  assert.equal(socketB.sent.length, 1);
+  client.destroy();
+});
+
+test("non-text frames are rejected before JSON parsing", async () => {
+  for (const frame of [new Uint8Array([123, 125]), Buffer.from([123, 125])]) {
+    FakeWebSocket.instances.length = 0;
+    let calls = 0;
+    const client = new RpcClient({ url: "ws://example.test/register", group: "g", clientId: "c", websocketFactory: factory });
+    client.registerAction("echo", () => { calls += 1; return { ok: true }; });
+    const started = client.start();
+    const socket = latestSocket();
+    socket.open();
+    socket.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+    await started;
+    socket.message(frame);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls, 0);
+    assert.equal(socket.closeCode, 1003);
+    client.destroy();
+  }
+});
+
+test("invalid invocation context returns one error response without calling handler", async () => {
+  const cases = [
+    { name: "missing attempt", context: { sequence: "seq", trace_id: "trace", group: "g", action: "echo", client_id: "c", deadline_unix_ms: 0, idempotent: false, idempotency_key: "" } },
+    { name: "wrong deadline type", context: { sequence: "seq", trace_id: "trace", group: "g", action: "echo", client_id: "c", deadline_unix_ms: "0", idempotent: false, idempotency_key: "", attempt: 1 } },
+  ];
+  for (const current of cases) {
+    await runContextValidationCase(current.context);
+  }
+});
+
+async function runContextValidationCase(context: Record<string, unknown>): Promise<void> {
+  FakeWebSocket.instances.length = 0;
+  let calls = 0;
+  const client = new RpcClient({ url: "ws://example.test/register", group: "g", clientId: "c", websocketFactory: factory });
+  client.registerActionContext("echo", () => { calls += 1; return { ok: true }; });
+  const started = client.start();
+  const socket = latestSocket();
+  socket.open();
+  socket.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+  await started;
+  socket.message({ type: "invoke", action: "echo", __sekiro_seq__: "seq", group: "g", clientId: "c", trace_id: "trace", __rpc_context__: context });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const responses = socket.sent.slice(1).map((value) => JSON.parse(value));
+  assert.equal(calls, 0);
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].status, -1);
+  assert.equal(responses[0].__sekiro_seq__, "seq");
+  assert.equal(responses[0].trace_id, "trace");
+  client.destroy();
+}
+
+test("handler throw and rejection each produce exactly one error response", async () => {
+  FakeWebSocket.instances.length = 0;
+  const client = new RpcClient({ url: "ws://example.test/register", group: "g", clientId: "c", websocketFactory: factory });
+  client.registerAction("throw", () => { throw new Error("boom"); });
+  client.registerAction("reject", async () => { throw new Error("nope"); });
+  const started = client.start();
+  const socket = latestSocket();
+  socket.open();
+  socket.message({ type: "registered", protocol_version: 1, capabilities: ["invocation_context.v1"] });
+  await started;
+  const context = (action: string, sequence: string) => ({ sequence, trace_id: "trace", group: "g", action, client_id: "c", deadline_unix_ms: 0, idempotent: false, idempotency_key: "", attempt: 1 });
+  socket.message({ type: "invoke", action: "throw", __sekiro_seq__: "seq-throw", group: "g", clientId: "c", trace_id: "trace", __rpc_context__: context("throw", "seq-throw") });
+  socket.message({ type: "invoke", action: "reject", __sekiro_seq__: "seq-reject", group: "g", clientId: "c", trace_id: "trace", __rpc_context__: context("reject", "seq-reject") });
+  for (let i = 0; i < 20 && socket.sent.length < 3; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  const responses = socket.sent.slice(1).map((value) => JSON.parse(value));
+  assert.equal(responses.length, 2);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [-1, -1]);
   client.destroy();
 });
