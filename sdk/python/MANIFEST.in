@@ -1,0 +1,5 @@
+prune tests
+prune src/go_rpc_sdk.egg-info
+exclude src/go_rpc_sdk.egg-info/*
+prune build
+prune go_rpc_sdk.egg-info

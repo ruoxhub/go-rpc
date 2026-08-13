@@ -1,0 +1,21 @@
+[project]
+name = "go-rpc-sdk"
+version = "0.1.0.dev1"
+requires-python = ">=3.10"
+dependencies = [
+  "tornado>=6.2,<7",
+  "httpx>=0.24,<1"
+]
+
+[project.optional-dependencies]
+dev = ["build>=1,<2"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools]
+include-package-data = false
