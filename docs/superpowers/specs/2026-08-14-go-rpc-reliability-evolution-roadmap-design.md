@@ -46,7 +46,7 @@
 | 路线图组织 | 按能力纵向切片，每阶段端到端闭环 |
 | 兼容策略 | 新服务端完全兼容旧客户端；新能力只对协商成功的客户端启用 |
 | 规范传输 | 正式执行端统一使用 WebSocket JSON |
-| 支持矩阵 | Go、TypeScript/Web、Python、Frida、Java/Android/Xposed |
+| 正式支持矩阵 | Go、TypeScript/Web、Python、Java/Android/Xposed |
 | 发布纪律 | 实验能力默认关闭；全矩阵通过后才能稳定并默认启用 |
 | 调用优先级 | 正确性与可靠性优先于诊断和 SDK 易用性 |
 | 去重存储 | 单服务进程内的有界内存账本，不依赖数据库 |
@@ -329,7 +329,6 @@ sequence、attempt、目标客户端和最终 deadline 以服务端为准。调�
 - TS/Web：`AbortSignal`
 - Python：异步取消令牌
 - Java/Android/Xposed：`RpcCancellationToken`
-- Frida：轻量取消令牌；环境支持时适配 `AbortSignal`
 
 handler 未完成时触发令牌，并抑制之后的普通成功响应。handler 已发送响应时忽略迟到取消。handler 不响应取消时可以继续运行，但迟到响应会被服务端丢弃并计入指标。
 
@@ -518,7 +517,6 @@ client ID 不作为指标标签，避免高基数。
 | TypeScript/Web | `sdk/typescript` | 执行端 | npm 格式 `.tgz`、ESM、浏览器 bundle |
 | Python | `sdk/python` | 执行端 + HTTP 调用端 | wheel、sdist |
 | Java/Android/Xposed | `sdk/java` | 执行端 | Java 8 JAR、Xposed 示例 APK |
-| Frida | `sdk/frida` | 执行端 | 无外部依赖的单文件 JS bundle |
 
 “全部 SDK 同步”按适用角色判断：
 
@@ -530,7 +528,6 @@ client ID 不作为指标标签，避免高基数。
 
 - Go 执行端使用 WebSocket JSON，调用端使用 HTTP invoke。
 - TS/Web 使用一个协议核心，通过小型 transport adapter 支持浏览器原生 WebSocket 和 Node `ws`。
-- Frida 复用 TS 的消息模型、状态机和 fixtures，只实现 Frida WebSocket transport，并输出单文件。
 - Python 复用现有 Tornado 依赖实现异步 WebSocket 执行端，保留同步/异步 HTTP 调用能力。
 - Java 核心不依赖 Android 或 Xposed API；Xposed 示例消费同一 Java 8 JAR。
 - `sample/` 只保留示例，不再承载唯一协议实现。
@@ -546,6 +543,8 @@ Legacy 范围：
 - Xposed 中已排除编译的旧 Netty SDK 源码
 
 Legacy 不实现新能力、不进入发布门禁，只接受关键安全修复。README 必须标注状态和正式替代路径；删除需要另行发布弃用通知。
+
+Frida 当前归入 experimental/legacy：现有二进制 TCP 实现继续作为 legacy 示例保留，但不新增能力、不生成正式 SDK 产物，也不进入普通 PR、nightly 或稳定发布门禁。Frida 官方 JavaScript 运行时没有原生 WebSocket 客户端 API；本路线图不引入 Node 宿主桥接，也不自行实现 RFC 6455。未来若出现可维护、可验证的原生或宿主 WebSocket 传输方案，必须通过独立 spec 重新定义依赖、产物和安全边界后，才能申请进入正式支持矩阵。
 
 ## 14. 跨 SDK 一致性测试
 
@@ -609,10 +608,9 @@ Nightly：
 - 完整跨 SDK 场景矩阵
 - legacy 混合版本场景
 - Java 核心 JVM 测试和 Xposed APK 构建
-- 固定版本 Frida 运行时真实连接烟测
 - 所有发布产物及校验文件验证
 
-Android/Xposed 真正注入目标进程的烟测不阻塞普通 PR，但必须为稳定发布留下环境、版本和结果证据。任一正式 SDK 无法完成发布级验证时，对应能力继续保持实验状态。
+Android/Xposed 真正注入目标进程的烟测不阻塞普通 PR，但必须为稳定发布留下环境、版本和结果证据。任一正式 SDK 无法完成发布级验证时，对应能力继续保持实验状态。Frida 仅允许非阻塞的 legacy 兼容性检查，其结果不影响正式能力稳定化。
 
 ## 15. 阶段路线图与退出条件
 
@@ -624,7 +622,7 @@ Android/Xposed 真正注入目标进程的烟测不阻塞普通 PR，但必须�
 
 - 全部正式执行端完成注册、确认、action bind 和普通调用。
 - legacy 客户端在新服务端保持原行为。
-- 所有 SDK 产物可重复构建。
+- 所有正式 SDK 产物可重复构建。
 
 ### 阶段 2：调用正确性
 
@@ -750,7 +748,7 @@ sequence + group + client_id + connection_generation
 - 常态调用路径不执行同步 Ping。
 - 管理台可以区分传输健康、业务熔断和离线状态。
 - 所有发布产物可重复构建并带校验文件。
-- Frida 无法通过真实 WebSocket 烟测时不得保留“正式支持”标签，必须修订本 spec，不能暗中保留二进制旁路。
+- Frida 保持 experimental/legacy，不作为正式 SDK、稳定发布门禁或二进制旁路承载新能力。
 
 设计来源：
 
