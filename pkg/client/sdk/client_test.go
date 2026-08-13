@@ -333,6 +333,68 @@ func TestRpcClientDestroyFromHandlerDoesNotSelfWait(t *testing.T) {
 	client.Destroy(1)
 }
 
+func TestRpcClientDispatchCapacityAndDestroyCancellation(t *testing.T) {
+	invokesSent := make(chan struct{})
+	server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+		_ = conn.WriteJSON(protocol.WSMessage{Type: protocol.MessageTypeRegistered, ProtocolVersion: 1, Capabilities: []string{protocol.CapabilityInvocationContextV1}})
+		var bind protocol.WSMessage
+		if conn.ReadJSON(&bind) != nil {
+			return
+		}
+		writeSDKInvoke(conn, "block", "seq-1")
+		writeSDKInvoke(conn, "block", "seq-2")
+		writeSDKInvoke(conn, "block", "seq-3")
+		close(invokesSent)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+
+	var started atomic.Int32
+	ctxCanceled := make(chan struct{})
+	client, err := NewRpcClientURL("g", "c", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RegisterActionContext("block", func(ctx context.Context, _ protocol.WireInvocationContext, _ map[string]interface{}) (interface{}, error) {
+		started.Add(1)
+		<-ctx.Done()
+		close(ctxCanceled)
+		return nil, ctx.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-invokesSent:
+	case <-time.After(time.Second):
+		t.Fatal("server did not send invoke burst")
+	}
+	deadline := time.Now().Add(time.Second)
+	for started.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := started.Load(); got != 1 {
+		t.Fatalf("started handlers before destroy = %d, want 1", got)
+	}
+	client.Destroy(1)
+	select {
+	case <-ctxCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("Destroy did not cancel active context handler")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := started.Load(); got != 1 {
+		t.Fatalf("queued handlers started after destroy = %d, want 1", got)
+	}
+	client.Destroy(1)
+}
+
 func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}

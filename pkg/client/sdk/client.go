@@ -38,6 +38,16 @@ type registeredAction struct {
 	context ContextActionHandler
 }
 
+type dispatchJob struct {
+	conn                      *websocket.Conn
+	sequence, group, clientID string
+	traceID                   string
+	wire                      protocol.WireInvocationContext
+	request                   map[string]interface{}
+	payload                   []byte
+	action                    string
+}
+
 // RegistrationError reports a failed versioned WebSocket registration.
 type RegistrationError struct {
 	Reason string
@@ -64,16 +74,20 @@ type RpcClient struct {
 	apiToken  string
 	initErr   error
 
-	mu         sync.RWMutex
-	writeMu    sync.Mutex
-	conn       *websocket.Conn
-	started    bool
-	destroyed  bool
-	closed     bool
-	heartbeat  *time.Ticker
-	readerDone chan struct{}
-	handlers   map[string]registeredAction
-	fallback   RegisterHandler
+	mu              sync.RWMutex
+	writeMu         sync.Mutex
+	conn            *websocket.Conn
+	started         bool
+	destroyed       bool
+	closed          bool
+	heartbeat       *time.Ticker
+	readerDone      chan struct{}
+	lifecycleCtx    context.Context
+	lifecycleCancel context.CancelFunc
+	dispatchQueue   chan dispatchJob
+	dispatchDone    chan struct{}
+	handlers        map[string]registeredAction
+	fallback        RegisterHandler
 }
 
 // NewRpcClient creates a WebSocket client using the legacy host/port shape.
@@ -247,10 +261,18 @@ func (c *RpcClient) Start() error {
 	}
 	c.readerDone = make(chan struct{})
 	c.heartbeat = time.NewTicker(heartbeatPeriod)
+	c.lifecycleCtx, c.lifecycleCancel = context.WithCancel(context.Background())
+	// ponytail: one worker and one queued slot bound Stage 1 dispatch leakage; Stage 3 can replace this with a cancellable scheduler.
+	c.dispatchQueue = make(chan dispatchJob, 1)
+	c.dispatchDone = make(chan struct{})
 	readerDone := c.readerDone
 	ticker := c.heartbeat
+	lifecycleCtx := c.lifecycleCtx
+	dispatchQueue := c.dispatchQueue
+	dispatchDone := c.dispatchDone
 	go c.readLoop(conn, readerDone)
 	go c.heartbeatLoop(conn, ticker)
+	go c.dispatchLoop(lifecycleCtx, dispatchQueue, dispatchDone)
 	return nil
 }
 
@@ -265,6 +287,7 @@ func (c *RpcClient) actionNamesLocked() []string {
 
 func (c *RpcClient) readLoop(conn *websocket.Conn, done chan struct{}) {
 	defer close(done)
+	defer c.cancelLifecycle()
 	defer c.stopHeartbeat()
 	defer c.closeSocket(conn)
 	for {
@@ -273,6 +296,21 @@ func (c *RpcClient) readLoop(conn *websocket.Conn, done chan struct{}) {
 			return
 		}
 		c.handleMessage(conn, payload)
+	}
+}
+
+func (c *RpcClient) dispatchLoop(ctx context.Context, queue <-chan dispatchJob, done chan struct{}) {
+	defer close(done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-queue:
+			if ctx.Err() != nil {
+				return
+			}
+			c.processInvoke(ctx, job)
+		}
 	}
 }
 
@@ -332,10 +370,31 @@ func (c *RpcClient) handleMessage(conn *websocket.Conn, payload []byte) {
 		return
 	}
 
-	go c.processInvoke(conn, sequence, group, clientID, traceID, wire, request, payload, action)
+	c.enqueueInvoke(dispatchJob{
+		conn: conn, sequence: sequence, group: group, clientID: clientID, traceID: traceID,
+		wire: wire, request: request, payload: payload, action: action,
+	})
 }
 
-func (c *RpcClient) processInvoke(conn *websocket.Conn, sequence, group, clientID, traceID string, wire protocol.WireInvocationContext, request map[string]interface{}, payload []byte, action string) {
+func (c *RpcClient) enqueueInvoke(job dispatchJob) {
+	c.mu.RLock()
+	ctx := c.lifecycleCtx
+	queue := c.dispatchQueue
+	destroyed := c.destroyed
+	c.mu.RUnlock()
+	if destroyed || ctx == nil {
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case queue <- job:
+	default:
+		_ = c.writeResponse(job.conn, job.sequence, job.group, job.clientID, job.traceID, nil, errors.New("invoke dispatch capacity exceeded"))
+	}
+}
+
+func (c *RpcClient) processInvoke(ctx context.Context, job dispatchJob) {
 	var result interface{}
 	var invokeErr error
 	func() {
@@ -344,9 +403,9 @@ func (c *RpcClient) processInvoke(conn *websocket.Conn, sequence, group, clientI
 				invokeErr = fmt.Errorf("invoke handler panic: %v", recovered)
 			}
 		}()
-		result, invokeErr = c.dispatch(context.Background(), wire, request, payload, action)
+		result, invokeErr = c.dispatch(ctx, job.wire, job.request, job.payload, job.action)
 	}()
-	_ = c.writeResponse(conn, sequence, group, clientID, traceID, result, invokeErr)
+	_ = c.writeResponse(job.conn, job.sequence, job.group, job.clientID, job.traceID, result, invokeErr)
 }
 
 func (c *RpcClient) dispatch(ctx context.Context, wire protocol.WireInvocationContext, request map[string]interface{}, raw []byte, action string) (interface{}, error) {
@@ -425,6 +484,15 @@ func (c *RpcClient) stopHeartbeat() {
 	c.mu.Unlock()
 }
 
+func (c *RpcClient) cancelLifecycle() {
+	c.mu.RLock()
+	cancel := c.lifecycleCancel
+	c.mu.RUnlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 func (c *RpcClient) closeSocket(conn *websocket.Conn) {
 	if conn == nil {
 		return
@@ -444,6 +512,7 @@ func (c *RpcClient) Destroy(waitSeconds int64) {
 	c.started = false
 	conn := c.conn
 	done := c.readerDone
+	cancel := c.lifecycleCancel
 	if c.heartbeat != nil {
 		c.heartbeat.Stop()
 		c.heartbeat = nil
@@ -451,6 +520,9 @@ func (c *RpcClient) Destroy(waitSeconds int64) {
 	c.handlers = make(map[string]registeredAction)
 	c.fallback = nil
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	c.closeSocket(conn)
 	if done == nil || waitSeconds <= 0 {
 		return
