@@ -1,38 +1,30 @@
 package client
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	json "github.com/goccy/go-json"
 	"io"
-	"math/rand"
-	"net"
-	"sync"
+	"math"
+	"net/http"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
-	"github.com/mrh30000/go-rpc/pkg/protocol"
-	"github.com/mrh30000/go-rpc/pkg/transport"
 )
 
-// RpcInvoker represents a Rpc invoker (caller)
+const maxInvokeResponseSize = 10 << 20
+
+// RpcInvoker represents an HTTP RPC invoker.
 type RpcInvoker struct {
-	apiToken        string
-	serverClients   []*invokerClient
-	roundRobinIndex int
-	serialCounter   int32
-	mu              sync.RWMutex
+	apiToken   string
+	serverURLs []*url.URL
+	httpClient *http.Client
+	next       atomic.Uint64
 }
 
-// invokerClient represents a connection to a Rpc server
-type invokerClient struct {
-	serverAddr string
-	conn       *clientConnection
-	alive      bool
-}
-
-// InvokeRequest represents an invoke request
+// InvokeRequest represents an invoke request.
 type InvokeRequest struct {
 	Group   string
 	Api     string
@@ -40,218 +32,154 @@ type InvokeRequest struct {
 	Timeout time.Duration
 }
 
-// InvokeResponse represents an invoke response
+// InvokeResponse represents an invoke response.
 type InvokeResponse struct {
-	Code    int         `json:"code"`
-	Message string      `json:"message"`
-	Data    interface{} `json:"data"`
+	Code     int                    `json:"code"`
+	Message  string                 `json:"message"`
+	Data     interface{}            `json:"data"`
+	Group    string                 `json:"group"`
+	ClientID string                 `json:"clientId"`
+	TraceID  string                 `json:"trace_id"`
+	Raw      map[string]interface{} `json:"-"`
 }
 
-// NewRpcInvoker creates a new RpcInvoker
+// NewRpcInvoker creates a new RpcInvoker.
 func NewRpcInvoker(serverList []string) *RpcInvoker {
 	return NewRpcInvokerWithToken("", serverList)
 }
 
-// NewRpcInvokerWithToken creates a new RpcInvoker with API token
+// NewRpcInvokerWithToken creates a new RpcInvoker with API token.
 func NewRpcInvokerWithToken(apiToken string, serverList []string) *RpcInvoker {
 	invoker := &RpcInvoker{
-		apiToken:      apiToken,
-		serverClients: make([]*invokerClient, 0, len(serverList)),
+		apiToken:   apiToken,
+		serverURLs: make([]*url.URL, 0, len(serverList)),
+		httpClient: &http.Client{Transport: &http.Transport{}},
 	}
-
-	shuffled := make([]string, len(serverList))
-	copy(shuffled, serverList)
-	rand.Shuffle(len(shuffled), func(i, j int) {
-		shuffled[i], shuffled[j] = shuffled[j], shuffled[i]
-	})
-
-	for _, server := range shuffled {
-		client := invoker.createInvokerClient(server)
-		if client != nil {
-			invoker.serverClients = append(invoker.serverClients, client)
+	for _, raw := range serverList {
+		if server, err := normalizeServer(raw); err == nil {
+			invoker.serverURLs = append(invoker.serverURLs, server)
 		}
 	}
-
 	return invoker
 }
 
-// createInvokerClient creates a connection to a Rpc server
-func (s *RpcInvoker) createInvokerClient(config string) *invokerClient {
-	server := config
-	host := server
-	port := 5612
-
-	if idx := indexOf(server, ':'); idx > 0 {
-		host = server[:idx]
-		port = parseInt(server[idx+1:])
+func normalizeServer(raw string) (*url.URL, error) {
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
 	}
-
-	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		logger.Errorf("Failed to connect to server %s: %v", server, err)
-		return nil
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return nil, fmt.Errorf("invalid server address %q", raw)
 	}
-
-	logger.Infof("Connected to invoker server at %s", addr)
-
-	return &invokerClient{
-		serverAddr: addr,
-		conn: &clientConnection{
-			tcpConn:     transport.NewTCPConnection(conn),
-			respWaiters: make(map[int32]chan *protocol.RpcPacket),
-		},
-		alive: true,
-	}
+	u.Path = strings.TrimRight(u.Path, "/")
+	return u, nil
 }
 
-// Invoke sends an invoke request
+// Invoke sends one HTTP invoke request.
 func (s *RpcInvoker) Invoke(req *InvokeRequest) (*InvokeResponse, error) {
-	packet := protocol.PacketTypeIInvoke.NewPacket()
-	packet.SetSerialNumber(s.generateSerialNumber())
-
-	packet.AddHeader("group", req.Group)
-	packet.AddHeader("api", req.Api)
-	if req.Timeout > 0 {
-		packet.AddHeader("timeout", formatDuration(req.Timeout))
-	}
-
-	data := encodeJSON(req.Params)
-	packet.SetData(data)
-
-	var lastErr error
-	for i := 0; i < len(s.serverClients); i++ {
-		client := s.getNextClient()
-		if client == nil || !client.alive {
-			continue
-		}
-
-		if err := client.send(packet); err != nil {
-			lastErr = err
-			logger.Errorf("Send error: %v", err)
-			client.alive = false
-			continue
-		}
-
-		resp, err := client.waitForResponse(packet.SerialNumber, req.Timeout)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		return parseInvokeResponse(resp.Data)
-	}
-
-	if lastErr == nil {
-		lastErr = errors.New("no available server")
-	}
-	return nil, lastErr
+	return s.InvokeContext(context.Background(), req)
 }
 
-// getNextClient gets the next available client using round-robin
-func (s *RpcInvoker) getNextClient() *invokerClient {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// InvokeContext sends one HTTP invoke request using ctx for cancellation.
+func (s *RpcInvoker) InvokeContext(ctx context.Context, req *InvokeRequest) (*InvokeResponse, error) {
+	if req == nil {
+		return nil, errors.New("invoke request is nil")
+	}
+	server := s.nextServer()
+	if server == nil {
+		return nil, errors.New("no available server")
+	}
 
-	if len(s.serverClients) == 0 {
+	payload := map[string]interface{}{
+		"group":  req.Group,
+		"action": req.Api,
+		"params": req.Params,
+	}
+	if req.Timeout > 0 {
+		payload["timeout"] = int(math.Ceil(req.Timeout.Seconds()))
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal invoke request: %w", err)
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	requestCtx := ctx
+	var cancel context.CancelFunc
+	if req.Timeout > 0 {
+		requestCtx, cancel = context.WithTimeout(ctx, req.Timeout)
+		defer cancel()
+	}
+	endpoint := *server
+	endpoint.Path = strings.TrimRight(server.Path, "/") + "/business/invoke"
+	endpoint.RawPath = ""
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return nil, fmt.Errorf("create invoke request: %w", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if s.apiToken != "" {
+		request.Header.Set("Authorization", "Bearer "+s.apiToken)
+	}
+
+	response, err := s.httpClient.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("send invoke request: %w", err)
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxInvokeResponseSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("read invoke response: %w", err)
+	}
+	if len(responseBody) > maxInvokeResponseSize {
+		return nil, fmt.Errorf("invoke response exceeds %d bytes", maxInvokeResponseSize)
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("invoke returned HTTP status %s", response.Status)
+	}
+
+	var result InvokeResponse
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return nil, fmt.Errorf("decode invoke response: %w", err)
+	}
+	if err := json.Unmarshal(responseBody, &result.Raw); err != nil {
+		return nil, fmt.Errorf("decode invoke response fields: %w", err)
+	}
+	if _, ok := result.Raw["data"]; !ok {
+		result.Data = responseDataWithoutMetadata(result.Raw)
+	}
+	if result.Code != 0 {
+		return &result, fmt.Errorf("invoke failed: code=%d message=%s", result.Code, result.Message)
+	}
+	return &result, nil
+}
+
+func (s *RpcInvoker) nextServer() *url.URL {
+	if len(s.serverURLs) == 0 {
 		return nil
 	}
-
-	s.roundRobinIndex = (s.roundRobinIndex + 1) % len(s.serverClients)
-	return s.serverClients[s.roundRobinIndex]
+	index := (s.next.Add(1) - 1) % uint64(len(s.serverURLs))
+	return s.serverURLs[index]
 }
 
-// generateSerialNumber generates a unique serial number
-func (s *RpcInvoker) generateSerialNumber() int32 {
-	return int32(atomic.AddInt32(&s.serialCounter, 1))
-}
-
-// send sends a packet using the shared clientConnection send logic
-func (c *invokerClient) send(packet *protocol.RpcPacket) error {
-	if c.conn == nil {
-		return io.ErrClosedPipe
-	}
-	return c.conn.send(packet)
-}
-
-// waitForResponse waits for response with timeout
-func (c *invokerClient) waitForResponse(seq int32, timeout time.Duration) (*protocol.RpcPacket, error) {
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-
-	respChan := make(chan *protocol.RpcPacket, 1)
-
-	c.conn.mu.Lock()
-	c.conn.respWaiters[seq] = respChan
-	c.conn.mu.Unlock()
-
-	defer func() {
-		c.conn.mu.Lock()
-		delete(c.conn.respWaiters, seq)
-		c.conn.mu.Unlock()
-	}()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case resp := <-respChan:
-		return resp, nil
-	case <-timer.C:
-		return nil, errors.New("timeout waiting for response")
-	}
-}
-
-// Destroy destroys the invoker
-func (s *RpcInvoker) Destroy() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for _, client := range s.serverClients {
-		if client.conn != nil {
-			client.conn.close()
+func responseDataWithoutMetadata(raw map[string]interface{}) map[string]interface{} {
+	data := make(map[string]interface{}, len(raw))
+	for key, value := range raw {
+		switch key {
+		case "code", "message", "group", "clientId", "trace_id":
+			continue
+		default:
+			data[key] = value
 		}
-	}
-	s.serverClients = nil
-}
-
-func indexOf(s string, ch byte) int {
-	for i := 0; i < len(s); i++ {
-		if s[i] == ch {
-			return i
-		}
-	}
-	return -1
-}
-
-func parseInt(s string) int {
-	var n int
-	for _, ch := range s {
-		if ch >= '0' && ch <= '9' {
-			n = n*10 + int(ch-'0')
-		}
-	}
-	return n
-}
-
-func formatDuration(d time.Duration) string {
-	return d.String()
-}
-
-func encodeJSON(v interface{}) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return []byte("{}")
 	}
 	return data
 }
 
-func parseInvokeResponse(data []byte) (*InvokeResponse, error) {
-	resp := &InvokeResponse{
-		Code:    0,
-		Message: "success",
-		Data:    string(data),
+// Destroy closes idle HTTP connections owned by the invoker.
+func (s *RpcInvoker) Destroy() {
+	if s.httpClient != nil {
+		s.httpClient.CloseIdleConnections()
 	}
-	return resp, nil
 }

@@ -1,265 +1,199 @@
 package client
 
 import (
-	"net"
-	"sync"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestNewRpcInvoker(t *testing.T) {
-	serverList := []string{"localhost:5612", "192.168.1.100:5612"}
-	invoker := NewRpcInvoker(serverList)
-
-	if invoker == nil {
-		t.Fatal("NewRpcInvoker() returned nil")
-	}
-	if invoker.serverClients == nil {
-		t.Error("serverClients not initialized")
-	}
-}
-
-func TestNewRpcInvokerWithToken(t *testing.T) {
-	serverList := []string{"localhost:5612"}
-	invoker := NewRpcInvokerWithToken("test-token", serverList)
-
-	if invoker == nil {
-		t.Fatal("NewRpcInvokerWithToken() returned nil")
-	}
-	if invoker.apiToken != "test-token" {
-		t.Errorf("apiToken = %s, want 'test-token'", invoker.apiToken)
-	}
-}
-
-func TestNewRpcInvokerEmptyServerList(t *testing.T) {
-	invoker := NewRpcInvoker([]string{})
-
-	if invoker == nil {
-		t.Fatal("NewRpcInvoker() returned nil for empty server list")
-	}
-	if len(invoker.serverClients) != 0 {
-		t.Errorf("Expected 0 server clients, got %d", len(invoker.serverClients))
-	}
-}
-
-func TestInvokeRequestStruct(t *testing.T) {
-	req := &InvokeRequest{
-		Group:   "test-group",
-		Api:     "test-api",
-		Params:  map[string]interface{}{"key": "value"},
-		Timeout: 30 * time.Second,
-	}
-
-	if req.Group != "test-group" {
-		t.Errorf("Group = %s, want 'test-group'", req.Group)
-	}
-	if req.Api != "test-api" {
-		t.Errorf("Api = %s, want 'test-api'", req.Api)
-	}
-	if req.Timeout != 30*time.Second {
-		t.Errorf("Timeout = %v, want 30s", req.Timeout)
-	}
-}
-
-func TestInvokeResponseStruct(t *testing.T) {
-	resp := &InvokeResponse{
-		Code:    200,
-		Message: "success",
-		Data:    map[string]interface{}{"result": "ok"},
-	}
-
-	if resp.Code != 200 {
-		t.Errorf("Code = %d, want 200", resp.Code)
-	}
-	if resp.Message != "success" {
-		t.Errorf("Message = %s, want 'success'", resp.Message)
-	}
-}
-
-func TestInvokerDestroy(t *testing.T) {
-	invoker := NewRpcInvoker([]string{})
-
-	// Destroy should not panic
-	invoker.Destroy()
-
-	// After destroy, serverClients should be nil
-	if invoker.serverClients != nil {
-		t.Error("serverClients should be nil after Destroy()")
-	}
-}
-
-func TestGetNextClientEmptyList(t *testing.T) {
-	invoker := &RpcInvoker{
-		serverClients: []*invokerClient{},
-	}
-
-	client := invoker.getNextClient()
-	if client != nil {
-		t.Error("getNextClient() should return nil for empty list")
-	}
-}
-
-func TestGetNextClientRoundRobin(t *testing.T) {
-	invoker := &RpcInvoker{
-		serverClients: []*invokerClient{
-			{serverAddr: "server1", alive: true},
-			{serverAddr: "server2", alive: true},
-			{serverAddr: "server3", alive: true},
-		},
-	}
-
-	// Test round-robin cycles through servers
-	seenServers := make(map[string]bool)
-	for i := 0; i < 6; i++ {
-		client := invoker.getNextClient()
-		if client == nil {
-			t.Fatal("getNextClient() returned nil unexpectedly")
+func TestInvokerHTTPContract(t *testing.T) {
+	var method, path, authorization string
+	var body map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method = r.Method
+		path = r.URL.Path
+		authorization = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
 		}
-		seenServers[client.serverAddr] = true
+		_, _ = io.WriteString(w, `{"code":0,"message":"ok","data":{"value":1}}`)
+	}))
+	defer server.Close()
+
+	invoker := NewRpcInvokerWithToken("test-token", []string{server.URL})
+	defer invoker.Destroy()
+	resp, err := invoker.InvokeContext(context.Background(), &InvokeRequest{
+		Group: "g", Api: "echo", Params: map[string]interface{}{"value": 1}, Timeout: 2 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	// All servers should have been seen
-	if len(seenServers) != 3 {
-		t.Errorf("Expected to see all 3 servers, got %d", len(seenServers))
+	if method != http.MethodPost || path != "/business/invoke" || authorization != "Bearer test-token" {
+		t.Fatalf("request = %s %s auth=%q", method, path, authorization)
 	}
-}
-
-func TestGenerateSerialNumber(t *testing.T) {
-	invoker := &RpcInvoker{
-		serialCounter: 0,
+	if body["group"] != "g" || body["action"] != "echo" || body["timeout"] != float64(2) {
+		t.Fatalf("request body = %#v", body)
 	}
-
-	// Serial numbers should be incremental
-	prev := invoker.generateSerialNumber()
-	for i := 0; i < 100; i++ {
-		curr := invoker.generateSerialNumber()
-		if curr <= prev {
-			t.Errorf("Serial number not incrementing: %d <= %d", curr, prev)
-		}
-		prev = curr
+	params, ok := body["params"].(map[string]interface{})
+	if !ok || params["value"] != float64(1) {
+		t.Fatalf("request params = %#v", body["params"])
 	}
-}
-
-func TestGenerateSerialNumberConcurrent(t *testing.T) {
-	invoker := &RpcInvoker{
-		serialCounter: 0,
-	}
-
-	serials := make(map[int32]bool)
-	var mu sync.Mutex
-
-	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 100; j++ {
-				serial := invoker.generateSerialNumber()
-				mu.Lock()
-				if serials[serial] {
-					mu.Unlock()
-					t.Errorf("Duplicate serial number: %d", serial)
-				}
-				serials[serial] = true
-				mu.Unlock()
-			}
-		}()
-	}
-	wg.Wait()
-
-	if len(serials) != 1000 {
-		t.Errorf("Expected 1000 unique serial numbers, got %d", len(serials))
+	data, ok := resp.Data.(map[string]interface{})
+	if !ok || data["value"] != float64(1) || resp.Code != 0 {
+		t.Fatalf("response = %#v", resp)
 	}
 }
 
-func TestHelperFunctions(t *testing.T) {
+func TestInvokerDoesNotRetry(t *testing.T) {
 	tests := []struct {
-		name     string
-		fn       func() interface{}
-		expected interface{}
+		name   string
+		status int
+		body   string
 	}{
-		{
-			name: "indexOf found",
-			fn: func() interface{} {
-				return indexOf("host:port", ':')
-			},
-			expected: 4,
-		},
-		{
-			name: "indexOf not found",
-			fn: func() interface{} {
-				return indexOf("host", ':')
-			},
-			expected: -1,
-		},
-		{
-			name: "parseInt",
-			fn: func() interface{} {
-				return parseInt("5612")
-			},
-			expected: 5612,
-		},
-		{
-			name: "parseInt empty",
-			fn: func() interface{} {
-				return parseInt("")
-			},
-			expected: 0,
-		},
-		{
-			name: "net.JoinHostPort",
-			fn: func() interface{} {
-				return net.JoinHostPort("localhost", "5612")
-			},
-			expected: "localhost:5612",
-		},
-		{
-			name: "formatDuration",
-			fn: func() interface{} {
-				return formatDuration(30 * time.Second)
-			},
-			expected: "30s",
-		},
-		{
-			name: "encodeJSON",
-			fn: func() interface{} {
-				return string(encodeJSON(map[string]string{"key": "value"}))
-			},
-			expected: `{"key":"value"}`,
-		},
-		{
-			name: "encodeJSON nil",
-			fn: func() interface{} {
-				return string(encodeJSON(nil))
-			},
-			expected: "null",
-		},
+		{name: "non-2xx", status: http.StatusInternalServerError, body: `server error`},
+		{name: "invalid json", status: http.StatusOK, body: `{invalid`},
+		{name: "business failure", status: http.StatusOK, body: `{"code":123,"message":"failed"}`},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.fn()
-			if got != tt.expected {
-				t.Errorf("%s = %v, want %v", tt.name, got, tt.expected)
+			var secondRequests atomic.Int32
+			first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			}))
+			defer first.Close()
+			second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				secondRequests.Add(1)
+				_, _ = io.WriteString(w, `{"code":0}`)
+			}))
+			defer second.Close()
+
+			invoker := NewRpcInvoker([]string{first.URL, second.URL})
+			defer invoker.Destroy()
+			if _, err := invoker.InvokeContext(context.Background(), &InvokeRequest{Group: "g", Api: "echo"}); err == nil {
+				t.Fatal("InvokeContext() error = nil, want failure")
+			}
+			if got := secondRequests.Load(); got != 0 {
+				t.Fatalf("second endpoint requests = %d, want 0", got)
 			}
 		})
 	}
 }
 
-func TestParseInvokeResponse(t *testing.T) {
-	data := []byte(`{"code": 200, "message": "success"}`)
-	resp, err := parseInvokeResponse(data)
+func TestInvokerDoesNotRetryTransportFailure(t *testing.T) {
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	firstURL := first.URL
+	first.Close()
+	var secondRequests atomic.Int32
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secondRequests.Add(1)
+	}))
+	defer second.Close()
 
-	if err != nil {
-		t.Errorf("parseInvokeResponse() error = %v", err)
+	invoker := NewRpcInvoker([]string{firstURL, second.URL})
+	defer invoker.Destroy()
+	if _, err := invoker.InvokeContext(context.Background(), &InvokeRequest{Group: "g", Api: "echo"}); err == nil {
+		t.Fatal("InvokeContext() error = nil, want failure")
 	}
-	if resp == nil {
-		t.Fatal("parseInvokeResponse() returned nil")
+	if got := secondRequests.Load(); got != 0 {
+		t.Fatalf("second endpoint requests = %d, want 0", got)
 	}
-	if resp.Code != 0 {
-		t.Errorf("Code = %d, want 0 (default)", resp.Code)
+}
+
+func TestInvokerResponseFallbackAndLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		body  []byte
+		check func(*testing.T, *InvokeResponse)
+	}{
+		{
+			name: "flattened response",
+			body: []byte(`{"code":0,"message":"ok","group":"g","clientId":"c","trace_id":"t","value":42}`),
+			check: func(t *testing.T, resp *InvokeResponse) {
+				data, ok := resp.Data.(map[string]interface{})
+				if !ok || data["value"] != float64(42) {
+					t.Fatalf("fallback data = %#v", resp.Data)
+				}
+				if data["code"] != nil || data["message"] != nil || data["group"] != nil || data["clientId"] != nil || data["trace_id"] != nil {
+					t.Fatalf("fallback metadata = %#v", data)
+				}
+				if resp.Raw["value"] != float64(42) || resp.TraceID != "t" {
+					t.Fatalf("raw response = %#v", resp)
+				}
+			},
+		},
+		{
+			name: "response over limit",
+			body: bytes.Repeat([]byte("x"), 10<<20+1),
+			check: func(t *testing.T, resp *InvokeResponse) {
+				t.Fatal("over-limit response unexpectedly succeeded")
+			},
+		},
 	}
-	if resp.Message != "success" {
-		t.Errorf("Message = %s, want 'success'", resp.Message)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+			invoker := NewRpcInvoker([]string{server.URL})
+			defer invoker.Destroy()
+			resp, err := invoker.InvokeContext(context.Background(), &InvokeRequest{Group: "g", Api: "echo"})
+			if tt.name == "response over limit" {
+				if err == nil {
+					t.Fatal("InvokeContext() error = nil, want response limit failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.check(t, resp)
+		})
 	}
+}
+
+func TestInvokerTimeoutUsesSmallerDeadline(t *testing.T) {
+	tests := []struct {
+		name       string
+		requestCtx time.Duration
+		reqTimeout time.Duration
+	}{
+		{name: "caller context", requestCtx: 40 * time.Millisecond, reqTimeout: time.Second},
+		{name: "request timeout", requestCtx: time.Second, reqTimeout: 40 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				time.Sleep(200 * time.Millisecond)
+			}))
+			defer server.Close()
+			invoker := NewRpcInvoker([]string{server.URL})
+			defer invoker.Destroy()
+			ctx, cancel := context.WithTimeout(context.Background(), tt.requestCtx)
+			defer cancel()
+			start := time.Now()
+			_, err := invoker.InvokeContext(ctx, &InvokeRequest{Group: "g", Api: "echo", Timeout: tt.reqTimeout})
+			if err == nil {
+				t.Fatal("InvokeContext() error = nil, want timeout")
+			}
+			if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+				t.Fatalf("timeout took %v", elapsed)
+			}
+		})
+	}
+}
+
+func TestNewRpcInvokerDoesNotDial(t *testing.T) {
+	invoker := NewRpcInvoker([]string{"127.0.0.1:1"})
+	if invoker == nil || len(invoker.serverURLs) != 1 {
+		t.Fatalf("invoker = %#v", invoker)
+	}
+	invoker.Destroy()
 }
