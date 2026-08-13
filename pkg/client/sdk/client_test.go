@@ -235,6 +235,104 @@ func TestRpcClientRegistrationWaitsBeforeBind(t *testing.T) {
 	client.Destroy(1)
 }
 
+func TestRpcClientHandlerPanicReturnsErrorAndReaderSurvives(t *testing.T) {
+	responses := make(chan map[string]interface{}, 2)
+	server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+		_ = conn.WriteJSON(protocol.WSMessage{Type: protocol.MessageTypeRegistered, ProtocolVersion: 1, Capabilities: []string{protocol.CapabilityInvocationContextV1}})
+		var bind protocol.WSMessage
+		if conn.ReadJSON(&bind) != nil {
+			return
+		}
+		writeSDKInvoke(conn, "panic", "seq-panic")
+		var first map[string]interface{}
+		if conn.ReadJSON(&first) != nil {
+			return
+		}
+		responses <- first
+		writeSDKInvoke(conn, "ok", "seq-ok")
+		var second map[string]interface{}
+		if conn.ReadJSON(&second) == nil {
+			responses <- second
+		}
+	})
+	defer server.Close()
+	client, err := NewRpcClientURL("g", "c", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RegisterActionContext("panic", func(context.Context, protocol.WireInvocationContext, map[string]interface{}) (interface{}, error) {
+		panic("handler boom")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RegisterAction("ok", func(map[string]interface{}) (interface{}, error) { return map[string]interface{}{"ok": 1}, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Destroy(1)
+	var first, second map[string]interface{}
+	select {
+	case first = <-responses:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for panic response")
+	}
+	select {
+	case second = <-responses:
+	case <-time.After(time.Second):
+		t.Fatal("reader did not survive handler panic")
+	}
+	if first["status"] != float64(-1) || first["__sekiro_seq__"] != "seq-panic" || first["error"] == "" {
+		t.Fatalf("panic response = %#v", first)
+	}
+	if second["status"] != float64(0) || second["__sekiro_seq__"] != "seq-ok" {
+		t.Fatalf("second response = %#v", second)
+	}
+}
+
+func TestRpcClientDestroyFromHandlerDoesNotSelfWait(t *testing.T) {
+	destroyReturned := make(chan time.Duration, 1)
+	server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+		_ = conn.WriteJSON(protocol.WSMessage{Type: protocol.MessageTypeRegistered, ProtocolVersion: 1, Capabilities: []string{protocol.CapabilityInvocationContextV1}})
+		var bind protocol.WSMessage
+		if conn.ReadJSON(&bind) != nil {
+			return
+		}
+		writeSDKInvoke(conn, "stop", "seq-stop")
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+	client, err := NewRpcClientURL("g", "c", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RegisterActionContext("stop", func(context.Context, protocol.WireInvocationContext, map[string]interface{}) (interface{}, error) {
+		started := time.Now()
+		client.Destroy(1)
+		destroyReturned <- time.Since(started)
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case elapsed := <-destroyReturned:
+		if elapsed > 500*time.Millisecond {
+			t.Fatalf("Destroy from handler took %v", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Destroy from handler did not return promptly")
+	}
+	client.Destroy(1)
+}
+
 func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -247,6 +345,17 @@ func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.
 		defer conn.Close()
 		handler(r, conn)
 	}))
+}
+
+func writeSDKInvoke(conn *websocket.Conn, action, sequence string) {
+	_ = conn.WriteJSON(map[string]interface{}{
+		"type":            "invoke",
+		"action":          action,
+		"__sekiro_seq__":  sequence,
+		"group":           "g",
+		"clientId":        "c",
+		"__rpc_context__": map[string]interface{}{"sequence": sequence, "action": action, "group": "g", "client_id": "c"},
+	})
 }
 
 func TestRpcClientURLConversion(t *testing.T) {

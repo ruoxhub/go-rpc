@@ -332,8 +332,21 @@ func (c *RpcClient) handleMessage(conn *websocket.Conn, payload []byte) {
 		return
 	}
 
-	result, err := c.dispatch(context.Background(), wire, request, payload, action)
-	_ = c.writeResponse(conn, sequence, group, clientID, traceID, result, err)
+	go c.processInvoke(conn, sequence, group, clientID, traceID, wire, request, payload, action)
+}
+
+func (c *RpcClient) processInvoke(conn *websocket.Conn, sequence, group, clientID, traceID string, wire protocol.WireInvocationContext, request map[string]interface{}, payload []byte, action string) {
+	var result interface{}
+	var invokeErr error
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				invokeErr = fmt.Errorf("invoke handler panic: %v", recovered)
+			}
+		}()
+		result, invokeErr = c.dispatch(context.Background(), wire, request, payload, action)
+	}()
+	_ = c.writeResponse(conn, sequence, group, clientID, traceID, result, invokeErr)
 }
 
 func (c *RpcClient) dispatch(ctx context.Context, wire protocol.WireInvocationContext, request map[string]interface{}, raw []byte, action string) (interface{}, error) {
