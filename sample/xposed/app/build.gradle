@@ -77,7 +77,7 @@ dependencies {
 
 
     compileOnly 'de.robv.android.xposed:api:82'
-    implementation 'com.squareup.okhttp3:okhttp:3.12.13'
+    implementation 'io.github.mrh30000:go-rpc-sdk:0.1.0-experimental.1'
     implementation 'com.alibaba:fastjson:1.2.83'
     testImplementation 'junit:junit:4.13.2'
 

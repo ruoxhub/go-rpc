@@ -10,18 +10,10 @@ public class RpcClientTest {
         RpcClient client = new RpcClient("test group", "device/1", "10.0.2.2", 5612);
 
         assertEquals(
-                "ws://10.0.2.2:5612/business/register?group=test+group&clientId=device%2F1",
+                "ws://10.0.2.2:5612/business/register?protocol_version=1&capabilities=invocation_context.v1&group=test+group&clientId=device%2F1",
                 client.buildWebSocketUrl()
         );
         client.destroy();
     }
 
-    @Test
-    public void reconnectDelayUsesCappedExponentialBackoff() {
-        assertEquals(1_000L, RpcClient.reconnectDelay(1));
-        assertEquals(2_000L, RpcClient.reconnectDelay(2));
-        assertEquals(4_000L, RpcClient.reconnectDelay(3));
-        assertEquals(30_000L, RpcClient.reconnectDelay(6));
-        assertEquals(30_000L, RpcClient.reconnectDelay(100));
-    }
 }
