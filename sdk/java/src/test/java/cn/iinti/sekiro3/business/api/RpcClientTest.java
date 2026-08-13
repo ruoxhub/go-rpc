@@ -4,23 +4,38 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import cn.iinti.sekiro3.business.api.interfaze.InvocationContext;
 import cn.iinti.sekiro3.business.api.interfaze.RpcCancellationToken;
+import cn.iinti.sekiro3.business.api.interfaze.RpcResponse;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
+import org.junit.Assume;
 import okio.ByteString;
 import org.junit.Test;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -35,6 +50,98 @@ public class RpcClientTest {
         RpcClient client = new RpcClient("g", "c");
         assertFalse(client.isConnected());
         client.destroy();
+    }
+
+    @Test
+    public void realServerConformanceTarget() throws Exception {
+        String baseUrl = System.getProperty("rpc.test.baseUrl", "");
+        Assume.assumeTrue(!baseUrl.isEmpty());
+        JSONObject fixture = JSON.parseObject(new String(Files.readAllBytes(Paths.get("..", "..", "conformance", "fixtures", "invoke-context-v1.json")), StandardCharsets.UTF_8));
+        Set<String> fields = new HashSet<>();
+        for (Object field : fixture.getJSONArray("rpc_context_required_fields")) {
+            fields.add(String.valueOf(field));
+        }
+        assertEquals(new HashSet<>(Arrays.asList("sequence", "trace_id", "group", "action", "client_id", "deadline_unix_ms", "idempotent", "idempotency_key", "attempt")), fields);
+        URI base = URI.create(baseUrl);
+        String group = "conformance-java";
+        String clientId = "java-client";
+        RpcClient client = new RpcClient(group, clientId, "ws", base.getHost(), base.getPort(), null);
+        AtomicReference<InvocationContext> received = new AtomicReference<>();
+        client.setupRpcRequestInitializer((request, handlers) -> handlers.registerRpcHandler(
+                "conformance.echo", (rpcRequest, response) -> {
+                    received.set(rpcRequest.getInvocationContext());
+                    JSONObject data = new JSONObject();
+                    data.put("echo", rpcRequest.getString("echo"));
+                    data.put("group", rpcRequest.getInvocationContext().getGroup());
+                    data.put("clientId", rpcRequest.getInvocationContext().getClientId());
+                    data.put("trace_id", rpcRequest.getInvocationContext().getTraceId());
+                    response.success(data);
+                }));
+        try {
+            client.start();
+            assertTrue(client.awaitReady(5, TimeUnit.SECONDS));
+            java.util.concurrent.FutureTask<JSONObject> request = new java.util.concurrent.FutureTask<>(
+                    () -> postInvoke(baseUrl, group));
+            new Thread(request, "java-conformance-http").start();
+            JSONObject response = request.get(10, TimeUnit.SECONDS);
+            InvocationContext context = received.get();
+            assertEquals(0, response.getIntValue("code"));
+            assertEquals(group, response.getString("group"));
+            assertEquals(clientId, response.getString("clientId"));
+            assertTrue(response.getString("trace_id") != null && !response.getString("trace_id").isEmpty());
+            JSONObject data = response.getJSONObject("data");
+            if (data == null) {
+                data = response;
+            }
+            assertEquals("java", data.getString("echo"));
+            assertEquals(group, data.getString("group"));
+            assertEquals(clientId, data.getString("clientId"));
+            assertTrue(data.getString("trace_id") != null && !data.getString("trace_id").isEmpty());
+            assertNotNull(context);
+            assertEquals(group, context.getGroup());
+            assertEquals(clientId, context.getClientId());
+            assertEquals("conformance.echo", context.getAction());
+            assertTrue(context.getSequence() != null && !context.getSequence().isEmpty());
+            assertTrue(context.getTraceId() != null && !context.getTraceId().isEmpty());
+            assertEquals(response.getString("trace_id"), context.getTraceId());
+            assertTrue(context.getDeadlineUnixMs() > 0);
+            assertFalse(context.isIdempotent());
+            assertEquals("", context.getIdempotencyKey());
+            assertEquals(1, context.getAttempt());
+        } finally {
+            client.destroy(2);
+        }
+    }
+
+    private static JSONObject postInvoke(String baseUrl, String group) throws Exception {
+        URL url = URI.create(baseUrl + "/business/invoke").toURL();
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setConnectTimeout(5000);
+        connection.setReadTimeout(10000);
+        connection.setRequestProperty("Content-Type", "application/json");
+        byte[] body = ("{\"group\":\"" + group + "\",\"action\":\"conformance.echo\","
+                + "\"params\":{\"echo\":\"java\"}}").getBytes(StandardCharsets.UTF_8);
+        try (OutputStream output = connection.getOutputStream()) {
+            output.write(body);
+        }
+        StringBuilder text = new StringBuilder();
+        if (connection.getResponseCode() < 200 || connection.getResponseCode() >= 300) {
+            throw new IllegalStateException("HTTP status " + connection.getResponseCode());
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                connection.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                text.append(line);
+            }
+        }
+        try {
+            return JSON.parseObject(text.toString());
+        } finally {
+            connection.disconnect();
+        }
     }
 
     @Test

@@ -35,6 +35,7 @@ type APIHandler struct {
 	groupRepo        repository.GroupRepository
 	eventBus         *eventbus.EventBus
 	authMW           *middleware.AuthMiddleware
+	dbLessMode       bool
 }
 
 // clientManagerIface is the interface for client manager (internal)
@@ -77,7 +78,7 @@ type InvokeRequest struct {
 }
 
 // NewAPIHandler creates a new APIHandler
-func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *APIHandler {
+func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeoutMgr *forwarder.TimeoutManager, metricsCollector metrics.MetricCollector, cfgSvc config.Service, eventBus *eventbus.EventBus, groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware, dbLessMode bool) *APIHandler {
 	h := &APIHandler{
 		clientManager:    manager,
 		router:           router.NewRouter(cfgSvc),
@@ -88,6 +89,7 @@ func NewAPIHandler(manager *client.ClientManager, wsHandler *ws.Handler, timeout
 		groupRepo:        groupRepo,
 		eventBus:         eventBus,
 		authMW:           authMW,
+		dbLessMode:       dbLessMode,
 	}
 
 	if eventBus != nil {
@@ -604,6 +606,11 @@ func (h *APIHandler) writeForwardError(c *gin.Context, group, clientID string, e
 // 原版本同时支持调用方在 body/query 中传 sekiro_token 解析用户 — 已被删除, 鉴权
 // 入口统一收敛到中间件, 业务层不再做 token 解析。
 func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName string) bool {
+	// DB-less mode is explicitly selected by the server environment. Keep the
+	// default nil-dependency path fail-closed for embedded/test handlers.
+	if h.dbLessMode {
+		return true
+	}
 	// Fail closed: without a group repository we cannot distinguish registered
 	// vs anonymous groups, so deny rather than open the door.
 	if h.groupRepo == nil {

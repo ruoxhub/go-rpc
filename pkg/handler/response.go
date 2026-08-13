@@ -37,7 +37,11 @@ func traceID(c *gin.Context) string {
 	if id, ok := traceid.FromContext(c.Request.Context()); ok {
 		return id
 	}
-	return ""
+	// Trace correlation is a wire concern independent of optional persistence.
+	// Generate and attach an ID when trace recording middleware is disabled.
+	id := traceid.Generate()
+	c.Request = c.Request.WithContext(traceid.WithTraceID(c.Request.Context(), id))
+	return id
 }
 
 // write 统一输出响应, 自动注入 trace_id。

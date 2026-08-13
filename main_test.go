@@ -47,7 +47,7 @@ func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
 		clientManager:  clientManager,
 		wsHandler:      wsHandler,
 		timeoutManager: timeoutMgr,
-		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil, nil),
+		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil, nil, false),
 	}
 	s.registerRoutes()
 
@@ -201,7 +201,7 @@ func newRegisterTestServer(t *testing.T, disableDatabase bool) *Server {
 		clientManager:  clientManager,
 		wsHandler:      wsHandler,
 		timeoutManager: timeoutMgr,
-		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil, nil),
+		apiHandler:     handler.NewAPIHandler(clientManager, wsHandler, timeoutMgr, nil, nil, nil, nil, nil, false),
 		wsCtx:          wsCtx,
 		wsCancel:       wsCancel,
 	}

@@ -82,8 +82,8 @@ type testAnonGroupRepo struct {
 }
 
 func (testAnonGroupRepo) FindGroupByName(string) (*model.GroupConfig, error) { return nil, nil }
-func (testAnonGroupRepo) IsGroupRegistered(string) (bool, error)            { return false, nil }
-func (testAnonGroupRepo) IsAnonymousGroup(string) (bool, error)             { return true, nil }
+func (testAnonGroupRepo) IsGroupRegistered(string) (bool, error)             { return false, nil }
+func (testAnonGroupRepo) IsAnonymousGroup(string) (bool, error)              { return true, nil }
 
 func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
 	anonRepo := testAnonGroupRepo{}
@@ -103,6 +103,33 @@ func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
 			middleware.DefaultGroupCache(),
 			nil,
 		),
+	}
+}
+
+func TestAuthorizeRegisteredGroupAccessDBLessExplicitMode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tc := range []struct {
+		name   string
+		dbLess bool
+		want   int
+	}{
+		{name: "fail closed by default", dbLess: false, want: http.StatusInternalServerError},
+		{name: "explicit db less allows", dbLess: true, want: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &APIHandler{dbLessMode: tc.dbLess}
+			recorder := httptest.NewRecorder()
+			context, _ := gin.CreateTestContext(recorder)
+			context.Request = httptest.NewRequest(http.MethodPost, "/business/invoke", nil)
+			if !h.authorizeRegisteredGroupAccess(context, "registered") {
+				if tc.want == http.StatusOK {
+					t.Fatal("explicit DB-less mode should allow")
+				}
+			}
+			if tc.want != http.StatusOK && recorder.Code != tc.want {
+				t.Fatalf("status=%d, want %d", recorder.Code, tc.want)
+			}
+		})
 	}
 }
 

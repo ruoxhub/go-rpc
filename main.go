@@ -300,7 +300,7 @@ func (s *Server) Start() error {
 
 	s.wsHandler = websocket.NewHandler(s.clientManager, s.timeoutManager, nil, s.eventBus, s.groupRepo)
 
-	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo, s.authMW)
+	s.apiHandler = handler.NewAPIHandler(s.clientManager, s.wsHandler, s.timeoutManager, s.metricsCollector, s.configService, s.eventBus, s.groupRepo, s.authMW, s.serverConfig != nil && s.serverConfig.DisableDatabase)
 
 	// 注册事件订阅：客户端连接/断开 → 更新在线客户端数 Gauge
 	if s.metricsCollector != nil {

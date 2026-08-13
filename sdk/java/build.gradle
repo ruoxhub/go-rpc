@@ -23,3 +23,7 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'com.squareup.okhttp3:mockwebserver:3.12.13'
 }
+
+test {
+    systemProperty 'rpc.test.baseUrl', System.getProperty('rpc.test.baseUrl', '')
+}
