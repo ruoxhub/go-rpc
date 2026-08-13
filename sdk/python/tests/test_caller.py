@@ -87,3 +87,9 @@ class AsyncCallerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(InvokeHTTPHandler.requests), 1)
         self.assertEqual(InvokeHTTPHandler.requests[0][1], "Bearer async-token")
         await client.close()
+
+    async def test_async_context_manager_closes_client(self):
+        InvokeHTTPHandler.requests.clear()
+        InvokeHTTPHandler.body = {"code": 0, "data": {"async": True}}
+        async with AsyncRpcHTTPClient(BASE_URL) as client:
+            self.assertEqual(await client.invoke("g", "echo", {}), {"async": True})

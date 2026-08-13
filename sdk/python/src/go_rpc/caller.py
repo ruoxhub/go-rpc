@@ -99,3 +99,9 @@ class AsyncRpcHTTPClient:
 
     async def aclose(self) -> None:
         await self.close()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.close()

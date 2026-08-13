@@ -26,6 +26,8 @@ class WebSocketState:
         self.invoke_started = loop.create_future()
         self.handler_calls = 0
         self.socket = None
+        self.connections = 0
+        self.handler_cancelled = loop.create_future()
 
     def finish(self, future, value=True):
         if not future.done():
@@ -41,6 +43,7 @@ class ContractSocket(tornado.websocket.WebSocketHandler):
 
     def open(self):
         self.state.socket = self
+        self.state.connections += 1
         self.state.query = parse_qs(urlparse(self.request.uri).query)
         self.state.authorization = self.request.headers.get("Authorization")
         if self.state.confirmation == "legacy":
@@ -87,6 +90,8 @@ class ContractSocket(tornado.websocket.WebSocketHandler):
                 }))
         elif message.get("type") == "invoke_response":
             self.state.finish(self.state.response, message)
+        elif message.get("type") == "heartbeat":
+            self.state.messages.append(message)
 
     def on_close(self):
         self.state.finish(self.state.closed)
@@ -213,6 +218,68 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(started.wait(), 1)
         await client.destroy()
         await asyncio.wait_for(cancelled.wait(), 1)
+
+    async def test_concurrent_start_dials_once_and_binds_once(self):
+        client = ExecutorClient(self.url, "group-a", "client-a")
+        await asyncio.gather(client.start(), client.start())
+        await asyncio.wait_for(self.state.bind, 1)
+        self.assertEqual(self.state.connections, 1)
+        self.assertEqual(len([m for m in self.state.messages if m.get("type") == "bind"]), 1)
+        await client.destroy()
+
+    async def test_destroy_during_confirmation_cannot_make_start_succeed(self):
+        self.state.confirmation = False
+        client = ExecutorClient(self.url, "group-a", "client-a", confirmation_timeout=1)
+        starting = asyncio.create_task(client.start())
+        await asyncio.sleep(0.02)
+        await client.destroy()
+        with self.assertRaises(RuntimeError):
+            await starting
+        self.assertIsNone(client._socket)
+
+    async def test_handler_can_await_destroy_without_self_wait(self):
+        self.state.action = "self_destroy"
+        client = ExecutorClient(self.url, "group-a", "client-a")
+        done = asyncio.Event()
+
+        async def self_destroy(_context, _request, _cancel_event):
+            await client.destroy()
+            done.set()
+            return {"ok": True}
+
+        client.register_context("self_destroy", self_destroy)
+        await client.start()
+        await asyncio.wait_for(done.wait(), 1)
+        self.assertIsNone(client._socket)
+        await client.destroy()
+
+    async def test_remote_close_stops_heartbeat_cancels_handler_and_allows_restart(self):
+        self.state.action = "wait"
+        client = ExecutorClient(self.url, "group-a", "client-a")
+        started = asyncio.Event()
+
+        async def wait_handler(_context, _request, cancel_event):
+            started.set()
+            try:
+                await cancel_event.wait()
+            finally:
+                if cancel_event.is_set():
+                    self.state.finish(self.state.handler_cancelled)
+
+        client.register_context("wait", wait_handler)
+        await client.start()
+        await asyncio.wait_for(started.wait(), 1)
+        self.state.socket.close()
+        await asyncio.wait_for(self.state.handler_cancelled, 1)
+        for _ in range(20):
+            if client._heartbeat is None and client._socket is None:
+                break
+            await asyncio.sleep(0)
+        self.assertIsNone(client._heartbeat)
+        self.assertIsNone(client._socket)
+        await client.start()
+        self.assertEqual(self.state.connections, 2)
+        await client.destroy()
 
     def test_invocation_context_rejects_bool_and_string_integers(self):
         base = {
