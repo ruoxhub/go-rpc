@@ -1,7 +1,82 @@
 package cn.iinti.sekiro3.business.api.interfaze;
+
 import com.alibaba.fastjson.JSONObject;
+
 public final class RpcRequest {
- private final JSONObject raw,params; private final InvocationContext context; private final RpcCancellationToken token;
- public RpcRequest(JSONObject raw){this(raw,null,null);} public RpcRequest(JSONObject raw,InvocationContext c,RpcCancellationToken t){this.raw=raw; JSONObject p=raw.getJSONObject("params"); this.params=p==null?new JSONObject():p; context=c; token=t;}
- public String getAction(){return raw.getString("action");} public String getSeq(){String s=raw.getString("__sekiro_seq__"); return s==null?raw.getString("sequence"):s;} public String getString(String k){Object v=value(k);return v==null?null:String.valueOf(v);} public int getIntValue(String k){Object v=value(k);return v instanceof Number?((Number)v).intValue():v==null?0:Integer.parseInt(String.valueOf(v));} public long getLongValue(String k){Object v=value(k);return v instanceof Number?((Number)v).longValue():v==null?0L:Long.parseLong(String.valueOf(v));} public boolean getBooleanValue(String k){Object v=value(k);return v instanceof Boolean?(Boolean)v:Boolean.parseBoolean(String.valueOf(v));} public Object get(String k){return value(k);} public boolean containsKey(String k){return params.containsKey(k)||raw.containsKey(k);} public JSONObject getParams(){return params;} public JSONObject raw(){return raw;} public InvocationContext getInvocationContext(){return context;} public RpcCancellationToken getCancellationToken(){return token;} private Object value(String k){return params.containsKey(k)?params.get(k):raw.get(k);}
+    private final JSONObject raw;
+    private final JSONObject params;
+    private final InvocationContext context;
+    private final RpcCancellationToken token;
+
+    public RpcRequest(JSONObject raw) {
+        this(raw, null, null);
+    }
+
+    public RpcRequest(JSONObject raw, InvocationContext context, RpcCancellationToken token) {
+        this.raw = raw;
+        JSONObject rawParams = raw.getJSONObject("params");
+        this.params = rawParams == null ? new JSONObject() : rawParams;
+        this.context = context;
+        this.token = token;
+    }
+
+    public String getAction() {
+        return raw.getString("action");
+    }
+
+    public String getSeq() {
+        String sequence = raw.getString("__sekiro_seq__");
+        return sequence == null ? raw.getString("sequence") : sequence;
+    }
+
+    public String getString(String key) {
+        Object value = value(key);
+        return value == null ? null : String.valueOf(value);
+    }
+
+    public int getIntValue(String key) {
+        Object value = value(key);
+        return value instanceof Number ? ((Number) value).intValue()
+                : value == null ? 0 : Integer.parseInt(String.valueOf(value));
+    }
+
+    public long getLongValue(String key) {
+        Object value = value(key);
+        return value instanceof Number ? ((Number) value).longValue()
+                : value == null ? 0L : Long.parseLong(String.valueOf(value));
+    }
+
+    public boolean getBooleanValue(String key) {
+        Object value = value(key);
+        return value instanceof Boolean ? (Boolean) value
+                : Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    public Object get(String key) {
+        return value(key);
+    }
+
+    public boolean containsKey(String key) {
+        return params.containsKey(key) || raw.containsKey(key);
+    }
+
+    public JSONObject getParams() {
+        return params;
+    }
+
+    public JSONObject raw() {
+        return raw;
+    }
+
+    public InvocationContext getInvocationContext() {
+        return context;
+    }
+
+    public RpcCancellationToken getCancellationToken() {
+        return token;
+    }
+
+    private Object value(String key) {
+        return params.containsKey(key) ? params.get(key) : raw.get(key);
+    }
 }
