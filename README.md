@@ -3,6 +3,20 @@
 [![Go Version](https://img.shields.io/badge/go-1.25-blue.svg)](https://golang.org)
 [![License](https://img.shields.io/badge/license-Apache2.0-green.svg)](LICENSE)
 
+## Stage 1 SDK 与迁移说明
+
+先部署支持 WebSocket JSON 注册确认的服务端，再设置
+`RPC_CAPABILITY_NEGOTIATION=true`。新的 Go、TypeScript、Python 和 Java SDK
+都要求收到 `registered` 后才进入 ready，不会降级到旧协议。
+
+- Go executor 使用 WebSocket JSON；Go caller 使用现有 HTTP `POST /business/invoke`。
+- TypeScript、Python wheel/sdist 和 Java JAR 可从本地 `artifacts/sdk` 安装或加入工程；本阶段不启用 npm、PyPI 或 Maven 公共发布。
+- Frida 与 raw TCP sample 仅用于实验/legacy 兼容，不携带新 capability，也不阻塞稳定版本发布。
+- 正式 TypeScript/Web SDK 不使用 `_execjs`；浏览器和 Node adapter 共用同一 core。
+
+本地构建矩阵请运行 `powershell -File scripts/build-sdk-artifacts.ps1`。它只生成本地制品和
+`SHA256SUMS`，不会上传或创建 GitHub release。
+
 SEKIRO 是一个多语言、分布式、网络拓扑无关的服务发布平台。本仓库是 Go 语言实现，相比 Java 版本额外内置了监控指标、告警规则、调用链路追踪和 Web 管理后台。
 
 ## 目录

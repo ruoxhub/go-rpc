@@ -48,3 +48,22 @@ if __name__ == '__main__':
 * 一般情况下，python不常用多线程结构，故RpcClient没有做多线程包装，在高并发的情况下，用户需要自身完成多线程包装（即，默认情况下，sekiro
   handler运行在某个固定的线程中,如果执行某个耗时超过，那么需要考虑转移线程才能实现高并发）。
 * 由于python json库无法序列化任意对象，故如果返回数据是一个json，那么需要保证这个对象是可以被json 序列化，或者需要自行将对象转换为字典
+
+## Formal Python SDK（Stage 1）
+
+上面的 `sekiro` 示例保留作 legacy 参考。正式 SDK 位于 `sdk/python`，只需从仓库本地安装：
+
+```bash
+python -m pip install -e "sdk/python[dev]"
+```
+
+```python
+from go_rpc import AsyncRpcHTTPClient
+
+async with AsyncRpcHTTPClient("http://127.0.0.1:5612") as caller:
+    result = await caller.invoke("demo", "echo", {"value": "ok"})
+```
+
+`ExecutorClient` 使用 WebSocket JSON，必须等 `registered` 后才 ready，不会降级；本地 wheel/sdist
+可从 `artifacts/sdk` 安装，本阶段不发布到 PyPI。生产代码使用正式 client，不复制 sample 中的
+重试/tenacity 逻辑。

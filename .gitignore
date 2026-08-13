@@ -47,6 +47,10 @@ temp/
 # Build output
 dist/
 build/
+artifacts/
+sdk/java/.gradle/
+*.egg-info/
+__pycache__/
 jsRpc/
 .gocache
 sekiro-server

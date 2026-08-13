@@ -60,13 +60,11 @@ android {
     //在apk文件后边生成版本号信息
     android.applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "sekiro-demo${defaultConfig.versionName}_${releaseTime()}.apk"
+            if (variant.buildType.name == "debug") {
+                outputFileName = "sekiro-demo-debug.apk"
+            }
         }
     }
-}
-
-static def releaseTime() {
-    return new Date().format("yyyyMMddhhmm", TimeZone.getTimeZone("UTC"))
 }
 
 dependencies {
