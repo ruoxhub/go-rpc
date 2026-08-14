@@ -486,6 +486,92 @@ func TestRpcClientRejectsInvalidInvocationContexts(t *testing.T) {
 	}
 }
 
+func TestRpcClientClosesOversizeTextFrameBeforeDispatch(t *testing.T) {
+	serverResult := make(chan error, 1)
+	var handlerCalls atomic.Int32
+	server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+		_ = conn.WriteJSON(protocol.WSMessage{
+			Type:            protocol.MessageTypeRegistered,
+			ProtocolVersion: protocol.CurrentProtocolVersion,
+			Capabilities:    []string{protocol.CapabilityInvocationContextV1},
+		})
+		var bind protocol.WSMessage
+		if conn.ReadJSON(&bind) != nil {
+			return
+		}
+		writer, err := conn.NextWriter(websocket.TextMessage)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		writerClosed := false
+		defer func() {
+			if !writerClosed {
+				_ = writer.Close()
+			}
+		}()
+		prefix := `{"type":"invoke","action":"echo","__sekiro_seq__":"seq-large","group":"g","clientId":"c","trace_id":"trace-large","__rpc_context__":{"sequence":"seq-large","trace_id":"trace-large","group":"g","action":"echo","client_id":"c","deadline_unix_ms":4102444800000,"idempotent":false,"idempotency_key":"","attempt":1},"padding":"`
+		if _, err := io.WriteString(writer, prefix); err != nil {
+			serverResult <- err
+			return
+		}
+		chunk := make([]byte, 64*1024)
+		for i := range chunk {
+			chunk[i] = 'x'
+		}
+		written := len(prefix)
+		for written <= clientReadLimit {
+			if _, err := writer.Write(chunk); err != nil {
+				serverResult <- err
+				return
+			}
+			written += len(chunk)
+		}
+		if _, err := io.WriteString(writer, `"}`); err != nil {
+			serverResult <- err
+			return
+		}
+		if err := writer.Close(); err != nil {
+			serverResult <- err
+			return
+		}
+		writerClosed = true
+		_, _, readErr := conn.ReadMessage()
+		serverResult <- readErr
+	})
+	defer server.Close()
+
+	client, err := NewRpcClientURL("g", "c", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RegisterAction("echo", func(map[string]interface{}) (interface{}, error) {
+		handlerCalls.Add(1)
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Destroy(1)
+
+	select {
+	case err := <-serverResult:
+		if err == nil {
+			t.Fatal("server read unexpectedly succeeded after oversize frame")
+		}
+		if closeErr, ok := err.(*websocket.CloseError); ok && closeErr.Code != websocket.CloseMessageTooBig {
+			t.Fatalf("server close code = %d, want %d", closeErr.Code, websocket.CloseMessageTooBig)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("oversize frame did not close the connection")
+	}
+	if got := handlerCalls.Load(); got != 0 {
+		t.Fatalf("handler calls = %d, want 0", got)
+	}
+}
+
 func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
