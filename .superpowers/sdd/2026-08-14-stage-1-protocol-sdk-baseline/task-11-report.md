@@ -66,3 +66,23 @@ Artifact directories are ignored and are not committed. `artifacts/stage1-impact
 - The Python normalization is intentionally local to the artifact builder because the upstream setuptools sdist metadata is timestamped; source package contents are preserved while archive metadata is made deterministic.
 - Review fix: the builder now rejects every existing reparse-point segment from `artifacts/` through the selected output before creating, deleting, or building anything. A real junction-to-temp regression preserved its external sentinel and passed.
 - Review fix: the Xposed local-JAR example now resolves `artifacts/sdk` from the sample's Gradle `rootProject`.
+
+## Branch review fix — SDK lifecycle, context boundary, and deletion TOCTOU
+
+### Implementation
+
+- Reworked the Go SDK heartbeat loop to select on the lifecycle context and expose a per-start completion channel. `Destroy` now waits for both reader and heartbeat completion within its existing wait budget.
+- Added strict wire-boundary validation for exactly nine invocation-context fields, exact string/bool/number types, non-negative finite integer deadline/attempt values within representable bounds, and top-level identity matching. Invalid frames receive one status `-1` response and never enter the handler queue.
+- Added a deterministic artifact deletion race hook and regression: after the initial path check, the test replaces the output directory with a junction before release; the builder performs its immediately-adjacent reparse check, rejects the path, and preserves the external sentinel.
+
+### RED / GREEN
+
+- RED: before the heartbeat seam existed, `go test -race ./pkg/client/sdk/... -count=1` failed to compile because `RpcClient` had no observable heartbeat completion channel.
+- RED: before context validation was wired into `handleMessage`, the invalid-context table reached the handler/returned status `0` instead of the required single status `-1` response (the old tests also used incomplete contexts).
+- GREEN: with the lifecycle/context changes, portable clang/CGO `go test -race ./pkg/client/sdk/... -count=1` passed (`ok .../pkg/client/sdk 1.785s`).
+- GREEN: `powershell -NoProfile -File scripts/test-build-sdk-artifacts.ps1` passed both `Artifact output path safety checks passed.` and `Artifact TOCTOU reparse safety check passed.`; the race replacement was rejected with a reparse-point error and the external sentinel remained.
+- GREEN: `git diff --check` passed. A no-CGO race invocation was also attempted and correctly reported the toolchain prerequisite (`-race requires cgo`); it was not counted as a test result.
+
+### Files and concerns
+
+Changed source/tests: `pkg/client/sdk/client.go`, `pkg/client/sdk/client_test.go`, `scripts/build-sdk-artifacts.ps1`, and `scripts/test-build-sdk-artifacts.ps1`. The completion channel is intentionally an internal test seam; no public API changed. Artifact tests create and remove only their unique junction/temp paths.

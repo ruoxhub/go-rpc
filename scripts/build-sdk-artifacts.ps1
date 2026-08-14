@@ -55,6 +55,17 @@ function Test-ArtifactPathNoReparse {
 # Check every existing segment before creating the temp directory or touching output.
 Test-ArtifactPathNoReparse $artifactsRoot $outputPath
 
+if ($env:RPC_ARTIFACT_TEST_BEFORE_DELETE_MARKER) {
+    [IO.File]::WriteAllText($env:RPC_ARTIFACT_TEST_BEFORE_DELETE_MARKER, "checked")
+    $releaseDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while (-not (Test-Path -LiteralPath $env:RPC_ARTIFACT_TEST_BEFORE_DELETE_RELEASE)) {
+        if ([DateTime]::UtcNow -gt $releaseDeadline) {
+            throw "artifact test release signal timed out"
+        }
+        Start-Sleep -Milliseconds 25
+    }
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("go-rpc-stage1-sdk-" + [Guid]::NewGuid().ToString("N"))
 $javaProjectCache = Join-Path $tempRoot "java-project-cache"
 $xposedProjectCache = Join-Path $tempRoot "xposed-project-cache"
@@ -104,6 +115,7 @@ try {
 
     # This is the exact validated target; no repository-wide cleanup is used.
     if (Test-Path -LiteralPath $outputPath) {
+        Test-ArtifactPathNoReparse $artifactsRoot $outputPath
         Remove-Item -LiteralPath $outputPath -Recurse -Force
     }
     New-Item -ItemType Directory -Path $outputPath -Force | Out-Null

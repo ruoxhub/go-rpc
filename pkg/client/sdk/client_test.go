@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -48,7 +49,7 @@ func TestRpcClientWebSocket(t *testing.T) {
 			"group":           "g space",
 			"clientId":        "c/client",
 			"trace_id":        "trace-1",
-			"__rpc_context__": map[string]interface{}{"sequence": "seq-1", "trace_id": "trace-1", "group": "g space", "action": "echo", "client_id": "c/client", "deadline_unix_ms": deadline, "attempt": 1},
+			"__rpc_context__": map[string]interface{}{"sequence": "seq-1", "trace_id": "trace-1", "group": "g space", "action": "echo", "client_id": "c/client", "deadline_unix_ms": deadline, "idempotent": false, "idempotency_key": "", "attempt": 1},
 		})
 		var response map[string]interface{}
 		if err := conn.ReadJSON(&response); err != nil {
@@ -110,8 +111,8 @@ func TestRpcClientRawFallbackDoesNotBase64Encode(t *testing.T) {
 		var bind protocol.WSMessage
 		_ = conn.ReadJSON(&bind)
 		_ = conn.WriteJSON(map[string]interface{}{
-			"type": "invoke", "action": "raw", "__sekiro_seq__": "seq-raw", "group": "g", "clientId": "c",
-			"__rpc_context__": map[string]interface{}{"sequence": "seq-raw", "action": "raw", "group": "g", "client_id": "c"},
+			"type": "invoke", "action": "raw", "__sekiro_seq__": "seq-raw", "group": "g", "clientId": "c", "trace_id": "trace-seq-raw",
+			"__rpc_context__": validSDKContext("seq-raw", "raw"),
 		})
 		var response map[string]interface{}
 		if err := conn.ReadJSON(&response); err == nil {
@@ -395,6 +396,96 @@ func TestRpcClientDispatchCapacityAndDestroyCancellation(t *testing.T) {
 	client.Destroy(1)
 }
 
+func TestRpcClientHeartbeatStopsAfterDestroy(t *testing.T) {
+	server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+		_ = conn.WriteJSON(protocol.WSMessage{Type: protocol.MessageTypeRegistered, ProtocolVersion: 1, Capabilities: []string{protocol.CapabilityInvocationContextV1}})
+		var bind protocol.WSMessage
+		_ = conn.ReadJSON(&bind)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+	defer server.Close()
+	client, err := NewRpcClientURL("g", "c", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := client.heartbeatDone
+	client.Destroy(1)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat loop did not stop after destroy")
+	}
+}
+
+func TestRpcClientRejectsInvalidInvocationContexts(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(map[string]interface{})
+	}{
+		{name: "missing field", mutate: func(ctx map[string]interface{}) { delete(ctx, "attempt") }},
+		{name: "extra field", mutate: func(ctx map[string]interface{}) { ctx["extra"] = true }},
+		{name: "wrong type", mutate: func(ctx map[string]interface{}) { ctx["idempotent"] = 1 }},
+		{name: "numeric field bool", mutate: func(ctx map[string]interface{}) { ctx["attempt"] = true }},
+		{name: "negative deadline", mutate: func(ctx map[string]interface{}) { ctx["deadline_unix_ms"] = int64(-1) }},
+		{name: "deadline overflow", mutate: func(ctx map[string]interface{}) { ctx["deadline_unix_ms"] = math.MaxFloat64 }},
+		{name: "top level mismatch", mutate: func(ctx map[string]interface{}) { ctx["group"] = "other" }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			responseCh := make(chan map[string]interface{}, 1)
+			server := newSDKWebSocketServer(t, func(_ *http.Request, conn *websocket.Conn) {
+				_ = conn.WriteJSON(protocol.WSMessage{Type: protocol.MessageTypeRegistered, ProtocolVersion: 1, Capabilities: []string{protocol.CapabilityInvocationContextV1}})
+				var bind protocol.WSMessage
+				if conn.ReadJSON(&bind) != nil {
+					return
+				}
+				ctx := validSDKContext("seq-invalid", "echo")
+				tc.mutate(ctx)
+				message := map[string]interface{}{"type": "invoke", "action": "echo", "__sekiro_seq__": "seq-invalid", "group": "g", "clientId": "c", "trace_id": "trace-invalid", "__rpc_context__": ctx}
+				_ = conn.WriteJSON(message)
+				var response map[string]interface{}
+				if conn.ReadJSON(&response) == nil {
+					responseCh <- response
+				}
+			})
+			defer server.Close()
+			client, err := NewRpcClientURL("g", "c", server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var calls atomic.Int32
+			if err := client.RegisterActionContext("echo", func(context.Context, protocol.WireInvocationContext, map[string]interface{}) (interface{}, error) {
+				calls.Add(1)
+				return "unexpected", nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := client.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer client.Destroy(1)
+			select {
+			case response := <-responseCh:
+				if response["status"] != float64(-1) || response["__sekiro_seq__"] != "seq-invalid" {
+					t.Fatalf("invalid context response = %#v", response)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for invalid context response")
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("handler calls = %d, want 0", calls.Load())
+			}
+		})
+	}
+}
+
 func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
@@ -410,14 +501,19 @@ func newSDKWebSocketServer(t *testing.T, handler func(*http.Request, *websocket.
 }
 
 func writeSDKInvoke(conn *websocket.Conn, action, sequence string) {
+	ctx := validSDKContext(sequence, action)
 	_ = conn.WriteJSON(map[string]interface{}{
-		"type":            "invoke",
-		"action":          action,
-		"__sekiro_seq__":  sequence,
-		"group":           "g",
-		"clientId":        "c",
-		"__rpc_context__": map[string]interface{}{"sequence": sequence, "action": action, "group": "g", "client_id": "c"},
+		"type":           "invoke",
+		"action":         action,
+		"__sekiro_seq__": sequence,
+		"group":          "g",
+		"clientId":       "c",
+		"trace_id":       "trace-" + sequence, "__rpc_context__": ctx,
 	})
+}
+
+func validSDKContext(sequence, action string) map[string]interface{} {
+	return map[string]interface{}{"sequence": sequence, "trace_id": "trace-" + sequence, "group": "g", "action": action, "client_id": "c", "deadline_unix_ms": time.Now().Add(time.Minute).UnixMilli(), "idempotent": false, "idempotency_key": "", "attempt": 1}
 }
 
 func TestRpcClientURLConversion(t *testing.T) {

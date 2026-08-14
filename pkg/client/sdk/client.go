@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -81,6 +82,7 @@ type RpcClient struct {
 	destroyed       bool
 	closed          bool
 	heartbeat       *time.Ticker
+	heartbeatDone   chan struct{}
 	readerDone      chan struct{}
 	lifecycleCtx    context.Context
 	lifecycleCancel context.CancelFunc
@@ -261,6 +263,7 @@ func (c *RpcClient) Start() error {
 	}
 	c.readerDone = make(chan struct{})
 	c.heartbeat = time.NewTicker(heartbeatPeriod)
+	c.heartbeatDone = make(chan struct{})
 	c.lifecycleCtx, c.lifecycleCancel = context.WithCancel(context.Background())
 	// ponytail: one worker and one queued slot bound Stage 1 dispatch leakage; Stage 3 can replace this with a cancellable scheduler.
 	c.dispatchQueue = make(chan dispatchJob, 1)
@@ -271,7 +274,8 @@ func (c *RpcClient) Start() error {
 	dispatchQueue := c.dispatchQueue
 	dispatchDone := c.dispatchDone
 	go c.readLoop(conn, readerDone)
-	go c.heartbeatLoop(conn, ticker)
+	heartbeatDone := c.heartbeatDone
+	go c.heartbeatLoop(conn, ticker, lifecycleCtx, heartbeatDone)
 	go c.dispatchLoop(lifecycleCtx, dispatchQueue, dispatchDone)
 	return nil
 }
@@ -314,15 +318,21 @@ func (c *RpcClient) dispatchLoop(ctx context.Context, queue <-chan dispatchJob, 
 	}
 }
 
-func (c *RpcClient) heartbeatLoop(conn *websocket.Conn, ticker *time.Ticker) {
-	for range ticker.C {
-		c.writeMu.Lock()
-		if c.closed {
-			c.writeMu.Unlock()
+func (c *RpcClient) heartbeatLoop(conn *websocket.Conn, ticker *time.Ticker, ctx context.Context, done chan struct{}) {
+	defer close(done)
+	for {
+		select {
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			c.writeMu.Lock()
+			if c.closed {
+				c.writeMu.Unlock()
+				return
+			}
+			_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
+			c.writeMu.Unlock()
 		}
-		_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(5*time.Second))
-		c.writeMu.Unlock()
 	}
 }
 
@@ -359,6 +369,10 @@ func (c *RpcClient) handleMessage(conn *websocket.Conn, payload []byte) {
 		_ = c.writeResponse(conn, sequence, group, clientID, traceID, nil, errors.New("invoke context is required"))
 		return
 	}
+	if err := validateInvocationContext(contextRaw, sequence, traceID, group, action, clientID); err != nil {
+		_ = c.writeResponse(conn, sequence, group, clientID, traceID, nil, err)
+		return
+	}
 	contextBytes, err := json.Marshal(contextRaw)
 	if err != nil {
 		_ = c.writeResponse(conn, sequence, group, clientID, traceID, nil, err)
@@ -374,6 +388,42 @@ func (c *RpcClient) handleMessage(conn *websocket.Conn, payload []byte) {
 		conn: conn, sequence: sequence, group: group, clientID: clientID, traceID: traceID,
 		wire: wire, request: request, payload: payload, action: action,
 	})
+}
+
+func validateInvocationContext(raw interface{}, sequence, traceID, group, action, clientID string) error {
+	value, ok := raw.(map[string]interface{})
+	if !ok || len(value) != 9 {
+		return errors.New("invoke context must contain exactly nine fields")
+	}
+	required := []string{"sequence", "trace_id", "group", "action", "client_id", "deadline_unix_ms", "idempotent", "idempotency_key", "attempt"}
+	for _, key := range required {
+		if _, ok := value[key]; !ok {
+			return fmt.Errorf("invoke context field %s is required", key)
+		}
+	}
+	stringFields := map[string]string{"sequence": sequence, "trace_id": traceID, "group": group, "action": action, "client_id": clientID}
+	for key, expected := range stringFields {
+		got, ok := value[key].(string)
+		if !ok || got != expected {
+			return fmt.Errorf("invoke context field %s does not match top-level invoke", key)
+		}
+	}
+	if _, ok := value["idempotency_key"].(string); !ok {
+		return errors.New("invoke context idempotency_key must be a string")
+	}
+	if _, ok := value["idempotent"].(bool); !ok {
+		return errors.New("invoke context idempotent must be a boolean")
+	}
+	deadline, ok := value["deadline_unix_ms"].(float64)
+	if !ok || math.IsNaN(deadline) || math.IsInf(deadline, 0) || deadline < 0 || math.Trunc(deadline) != deadline || deadline >= float64(math.MaxInt64) {
+		return errors.New("invoke context deadline_unix_ms must be a non-negative integer")
+	}
+	attempt, ok := value["attempt"].(float64)
+	maxInt := float64(int64(^uint(0) >> 1))
+	if !ok || math.IsNaN(attempt) || math.IsInf(attempt, 0) || attempt < 0 || math.Trunc(attempt) != attempt || attempt >= maxInt {
+		return errors.New("invoke context attempt must be a non-negative integer")
+	}
+	return nil
 }
 
 func (c *RpcClient) enqueueInvoke(job dispatchJob) {
@@ -512,6 +562,7 @@ func (c *RpcClient) Destroy(waitSeconds int64) {
 	c.started = false
 	conn := c.conn
 	done := c.readerDone
+	heartbeatDone := c.heartbeatDone
 	cancel := c.lifecycleCancel
 	if c.heartbeat != nil {
 		c.heartbeat.Stop()
@@ -524,14 +575,23 @@ func (c *RpcClient) Destroy(waitSeconds int64) {
 		cancel()
 	}
 	c.closeSocket(conn)
-	if done == nil || waitSeconds <= 0 {
+	if (done == nil && heartbeatDone == nil) || waitSeconds <= 0 {
 		return
 	}
 	timer := time.NewTimer(time.Duration(waitSeconds) * time.Second)
 	defer timer.Stop()
-	select {
-	case <-done:
-	case <-timer.C:
+	if done != nil {
+		select {
+		case <-done:
+		case <-timer.C:
+			return
+		}
+	}
+	if heartbeatDone != nil {
+		select {
+		case <-heartbeatDone:
+		case <-timer.C:
+		}
 	}
 }
 
