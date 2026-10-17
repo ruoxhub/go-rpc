@@ -15,22 +15,31 @@ function GroupDetail() {
   const [editing, setEditing] = useState(false)
   const [qpsForm] = Form.useForm()
 
-  // 加载分组详情
-  const loadGroupDetail = async () => {
-    setLoading(true)
+  // 加载分组详情（支持 silent 静默轮询）
+  const loadGroupDetail = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const result = await groupApi.getDetail(groupName)
       setGroupInfo(result.data)
     } catch (error) {
-      message.error('加载分组详情失败：' + (error.message || '未知错误'))
+      if (!silent) {
+        message.error('加载分组详情失败：' + (error.message || '未知错误'))
+      }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
   useEffect(() => {
     loadGroupDetail()
-  }, [groupName])
+    const timer = setInterval(() => {
+      // 若当前正在编辑 QPS 表单，暂缓静默覆盖
+      if (!editing) {
+        loadGroupDetail(true)
+      }
+    }, 5000)
+    return () => clearInterval(timer)
+  }, [groupName, editing])
 
   const handleEditQps = () => {
     setEditing(true)
@@ -90,9 +99,6 @@ function GroupDetail() {
                 <Descriptions.Item label="创建时间">{groupInfo.createTime}</Descriptions.Item>
                 <Descriptions.Item label="在线客户端数量">
                   <span style={{ color: '#52c41a' }}>{groupInfo.availableClients}</span>
-                </Descriptions.Item>
-                <Descriptions.Item label="禁用客户端数量">
-                  <span style={{ color: '#ff4d4f' }}>{groupInfo.disabledClients}</span>
                 </Descriptions.Item>
                 <Descriptions.Item label="QPS 限制">
                   <Space>

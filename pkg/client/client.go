@@ -30,6 +30,7 @@ type RpcClient struct {
 	writeMu         sync.Mutex
 	protocolVersion int
 	capabilities    map[string]struct{}
+	executorType    string
 }
 
 // SetProtocol stores the negotiated protocol metadata.
@@ -154,4 +155,18 @@ func (c *RpcClient) GetFailCount() int {
 // SetCircuitBreakerCallback sets a callback for circuit breaker state changes.
 func (c *RpcClient) SetCircuitBreakerCallback(fn func(from, to CircuitState)) {
 	c.cb.OnStateChange = fn
+}
+
+// SetExecutorType sets the executor type of the client (e.g., "browser", "python").
+func (c *RpcClient) SetExecutorType(executorType string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.executorType = executorType
+}
+
+// GetExecutorType returns the executor type of the client.
+func (c *RpcClient) GetExecutorType() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.executorType
 }

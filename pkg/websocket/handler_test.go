@@ -679,6 +679,7 @@ func (m *mockGroupRepo) UpdateDevice(string, string, map[string]interface{}) err
 }
 func (m *mockGroupRepo) DeleteDevice(string, string) error { return nil }
 func (m *mockGroupRepo) DeleteDevicesByGroup(string) error { return nil }
+func (m *mockGroupRepo) DeleteOfflineDevicesByGroup(string, time.Time) (int64, error) { return 0, nil }
 func (m *mockGroupRepo) CountOnlineDevices(string) (int64, error) {
 	return 0, nil
 }
@@ -698,12 +699,8 @@ func (m *mockGroupRepo) UpdateActionParams(string, string, string) error {
 }
 func (m *mockGroupRepo) DeleteAction(string, string) error { return nil }
 func (m *mockGroupRepo) DeleteActionsByGroup(string) error { return nil }
-func (m *mockGroupRepo) FindAnonymousDeviceGroups(string) ([]repository.AnonymousGroupStats, error) {
-	return nil, nil
-}
-func (m *mockGroupRepo) IsAnonymousGroup(string) (bool, error) { return false, nil }
-func (m *mockGroupRepo) DeleteAnonymousGroupDevices(string) (int64, error) {
-	return 0, nil
+func (m *mockGroupRepo) EnsureGroup(groupName string, userName string) (*model.GroupConfig, error) {
+	return &model.GroupConfig{GroupName: groupName, UserName: userName}, nil
 }
 func (m *mockGroupRepo) EnsureDefaultActions(string) error { return nil }
 func (m *mockGroupRepo) UpsertDevice(*model.GroupDevice) error {
@@ -786,30 +783,26 @@ func TestProcessMessage_HeartbeatResponse(t *testing.T) {
 	}
 }
 
-func TestHandleBind_AnonymousGroupSkips(t *testing.T) {
+func TestHandleBind_ActionSync(t *testing.T) {
 	manager := client.NewClientManager()
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
 
-	// No groups are registered in the mock repo
 	mockRepo := &mockGroupRepo{
-		registeredGroups: map[string]bool{},
+		registeredGroups: map[string]bool{"test-group": true},
 	}
 
 	handler := NewHandler(manager, timeoutMgr, nil, nil, mockRepo)
 	defer handler.Shutdown()
 
-	sekiroClient := client.NewRpcClient("anonymous-group", "client-1", nil)
+	sekiroClient := client.NewRpcClient("test-group", "client-1", nil)
 
 	msg := &RpcMessage{
 		Type:    MessageTypeBind,
-		Group:   "anonymous-group",
+		Group:   "test-group",
 		Actions: []string{"action1", "action2"},
 	}
 
-	// Must not panic and must skip DB writes for unregistered group
 	handler.handleBind(sekiroClient, msg)
-	// If we reach here without panic, the anonymous group was correctly skipped.
-	// The mock repo's CreateAction was never called because IsGroupRegistered returned false.
 }
 
 func TestHandleInvokeStream_MissingSequence(t *testing.T) {
@@ -831,5 +824,67 @@ func TestHandleInvokeStream_MissingSequence(t *testing.T) {
 	// No stream should be registered in the timeout manager
 	if timeoutMgr.StreamCount() != 0 {
 		t.Errorf("Expected 0 streams after missing-sequence chunk, got %d", timeoutMgr.StreamCount())
+	}
+}
+
+func TestHandleConnection_WithExecutorType(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	serverConn, clientConn, _ := newHandlerWebSocketPair(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		handler.HandleConnectionWithRegistration(ctx, serverConn, "group-exec", "client-exec", protocol.Registration{
+			ProtocolVersion: protocol.CurrentProtocolVersion,
+			Capabilities:    []string{protocol.CapabilityInvocationContextV1},
+			ExecutorType:    "browser",
+		})
+		close(done)
+	}()
+
+	// 读取注册响应
+	_, _, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read message: %v", err)
+	}
+
+	c := manager.GetClient("group-exec", "client-exec")
+	if c == nil {
+		t.Fatal("expected client to be registered")
+	}
+	if c.GetExecutorType() != "browser" {
+		t.Fatalf("expected executor_type browser, got %s", c.GetExecutorType())
+	}
+
+	clientConn.Close()
+	cancel()
+	<-done
+}
+
+func TestHandleBind_WithExecutorType(t *testing.T) {
+	manager := client.NewClientManager()
+	timeoutMgr := forwarder.NewTimeoutManager(nil)
+	handler := NewHandler(manager, timeoutMgr, nil, nil, nil)
+	defer handler.Shutdown()
+
+	sekiroClient := client.NewRpcClient("test-group", "client-bind", nil)
+	manager.Register(sekiroClient)
+
+	msg := &RpcMessage{
+		Type:         MessageTypeBind,
+		Group:        "test-group",
+		ExecutorType: "python",
+		Actions:      []string{"action1"},
+	}
+
+	handler.handleBind(sekiroClient, msg)
+
+	if sekiroClient.GetExecutorType() != "python" {
+		t.Fatalf("expected executor_type python, got %s", sekiroClient.GetExecutorType())
 	}
 }

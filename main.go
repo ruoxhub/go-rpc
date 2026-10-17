@@ -15,11 +15,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/internal/config"
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/alert"
 	"github.com/mrh30000/go-rpc/pkg/client"
-	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
+	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/deps"
@@ -28,7 +26,9 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/handler"
 	"github.com/mrh30000/go-rpc/pkg/metrics"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
+	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/protocol"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 	webui "github.com/mrh30000/go-rpc/web"
 	"gorm.io/gorm"
@@ -107,7 +107,7 @@ type Server struct {
 	timeoutManager   *forwarder.TimeoutManager
 	metricsCollector metrics.MetricCollector
 	alertEvaluator   *alert.Evaluator
-	configService    pkgconfig.Service
+	configService    config.Service
 	groupRepo        repository.GroupRepository
 	authMW           *middleware.AuthMiddleware
 	db               *gorm.DB
@@ -116,19 +116,19 @@ type Server struct {
 	wsCancel context.CancelFunc
 }
 
-func NewServer(config *Config) *Server {
+func NewServer(cfg *Config) *Server {
 	wsCtx, wsCancel := context.WithCancel(context.Background())
 	eb := eventbus.New()
 	cm := client.NewClientManager()
 	cm.SetEventBus(eb)
 
 	return &Server{
-		config:         config,
+		config:         cfg,
 		shutdown:       make(chan struct{}),
 		eventBus:       eb,
 		clientManager:  cm,
 		timeoutManager: forwarder.NewTimeoutManager(nil),
-		configService:  pkgconfig.NewService(),
+		configService:  config.NewService(),
 		wsCtx:          wsCtx,
 		wsCancel:       wsCancel,
 	}
@@ -525,18 +525,6 @@ func (s *Server) registerRoutes() {
 		handler.SetupWebRoutes(s.httpServer.Engine(), webDeps, s.alertEvaluator, s.configService)
 	}
 
-	v1 := s.optionalAuthGroup("/v1")
-	{
-		v1.POST("/chat/completions", s.apiHandler.HandleChatCompletions)
-	}
-
-	// /api/* OpenAI-compatible surface for provider-specific routing.
-	// Currently routes /api/chat/completions to the qwenai browser-extension provider.
-	apiGroup := s.optionalAuthGroup("/api")
-	{
-		apiGroup.POST("/chat/completions", s.apiHandler.HandleQwenChatCompletions)
-	}
-
 	rpcAPI := s.httpServer.Group("/rpc-api")
 	rpcAPI.Use(func(c *gin.Context) {
 		c.Set("configService", s.configService)
@@ -566,7 +554,6 @@ func (s *Server) registerRoutes() {
 			frontend := rpcAPI.Group("/frontend")
 			{
 				frontend.GET("/listGroup", handler.HandleFrontendListGroup)
-				frontend.GET("/anonymousGroupList", handler.HandleFrontendAnonymousGroupList)
 				frontend.GET("/groupDetail", handler.HandleFrontendGroupDetail)
 			}
 		}
@@ -618,8 +605,11 @@ func negotiateSubprotocol(c *gin.Context) http.Header {
 }
 
 func (s *Server) negotiateRegistration(c *gin.Context) (protocol.Registration, bool) {
+	executorType := strings.TrimSpace(c.Query("executor_type"))
 	if s.serverConfig == nil || !s.serverConfig.CapabilityNegotiation {
-		return protocol.LegacyRegistration(), true
+		reg := protocol.LegacyRegistration()
+		reg.ExecutorType = executorType
+		return reg, true
 	}
 	registration, err := protocol.NegotiateRegistration(
 		c.Query("protocol_version"),
@@ -634,6 +624,7 @@ func (s *Server) negotiateRegistration(c *gin.Context) (protocol.Registration, b
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return protocol.Registration{}, false
 	default:
+		registration.ExecutorType = executorType
 		return registration, true
 	}
 }
@@ -678,7 +669,7 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 
 	// 1) 全局 IP 白名单优先：命中即放行，跳过一切 DB 查询与 token/子协议校验。
 	if s.configService != nil {
-		if globalIPs := s.configService.GetConfig(pkgconfig.ConfigKeyAllowedIPs); globalIPs != "" {
+		if globalIPs := s.configService.GetConfig(config.ConfigKeyAllowedIPs); globalIPs != "" {
 			if middleware.IPInList(c.ClientIP(), globalIPs) {
 				return true
 			}
@@ -700,41 +691,50 @@ func (s *Server) authorizeRegisterAccess(c *gin.Context, groupName string) bool 
 		})
 		return false
 	}
-	if group == nil {
-		// Anonymous / unregistered group: only allow when anonymous access is enabled.
-		if s.configService != nil && !s.configService.GetConfigBool(pkgconfig.ConfigKeyAllowAnonymousAccess, true) {
-			c.JSON(http.StatusForbidden, gin.H{
-				"error": "anonymous group registration is disabled",
-			})
-			return false
-		}
-		return true
-	}
-
 	// 2) 子协议鉴权（隐蔽）：Sec-WebSocket-Protocol: sekiro-auth.<token>。
 	// 3) 标准鉴权：Authorization Bearer / sekiro-token header / query / form。
 	token := middleware.ExtractTokenFromSubprotocol(c)
 	if token == "" {
 		token = middleware.ExtractAuthTokenFromRequest(c, false)
 	}
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "registered group requires a valid rpc token",
-		})
-		return false
+
+	var user *model.UserInfo
+	if token != "" {
+		resolved, err := s.authMW.FindUserByToken(token)
+	if err == nil {
+			user = resolved
+		}
 	}
-	user, err := s.authMW.FindUserByToken(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"error": "registered group requires a valid rpc token",
-		})
-		return false
+
+	if group == nil {
+		owner := ""
+		if user != nil {
+			owner = user.UserName
+		}
+		newGroup, err := s.groupRepo.EnsureGroup(groupName, owner)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "failed to register group",
+			})
+			return false
+		}
+		s.authMW.InvalidateGroup(groupName)
+		group = newGroup
 	}
-	if !user.IsAdmin && user.UserName != group.UserName {
-		c.JSON(http.StatusForbidden, gin.H{
-			"error": "no access to registered group",
-		})
-		return false
+
+	if group.UserName != "" {
+		if user == nil {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error": "registered group requires a valid rpc token",
+			})
+			return false
+		}
+		if !user.IsAdmin && user.UserName != group.UserName {
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "no access to registered group",
+			})
+			return false
+		}
 	}
 
 	return true

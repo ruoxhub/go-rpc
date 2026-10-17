@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/utils/traceid"
 	"go.uber.org/zap"

@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
@@ -12,13 +14,18 @@ import (
 
 // GroupHandler 分组管理处理器
 type GroupHandler struct {
-	groupRepo repository.GroupRepository
-	authMW    *middleware.AuthMiddleware
+	groupRepo     repository.GroupRepository
+	authMW        *middleware.AuthMiddleware
+	clientManager *client.ClientManager
 }
 
 // NewGroupHandler 创建分组处理器
-func NewGroupHandler(groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware) *GroupHandler {
-	return &GroupHandler{groupRepo: groupRepo, authMW: authMW}
+func NewGroupHandler(groupRepo repository.GroupRepository, authMW *middleware.AuthMiddleware, clientManager *client.ClientManager) *GroupHandler {
+	return &GroupHandler{
+		groupRepo:     groupRepo,
+		authMW:        authMW,
+		clientManager: clientManager,
+	}
 }
 
 type GroupInfoVO struct {
@@ -43,7 +50,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 		return
 	}
 
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	activeThreshold := time.Now().UTC().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := h.groupRepo.GetGroupStats(user.UserName, user.IsAdmin, activeThreshold)
 	if err != nil {
 		InternalError(c, err.Error())
@@ -52,6 +59,18 @@ func (h *GroupHandler) List(c *gin.Context) {
 
 	vos := make([]GroupInfoVO, 0, len(stats))
 	for _, s := range stats {
+		availableClients := s.AvailableClients
+		if h.clientManager != nil {
+			activeCutoff := time.Now().Add(-ClientInactiveThreshold)
+			var memOnline int64
+			for _, cl := range h.clientManager.GetClientsByGroup(s.GroupName) {
+				if cl != nil && cl.GetStatus() == client.StatusOnline && cl.GetLastActive().After(activeCutoff) {
+					memOnline++
+				}
+			}
+			availableClients = memOnline
+		}
+
 		vos = append(vos, GroupInfoVO{
 			ID:                  s.ID,
 			GroupName:           s.GroupName,
@@ -59,9 +78,9 @@ func (h *GroupHandler) List(c *gin.Context) {
 			QuotaQpsGroup:       s.QuotaQpsGroup,
 			QuotaQpsPerDevice:   s.QuotaQpsPerDevice,
 			CreateTime:          s.CreateDate,
-			AvailableClients:    s.AvailableClients,
+			AvailableClients:    availableClients,
 			DisabledClients:     s.DisabledClients,
-			AvailableClientSize: s.AvailableClients,
+			AvailableClientSize: availableClients,
 			DisableClientSize:   s.DisabledClients,
 		})
 	}
@@ -130,18 +149,9 @@ type DeleteGroupRequest struct {
 	GroupName string `json:"groupName" binding:"required"`
 }
 
-// Delete 删除分组
-func (h *GroupHandler) Delete(c *gin.Context) {
-	var req DeleteGroupRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		BadRequest(c, err.Error())
-		return
-	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
-		return
-	}
-
-	txRepo := h.groupRepo.BeginTx()
+// deleteGroupCascade 在独立事务中删除分组的设备、Action 与分组记录。
+func deleteGroupCascade(repo repository.GroupRepository, groupName string) error {
+	txRepo := repo.BeginTx()
 	committed := false
 	defer func() {
 		if !committed {
@@ -153,27 +163,129 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 		name string
 		fn   func() error
 	}{
-		{"delete devices", func() error { return txRepo.DeleteDevicesByGroup(req.GroupName) }},
-		{"delete actions", func() error { return txRepo.DeleteActionsByGroup(req.GroupName) }},
-		{"delete group", func() error { return txRepo.DeleteGroup(req.GroupName) }},
+		{"delete devices", func() error { return txRepo.DeleteDevicesByGroup(groupName) }},
+		{"delete actions", func() error { return txRepo.DeleteActionsByGroup(groupName) }},
+		{"delete group", func() error { return txRepo.DeleteGroup(groupName) }},
 	}
 	for _, step := range steps {
 		if err := step.fn(); err != nil {
-			InternalError(c, step.name+": "+err.Error())
-			return
+			return fmt.Errorf("%s: %w", step.name, err)
 		}
 	}
 
 	if err := txRepo.Commit(); err != nil {
-		InternalError(c, "commit failed: "+err.Error())
-		return
+		return fmt.Errorf("commit failed: %w", err)
 	}
 	committed = true
+	return nil
+}
+
+// Delete 删除分组
+func (h *GroupHandler) Delete(c *gin.Context) {
+	var req DeleteGroupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
+		return
+	}
+
+	if err := deleteGroupCascade(h.groupRepo, req.GroupName); err != nil {
+		InternalError(c, err.Error())
+		return
+	}
 
 	h.authMW.InvalidateGroup(req.GroupName)
 
 	auditDeleteGroup(c, req.GroupName)
 	OK(c, nil)
+}
+
+// maxBatchGroups 单次批量操作的分组上限，避免一次请求打爆数据库。
+const maxBatchGroups = 100
+
+// BatchGroupFailure 批量操作中单个分组的失败明细。
+type BatchGroupFailure struct {
+	GroupName string `json:"groupName"`
+	Reason    string `json:"reason"`
+}
+
+// BatchGroupResult 批量操作的逐条结果。
+type BatchGroupResult struct {
+	Succeeded []string            `json:"succeeded"`
+	Failed    []BatchGroupFailure `json:"failed"`
+}
+
+// normalizeBatchGroupNames 去重并剔除空串，保留首次出现的顺序。
+func normalizeBatchGroupNames(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		result = append(result, name)
+	}
+	return result
+}
+
+// bindBatchGroupNames 解析并校验批量分组名列表，失败时已写出响应。
+func bindBatchGroupNames(c *gin.Context, raw []string) ([]string, bool) {
+	if _, ok := getAuthenticatedUser(c); !ok {
+		return nil, false
+	}
+	names := normalizeBatchGroupNames(raw)
+	if len(names) == 0 {
+		BadRequest(c, "groupNames 不能为空")
+		return nil, false
+	}
+	if len(names) > maxBatchGroups {
+		BadRequest(c, fmt.Sprintf("单次批量操作最多 %d 个分组", maxBatchGroups))
+		return nil, false
+	}
+	return names, true
+}
+
+// BatchDeleteGroupsRequest 批量删除分组请求
+type BatchDeleteGroupsRequest struct {
+	GroupNames []string `json:"groupNames" binding:"required,min=1"`
+}
+
+// BatchDelete 批量删除分组。逐条独立事务，部分失败不影响其余分组。
+func (h *GroupHandler) BatchDelete(c *gin.Context) {
+	var req BatchDeleteGroupsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+	names, ok := bindBatchGroupNames(c, req.GroupNames)
+	if !ok {
+		return
+	}
+
+	result := BatchGroupResult{Succeeded: []string{}, Failed: []BatchGroupFailure{}}
+	for _, name := range names {
+		if _, accessErr := checkGroupAccess(c, name, h.groupRepo); accessErr != nil {
+			result.Failed = append(result.Failed, BatchGroupFailure{GroupName: name, Reason: accessErr.message})
+			continue
+		}
+
+		if err := deleteGroupCascade(h.groupRepo, name); err != nil {
+			result.Failed = append(result.Failed, BatchGroupFailure{GroupName: name, Reason: err.Error()})
+			continue
+		}
+
+		h.authMW.InvalidateGroup(name)
+		auditDeleteGroup(c, name)
+		result.Succeeded = append(result.Succeeded, name)
+	}
+
+	OK(c, result)
 }
 
 // GetGroupDetail 获取分组详情
@@ -185,11 +297,22 @@ func (h *GroupHandler) GetDetail(c *gin.Context) {
 		return
 	}
 
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	activeThreshold := time.Now().UTC().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	available, disabled, err := h.groupRepo.GetGroupDeviceStats(groupName, activeThreshold)
 	if err != nil {
 		InternalError(c, err.Error())
 		return
+	}
+
+	if h.clientManager != nil {
+		activeCutoff := time.Now().Add(-ClientInactiveThreshold)
+		var memOnline int64
+		for _, cl := range h.clientManager.GetClientsByGroup(groupName) {
+			if cl != nil && cl.GetStatus() == client.StatusOnline && cl.GetLastActive().After(activeCutoff) {
+				memOnline++
+			}
+		}
+		available = memOnline
 	}
 
 	OK(c, gin.H{
@@ -240,6 +363,58 @@ func (h *GroupHandler) UpdateQps(c *gin.Context) {
 	OK(c, nil)
 }
 
+// BatchUpdateQpsRequest 批量更新分组 QPS 请求
+type BatchUpdateQpsRequest struct {
+	GroupNames        []string `json:"groupNames" binding:"required,min=1"`
+	QuotaQpsGroup     float64  `json:"quotaQpsGroup"`
+	QuotaQpsPerDevice float64  `json:"quotaQpsPerDevice"`
+}
+
+// BatchUpdateQps 批量更新分组 QPS 限制。逐条处理，部分失败不影响其余分组。
+func (h *GroupHandler) BatchUpdateQps(c *gin.Context) {
+	var req BatchUpdateQpsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		BadRequest(c, err.Error())
+		return
+	}
+
+	updates := make(map[string]interface{})
+	if req.QuotaQpsGroup > 0 {
+		updates["quota_qps_group"] = req.QuotaQpsGroup
+	}
+	if req.QuotaQpsPerDevice > 0 {
+		updates["quota_qps_per_device"] = req.QuotaQpsPerDevice
+	}
+	if len(updates) == 0 {
+		BadRequest(c, "quotaQpsGroup 与 quotaQpsPerDevice 至少提供一个大于 0 的值")
+		return
+	}
+
+	names, ok := bindBatchGroupNames(c, req.GroupNames)
+	if !ok {
+		return
+	}
+
+	result := BatchGroupResult{Succeeded: []string{}, Failed: []BatchGroupFailure{}}
+	for _, name := range names {
+		if _, accessErr := checkGroupAccess(c, name, h.groupRepo); accessErr != nil {
+			result.Failed = append(result.Failed, BatchGroupFailure{GroupName: name, Reason: accessErr.message})
+			continue
+		}
+
+		if err := h.groupRepo.UpdateGroup(name, updates); err != nil {
+			result.Failed = append(result.Failed, BatchGroupFailure{GroupName: name, Reason: err.Error()})
+			continue
+		}
+
+		h.authMW.InvalidateGroup(name)
+		auditUpdateQps(c, "group", name, req.QuotaQpsGroup)
+		result.Succeeded = append(result.Succeeded, name)
+	}
+
+	OK(c, result)
+}
+
 // GetGroupDevices 获取分组设备列表
 type DeviceInfoVO struct {
 	GroupName      string `json:"groupName"`
@@ -256,27 +431,47 @@ func (h *GroupHandler) GetDevices(c *gin.Context) {
 		return
 	}
 
-	devices, err := h.groupRepo.FindDevicesByGroup(groupName)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-
+	// 离线直接丢弃，只返回当前实时在线客户端
 	var vos []DeviceInfoVO
-	now := time.Now()
-	for _, d := range devices {
-		status := "offline"
-		if now.Sub(d.LastActiveTime) < ClientInactiveThreshold {
-			status = "online"
+	if h.clientManager != nil {
+		activeThreshold := time.Now().Add(-ClientInactiveThreshold)
+		clients := h.clientManager.GetClientsByGroup(groupName)
+		for _, cl := range clients {
+			if cl == nil {
+				continue
+			}
+			lastActive := cl.GetLastActive()
+			if cl.GetStatus() == client.StatusOnline && lastActive.After(activeThreshold) {
+				vos = append(vos, DeviceInfoVO{
+					GroupName:      groupName,
+					DeviceID:       cl.ClientID,
+					DeviceIP:       "",
+					RegisterTime:   lastActive.Format("2006-01-02 15:04:05"),
+					LastActiveTime: lastActive.Format("2006-01-02 15:04:05"),
+					Status:         "online",
+				})
+			}
 		}
-		vos = append(vos, DeviceInfoVO{
-			GroupName:      d.GroupName,
-			DeviceID:       d.DeviceID,
-			DeviceIP:       d.RemoteIP,
-			RegisterTime:   d.CreateDate.Format("2006-01-02 15:04:05"),
-			LastActiveTime: d.LastActiveTime.Format("2006-01-02 15:04:05"),
-			Status:         status,
-		})
+	} else if h.groupRepo != nil {
+		// 单测或无 clientManager 时的兜底
+		devices, err := h.groupRepo.FindDevicesByGroup(groupName)
+		if err != nil {
+			InternalError(c, err.Error())
+			return
+		}
+		now := time.Now()
+		for _, d := range devices {
+			if now.Sub(d.LastActiveTime) < ClientInactiveThreshold {
+				vos = append(vos, DeviceInfoVO{
+					GroupName:      d.GroupName,
+					DeviceID:       d.DeviceID,
+					DeviceIP:       d.RemoteIP,
+					RegisterTime:   d.CreateDate.Format("2006-01-02 15:04:05"),
+					LastActiveTime: d.LastActiveTime.Format("2006-01-02 15:04:05"),
+					Status:         "online",
+				})
+			}
+		}
 	}
 
 	OK(c, vos)
@@ -288,7 +483,7 @@ type DeleteDeviceRequest struct {
 	DeviceID  string `json:"deviceId" binding:"required"`
 }
 
-// DeleteDevice 删除设备
+// DeleteDevice 删除/下线设备
 func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 	var req DeleteDeviceRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -299,9 +494,14 @@ func (h *GroupHandler) DeleteDevice(c *gin.Context) {
 		return
 	}
 
-	if err := h.groupRepo.DeleteDevice(req.GroupName, req.DeviceID); err != nil {
-		InternalError(c, err.Error())
-		return
+	if h.clientManager != nil {
+		h.clientManager.Unregister(req.GroupName, req.DeviceID)
+	}
+	if h.groupRepo != nil {
+		if err := h.groupRepo.DeleteDevice(req.GroupName, req.DeviceID); err != nil {
+			InternalError(c, err.Error())
+			return
+		}
 	}
 
 	auditDeleteDevice(c, req.GroupName, req.DeviceID)
@@ -391,45 +591,18 @@ func (h *GroupHandler) DeleteAction(c *gin.Context) {
 	OK(c, nil)
 }
 
-// DisableDeviceRequest 禁用/启用设备请求
-type DisableDeviceRequest struct {
-	GroupName string `json:"groupName" binding:"required"`
-	DeviceID  string `json:"deviceId" binding:"required"`
-	Disable   bool   `json:"disable"` // true=禁用，false=启用
-}
-
-// DisableDevice 禁用/启用设备
-func (h *GroupHandler) DisableDevice(c *gin.Context) {
-	var req DisableDeviceRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		BadRequest(c, err.Error())
-		return
-	}
-	if _, ok := authorizeGroupAccess(c, req.GroupName, h.groupRepo); !ok {
-		return
-	}
-
-	device, err := h.groupRepo.FindDevice(req.GroupName, req.DeviceID)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-	if device == nil {
-		NotFound(c, "device not found")
-		return
-	}
-
-	activeTime := time.Now()
-	if req.Disable {
-		activeTime = activeTime.Add(-24 * time.Hour)
-	}
-	if err := h.groupRepo.UpdateDevice(req.GroupName, req.DeviceID, map[string]interface{}{
-		"last_active_time": activeTime,
-	}); err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-
-	auditDisableDevice(c, req.GroupName, req.DeviceID)
-	OK(c, nil)
+// registerGroupRoutes 注册分组管理路由。抽成独立函数便于对路由冲突做回归测试。
+func registerGroupRoutes(groups *gin.RouterGroup, h *GroupHandler) {
+	groups.GET("", h.List)
+	groups.POST("", h.Create)
+	groups.DELETE("", h.Delete)
+	groups.GET("/:groupName", h.GetDetail)
+	groups.PUT("/qps", h.UpdateQps)
+	groups.GET("/:groupName/devices", h.GetDevices)
+	groups.DELETE("/devices", h.DeleteDevice)
+	groups.GET("/:groupName/actions", h.GetActions)
+	groups.POST("/actions", h.AddAction)
+	groups.DELETE("/actions", h.DeleteAction)
+	groups.POST("/batch/delete", h.BatchDelete)
+	groups.PUT("/batch/qps", h.BatchUpdateQps)
 }

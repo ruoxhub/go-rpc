@@ -27,6 +27,7 @@ type Registration struct {
 	Legacy          bool
 	ProtocolVersion int
 	Capabilities    []string
+	ExecutorType    string
 }
 
 type WSMessageType string
@@ -71,6 +72,7 @@ type WSMessage struct {
 	TraceID         string                 `json:"trace_id,omitempty"`
 	ProtocolVersion int                    `json:"protocol_version,omitempty"`
 	Capabilities    []string               `json:"capabilities,omitempty"`
+	ExecutorType    string                 `json:"executor_type,omitempty"`
 	RPCContext      *WireInvocationContext `json:"__rpc_context__,omitempty"`
 }
 

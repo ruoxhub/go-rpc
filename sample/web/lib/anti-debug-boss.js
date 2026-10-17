@@ -6,7 +6,7 @@
     blockSuspiciousTimers: true,  // 是否拦截可疑定时器
     blockRedirects: true,         // 是否拦截跳转
     blockDomDestruction: true,    // 是否拦截DOM破坏
-    spoofPerformance: true,        // 是否伪造性能指标
+    spoofPerformance: false,      // 是否伪造性能指标（默认关闭：避免破坏原生 [native code] 特征）
     blockDebugger: true,          // 是否尝试绕过debugger
     logBlocked: true,             // 是否打印拦截日志
   };

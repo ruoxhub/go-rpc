@@ -16,12 +16,13 @@ ContextHandler = Callable[[InvocationContext, dict, asyncio.Event], Any]
 
 
 class ExecutorClient:
-    def __init__(self, url: str, group: str, client_id: str, token: Optional[str] = None, confirmation_timeout: float = 5.0):
+    def __init__(self, url: str, group: str, client_id: str, token: Optional[str] = None, confirmation_timeout: float = 5.0, executor_type: str = "python"):
         self.url = url
         self.group = group
         self.client_id = client_id
         self.token = token
         self.confirmation_timeout = confirmation_timeout
+        self.executor_type = executor_type
         self._handlers: Dict[str, tuple[Callable[..., Any], bool]] = {}
         self._socket = None
         self._reader_task: Optional[asyncio.Task] = None
@@ -70,7 +71,10 @@ class ExecutorClient:
                 capabilities = confirmation.get("capabilities")
                 if confirmation.get("protocol_version") != PROTOCOL_VERSION or not isinstance(capabilities, list) or INVOCATION_CONTEXT_CAPABILITY not in capabilities:
                     raise RuntimeError("registered confirmation is invalid")
-                await self._send(socket, {"type": "bind", "actions": sorted(self._handlers)})
+                bind_msg = {"type": "bind", "actions": sorted(self._handlers)}
+                if self.executor_type:
+                    bind_msg["executor_type"] = self.executor_type
+                await self._send(socket, bind_msg)
                 if self._destroyed or self._socket is not socket:
                     raise RuntimeError("executor was closed during registration")
                 self._started = True
@@ -114,6 +118,11 @@ class ExecutorClient:
             self._heartbeat.stop()
             self._heartbeat = None
 
+    @property
+    def connected(self) -> bool:
+        """注册成功且连接仍存活。连接断开（含远端关闭）后转 False，可再次 start()。"""
+        return self._started and self._socket is not None
+
     def _registration_url(self) -> str:
         parts = urlsplit(self.url)
         query = list(parse_qsl(parts.query, keep_blank_values=True))
@@ -122,6 +131,7 @@ class ExecutorClient:
             ("capabilities", INVOCATION_CONTEXT_CAPABILITY),
             ("group", self.group),
             ("clientId", self.client_id),
+            ("executor_type", self.executor_type),
         ])
         return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 

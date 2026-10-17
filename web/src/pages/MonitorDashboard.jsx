@@ -38,10 +38,10 @@ function MonitorDashboard() {
         })))
 
         const online = groupList.reduce((sum, group) => sum + (group.availableClients || 0), 0)
-        const disabled = groupList.reduce((sum, group) => sum + (group.disabledClients || 0), 0)
+        const offline = groupList.reduce((sum, group) => sum + (group.disabledClients || 0), 0)
         setDeviceStatus([
           { name: '在线', value: online },
-          { name: '离线/禁用', value: disabled }
+          { name: '离线', value: offline }
         ])
       } catch (err) {
         setError(err.response?.data?.message || err.message || '加载监控数据失败')

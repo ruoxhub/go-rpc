@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

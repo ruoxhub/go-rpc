@@ -1,7 +1,7 @@
 package config
 
 import (
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 )
 
 // DefaultTimeout is the default timeout in seconds
@@ -34,7 +34,7 @@ type ServerConfig struct {
 	TraceBatchSize        int            `env:"RPC_TRACE_BATCH_SIZE"`
 }
 
-// ProviderConfig holds settings for `/v1/chat/completions` provider adapters.
+// ProviderConfig holds optional provider settings.
 type ProviderConfig struct {
 	QwenTimeoutSeconds int  `env:"RPC_PROVIDER_QWEN_TIMEOUT"`
 	QwenLogChunks      bool `env:"RPC_PROVIDER_QWEN_LOG_CHUNKS"`
@@ -63,11 +63,6 @@ type DatabaseConfig struct {
 	DBName   string `env:"RPC_DB_NAME"`
 	SSLMode  string `env:"RPC_DB_SSL_MODE"`
 
-	// Connection pool tuning (applied to the underlying *sql.DB).
-	// Defaults are tuned for a mid-traffic service: ~50 concurrent writers
-	// with idle connections kept warm, a 30-minute max lifetime so Postgres-side
-	// state (prepared statements, temp tables) is periodically reclaimed,
-	// and a 5-minute idle timeout to release unused connections.
 	MaxOpenConns    int `env:"RPC_DB_MAX_OPEN_CONNS"`
 	MaxIdleConns    int `env:"RPC_DB_MAX_IDLE_CONNS"`
 	ConnMaxLifetime int `env:"RPC_DB_CONN_MAX_LIFETIME_SECONDS"`

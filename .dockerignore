@@ -47,7 +47,6 @@ test-results/
 
 # Node
 web/node_modules/
-web/package-lock.json
 
 # Misc
 .DS_Store

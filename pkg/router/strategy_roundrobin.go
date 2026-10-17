@@ -11,5 +11,5 @@ type RoundRobinStrategy struct {
 
 // Select 轮询选择客户端
 func (s *RoundRobinStrategy) Select(group *client.RpcGroup, params RouteParams) *client.RpcClient {
-	return s.router.routeByRoundRobin(group)
+	return s.router.routeByRoundRobin(group, params.ExecutorType)
 }

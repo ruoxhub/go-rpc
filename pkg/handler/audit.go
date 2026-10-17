@@ -25,11 +25,9 @@ type AuditAction string
 const (
 	AuditActionDeleteGroup   AuditAction = "DELETE_GROUP"
 	AuditActionDeleteDevice  AuditAction = "DELETE_DEVICE"
-	AuditActionDisableDevice AuditAction = "DISABLE_DEVICE"
 	AuditActionDeleteAction  AuditAction = "DELETE_ACTION"
 	AuditActionUpdateQps     AuditAction = "UPDATE_QPS"
 	AuditActionUpdateConfig  AuditAction = "UPDATE_CONFIG"
-	AuditActionConvertGroup  AuditAction = "CONVERT_GROUP"
 )
 
 // logAudit 记录审计日志
@@ -62,10 +60,6 @@ func auditDeleteDevice(c *gin.Context, groupName, deviceID string) {
 	logAudit(c, AuditActionDeleteDevice, "group_device", "删除设备 - 分组："+groupName+", 设备 ID："+deviceID)
 }
 
-func auditDisableDevice(c *gin.Context, groupName, deviceID string) {
-	logAudit(c, AuditActionDisableDevice, "group_device", "禁用设备 - 分组："+groupName+", 设备 ID："+deviceID)
-}
-
 func auditDeleteAction(c *gin.Context, groupName, actionName string) {
 	logAudit(c, AuditActionDeleteAction, "group_actions", "删除 Action - 分组："+groupName+", Action："+actionName)
 }
@@ -78,6 +72,3 @@ func auditUpdateConfig(c *gin.Context, key, value string) {
 	logAudit(c, AuditActionUpdateConfig, "sys_config", "更新配置 - Key："+key)
 }
 
-func auditConvertGroup(c *gin.Context, anonymousGroup, newGroup string) {
-	logAudit(c, AuditActionConvertGroup, "group_config", "转换匿名分组 - 原分组："+anonymousGroup+", 新分组："+newGroup)
-}

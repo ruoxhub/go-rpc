@@ -32,9 +32,8 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 
 	// Create handler instances with injected repositories
 	userHandler := NewUserHandler(deps.UserRepo, deps.AuthMW)
-	groupHandler := NewGroupHandler(deps.GroupRepo, deps.AuthMW)
+	groupHandler := NewGroupHandler(deps.GroupRepo, deps.AuthMW, deps.ClientManager)
 	sysConfigHandler := NewSysConfigHandler(deps.SysConfigRepo, deps.ServerNodeRepo, deps.SysLogRepo, cfgSvc, deps.DB)
-	anonymousHandler := NewAnonymousGroupHandler(deps.GroupRepo, deps.ClientManager, deps.AuthMW)
 	metricHandler := NewMetricHandler(deps.MetricRepo)
 	traceHandler := NewTraceHandler(deps.TraceRepo)
 	alertHandler := NewAlertHandler(deps.AlertRepo, alertEvaluator)
@@ -69,26 +68,7 @@ func SetupWebRoutes(r *gin.Engine, deps Deps, alertEvaluator *alert.Evaluator, c
 		}
 
 		groups := api.Group("/groups")
-		{
-			groups.GET("", groupHandler.List)
-			groups.POST("", groupHandler.Create)
-			groups.DELETE("", groupHandler.Delete)
-			groups.GET("/:groupName", groupHandler.GetDetail)
-			groups.PUT("/qps", groupHandler.UpdateQps)
-			groups.GET("/:groupName/devices", groupHandler.GetDevices)
-			groups.DELETE("/devices", groupHandler.DeleteDevice)
-			groups.PUT("/devices/disable", groupHandler.DisableDevice)
-			groups.GET("/:groupName/actions", groupHandler.GetActions)
-			groups.POST("/actions", groupHandler.AddAction)
-			groups.DELETE("/actions", groupHandler.DeleteAction)
-		}
-
-		anonGroups := api.Group("/anonymous-groups")
-		{
-			anonGroups.GET("", anonymousHandler.ListOptimized)
-			anonGroups.DELETE("", anonymousHandler.Delete)
-			anonGroups.POST("/convert", anonymousHandler.ConvertAnonymousGroup)
-		}
+		registerGroupRoutes(groups, groupHandler)
 
 		sysConfig := api.Group("/sysconfig")
 		sysConfig.Use(middleware.RequireAdmin())

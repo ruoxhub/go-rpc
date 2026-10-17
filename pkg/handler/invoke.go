@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,7 +11,7 @@ import (
 	json "github.com/goccy/go-json"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
@@ -63,6 +64,7 @@ type RequestBuilder interface {
 	GetConstantInvoke() string
 	IsStream() bool
 	IsFuzzy() bool
+	GetExecutorType() string
 }
 
 // InvokeRequest represents the invoke request body
@@ -75,6 +77,7 @@ type InvokeRequest struct {
 	Params         interface{} `json:"params,omitempty"`
 	Stream         bool        `json:"stream,omitempty"`
 	Fuzzy          bool        `json:"fuzzy,omitempty"`
+	ExecutorType   string      `json:"executor_type,omitempty"`
 }
 
 // NewAPIHandler creates a new APIHandler
@@ -246,6 +249,11 @@ func bindInvokeRequest(c *gin.Context) InvokeRequest {
 			req.Fuzzy = parseBoolQuery(v)
 		}
 	}
+	if req.ExecutorType == "" {
+		if v := c.Query("executor_type"); v != "" {
+			req.ExecutorType = v
+		}
+	}
 	return req
 }
 
@@ -257,6 +265,7 @@ func invokeRequestFromQuery(c *gin.Context) InvokeRequest {
 		Action:         c.Query("action"),
 		Stream:         parseBoolQuery(c.Query("stream")),
 		Fuzzy:          parseBoolQuery(c.Query("fuzzy")),
+		ExecutorType:   c.Query("executor_type"),
 	}
 }
 
@@ -269,7 +278,7 @@ func parseBoolQuery(v string) bool {
 	return false
 }
 
-func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, constantInvoke, action string, payload interface{}, requestTraceID string) (*client.RpcClient, error) {
+func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, executorType, constantInvoke, action string, payload interface{}, requestTraceID string) (*client.RpcClient, error) {
 	group := h.clientManager.GetGroup(groupName)
 	if group == nil {
 		if clientID != "" {
@@ -278,7 +287,7 @@ func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, 
 		return nil, nil
 	}
 
-	params := router.RouteParams{GroupName: groupName, ClientID: clientID, Fuzzy: fuzzy}
+	params := router.RouteParams{GroupName: groupName, ClientID: clientID, Fuzzy: fuzzy, ExecutorType: executorType}
 	if clientID == "" {
 		params.ConstantInvoke = constantInvoke
 		params.Action = action
@@ -295,9 +304,9 @@ func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, 
 
 	requestLogger := logger.WithTraceID(requestTraceID)
 	if clientID != "" {
-		requestLogger.Debugf("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v", groupName, selected.ClientID, fuzzy)
+		requestLogger.Debugf("Route selected: strategy=specified, group=%s, clientId=%s, fuzzy=%v, executorType=%s", groupName, selected.ClientID, fuzzy, executorType)
 	} else {
-		requestLogger.Debugf("Route selected: group=%s, clientId=%s", groupName, selected.ClientID)
+		requestLogger.Debugf("Route selected: group=%s, clientId=%s, executorType=%s", groupName, selected.ClientID, executorType)
 	}
 	return selected, nil
 }
@@ -306,6 +315,21 @@ func (h *APIHandler) selectTargetClient(groupName, clientID string, fuzzy bool, 
 
 // maxInvokeTimeout is the maximum allowed timeout for invoke requests
 const maxInvokeTimeout = 5 * time.Minute
+
+// writeDeadlineGrace 是响应写超时相对 invoke 预算的余量。
+// 全局 WriteTimeout 默认 30s，与默认 invoke 超时相等：超时包络会在写出前
+// 被 net/http 截断，调用方看到的是连接中断而不是 3006，排查时被误导。
+const writeDeadlineGrace = 15 * time.Second
+
+// extendWriteDeadline 按本次 invoke 预算重设当前请求的写超时。
+// net/http 的 WriteTimeout 在开始读请求时就固定了，长 invoke 必须显式延长，
+// 否则超时/慢响应都写不出去。
+func extendWriteDeadline(c *gin.Context, invokeTimeout time.Duration) {
+	deadline := time.Now().Add(invokeTimeout + writeDeadlineGrace)
+	if err := http.NewResponseController(c.Writer).SetWriteDeadline(deadline); err != nil {
+		logger.Debugf("Failed to extend write deadline: %v", err)
+	}
+}
 
 // InvokeBuilder handles standard invoke requests
 type InvokeBuilder struct {
@@ -317,6 +341,7 @@ type InvokeBuilder struct {
 	Timeout        time.Duration
 	Stream         bool
 	Fuzzy          bool
+	ExecutorType   string
 }
 
 func newInvokeBuilder(req *InvokeRequest) *InvokeBuilder {
@@ -329,6 +354,7 @@ func newInvokeBuilder(req *InvokeRequest) *InvokeBuilder {
 		Timeout:        time.Duration(req.Timeout) * time.Second,
 		Stream:         req.Stream,
 		Fuzzy:          req.Fuzzy,
+		ExecutorType:   req.ExecutorType,
 	}
 }
 
@@ -363,6 +389,7 @@ func (b *InvokeBuilder) GetClientID() string       { return b.ClientID }
 func (b *InvokeBuilder) GetConstantInvoke() string { return b.ConstantInvoke }
 func (b *InvokeBuilder) IsStream() bool            { return b.Stream }
 func (b *InvokeBuilder) IsFuzzy() bool             { return b.Fuzzy }
+func (b *InvokeBuilder) GetExecutorType() string   { return b.ExecutorType }
 
 // handleForwardRequest 把 RequestBuilder 描述的请求转发到 Rpc 客户端。
 //
@@ -397,7 +424,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 		return
 	}
 
-	targetClient, err := h.selectTargetClient(group, clientID, builder.IsFuzzy(), constantInvoke, reqAction, reqParams, requestTraceID)
+	targetClient, err := h.selectTargetClient(group, clientID, builder.IsFuzzy(), builder.GetExecutorType(), constantInvoke, reqAction, reqParams, requestTraceID)
 	if err != nil {
 		Fail(c, errorcode.NoClientAvailable, err.Error())
 		return
@@ -418,6 +445,7 @@ func (h *APIHandler) handleForwardRequest(c *gin.Context, builder RequestBuilder
 
 	sequence := builder.GetSequence(group)
 	timeout := builder.GetTimeout()
+	extendWriteDeadline(c, timeout)
 
 	if builder.IsStream() {
 		h.forwardStream(c, builder, group, targetClient, sequence, reqDataJSON, timeout, startTime, reqAction)
@@ -473,6 +501,51 @@ func (h *APIHandler) forwardUnary(c *gin.Context, builder RequestBuilder, group 
 		return
 	}
 	h.renderUnaryResponse(c, builder, group, targetClient, resp, reqAction, startTime)
+}
+
+// errInvokeTimeout is the typed sentinel returned when waitUnaryInvoke's
+// context deadline fires. Callers must use errors.Is — never string match.
+var errInvokeTimeout = errors.New("request timeout")
+
+// waitUnaryInvoke 统一 "Add + Send + Wait" 三段式，不写 HTTP 响应。
+func (h *APIHandler) waitUnaryInvoke(
+	ctx context.Context,
+	group string,
+	target *client.RpcClient,
+	sequence string,
+	reqDataJSON []byte,
+	timeout time.Duration,
+	traceID string,
+) (*forwarder.InvokeResponse, error) {
+	if h.timeoutManager == nil || h.wsHandler == nil {
+		return nil, fmt.Errorf("invoke dependencies not available")
+	}
+	rec := h.timeoutManager.Add(sequence, group, target.ClientID, reqDataJSON)
+	rec.Timeout = timeout
+	rec.TraceID = traceID
+
+	if err := h.wsHandler.SendInvokeRequest(target, sequence, group, target.ClientID, reqDataJSON, traceID); err != nil {
+		h.timeoutManager.Remove(sequence)
+		logger.WithTraceID(traceID).Debugf("Invoke send failed: sequence=%s, group=%s, clientId=%s, err=%v", sequence, group, target.ClientID, err)
+		return nil, fmt.Errorf("Failed to send request: %w", err)
+	}
+
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	select {
+	case <-waitCtx.Done():
+		rec.SetTimedOut()
+		h.timeoutManager.Remove(sequence)
+		logger.WithTraceID(traceID).Debugf("Invoke timed out: sequence=%s, group=%s, clientId=%s", sequence, group, target.ClientID)
+		return nil, errInvokeTimeout
+	case resp, ok := <-rec.ResponseChan:
+		if !ok {
+			return nil, forwarder.ErrChannelClosed
+		}
+		h.timeoutManager.Remove(sequence)
+		return resp, nil
+	}
 }
 
 // dispatchInvokeRequest 统一处理 "Add + send + wait" 三步:
@@ -545,9 +618,23 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 		message = "unknown error"
 	}
 
-	// 成功路径: 客户端返回 JSON object 时平级展开到顶层, 否则原样放入 Data。
+	useEnvelopeV2 := c.Request != nil && c.Request.Header.Get("x-envelope-version") == "v2"
+
+	// 成功路径: 客户端返回 JSON object 时平级展开到顶层 (除非开启 v2 信封), 否则原样放入 Data。
 	var responseMap map[string]interface{}
 	if err := json.Unmarshal(resp.Data, &responseMap); err == nil {
+		if useEnvelopeV2 {
+			r := Response{
+				Code:     resp.Status,
+				Message:  message,
+				Data:     responseMap,
+				Group:    group,
+				ClientID: targetClient.ClientID,
+			}
+			r.TraceID = traceID(c)
+			c.JSON(http.StatusOK, r)
+			return
+		}
 		result := gin.H{
 			"code":     resp.Status,
 			"message":  message,
@@ -562,10 +649,15 @@ func (h *APIHandler) renderUnaryResponse(c *gin.Context, builder RequestBuilder,
 		return
 	}
 
+	var dataVal interface{} = string(resp.Data)
+	if json.Valid(resp.Data) {
+		dataVal = json.RawMessage(resp.Data)
+	}
+
 	r := Response{
 		Code:     resp.Status,
 		Message:  message,
-		Data:     string(resp.Data),
+		Data:     dataVal,
 		Group:    group,
 		ClientID: targetClient.ClientID,
 	}
@@ -637,7 +729,18 @@ func (h *APIHandler) authorizeRegisteredGroupAccess(c *gin.Context, groupName st
 		return false
 	}
 	if group == nil {
-		// 未配置 group_config，视为匿名分组放行。
+		if h.groupRepo != nil {
+			group, _ = h.groupRepo.EnsureGroup(groupName, "")
+			if group != nil {
+				h.authMW.InvalidateGroup(groupName)
+			}
+		}
+	}
+	if group == nil {
+		return true
+	}
+
+	if group.UserName == "" {
 		return true
 	}
 
@@ -685,11 +788,11 @@ func (h *APIHandler) filterAccessibleGroups(c *gin.Context, groups []string) ([]
 			continue
 		}
 		if group == nil {
-			filtered = append(filtered, groupName)
-			continue
+			if h.groupRepo != nil {
+				group, _ = h.groupRepo.EnsureGroup(groupName, "")
+			}
 		}
-
-		if user != nil && (user.IsAdmin || user.UserName == group.UserName) {
+		if group == nil || group.UserName == "" || (user != nil && (user.IsAdmin || user.UserName == group.UserName)) {
 			filtered = append(filtered, groupName)
 		}
 	}

@@ -22,5 +22,5 @@ func (s *ConsistentHashStrategy) Select(group *client.RpcGroup, params RoutePara
 		return nil
 	}
 
-	return s.router.routeByConsistentHash(group, hashKey)
+	return s.router.routeByConsistentHash(group, hashKey, params.ExecutorType)
 }

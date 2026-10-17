@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Table, Input, Space, Tag, Button, Popconfirm, message } from 'antd'
-import { SearchOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { Table, Input, Space, Button, Popconfirm, message } from 'antd'
+import { SearchOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
 import { groupApi } from '../utils/api'
 
 function GroupDeviceList({ groupName, onRefresh }) {
   const [devices, setDevices] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchText, setSearchText] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
 
   // 加载设备列表
   const loadDevices = async () => {
@@ -40,7 +42,8 @@ function GroupDeviceList({ groupName, onRefresh }) {
     {
       title: '设备 IP',
       dataIndex: 'deviceIp',
-      key: 'deviceIp'
+      key: 'deviceIp',
+      render: (ip) => ip || '-'
     },
     {
       title: '注册时间',
@@ -53,84 +56,61 @@ function GroupDeviceList({ groupName, onRefresh }) {
       key: 'lastActiveTime'
     },
     {
-      title: '设备状态',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status) => (
-        <Tag color={status === 'online' ? 'green' : 'red'}>
-          {status}
-        </Tag>
-      )
-    },
-    {
       title: '操作',
       key: 'action',
       render: (_, record) => (
         <Space>
           <Popconfirm
-            title="确定删除该设备吗？"
+            title="确定下线/剔除该设备吗？"
             onConfirm={() => handleDelete(record.deviceId)}
             okText="确定"
             cancelText="取消"
           >
             <Button size="small" danger icon={<DeleteOutlined />}>
-              删除
+              剔除
             </Button>
           </Popconfirm>
-          {record.status === 'online' && (
-            <Popconfirm
-              title="确定将该设备移出可用队列吗？"
-              onConfirm={() => handleDisable(record.deviceId)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button size="small" icon={<ExclamationCircleOutlined />}>
-                移除可用
-              </Button>
-            </Popconfirm>
-          )}
         </Space>
       )
     }
   ]
 
-  const filteredDevices = devices.filter((device) =>
-    (device.deviceId?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
-    (device.deviceIp?.toLowerCase() || '').includes(searchText.toLowerCase())
-  )
-
   const handleDelete = async (deviceId) => {
     try {
       await groupApi.deleteDevice({ groupName, deviceId })
-      message.success('设备删除成功')
+      message.success('设备已剔除')
       loadDevices()
       onRefresh && onRefresh()
     } catch (error) {
-      message.error('删除设备失败：' + (error.message || '未知错误'))
+      message.error('剔除设备失败：' + (error.message || '未知错误'))
     }
   }
 
-  const handleDisable = async (deviceId) => {
-    try {
-      await groupApi.disableDevice({ groupName, deviceId, disable: true })
-      message.success('设备已移出可用队列')
-      loadDevices()
-      onRefresh && onRefresh()
-    } catch (error) {
-      message.error('操作失败：' + (error.message || '未知错误'))
-    }
-  }
+  const filteredDevices = devices.filter((device) => {
+    const matchesSearch =
+      (device.deviceId?.toLowerCase() || '').includes(searchText.toLowerCase()) ||
+      (device.deviceIp?.toLowerCase() || '').includes(searchText.toLowerCase())
+    return matchesSearch
+  })
 
   return (
     <div>
-      <div style={{ marginBottom: 16 }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
         <Input
           placeholder="请输入关键词进行查询"
           prefix={<SearchOutlined />}
           value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          style={{ width: 300 }}
+          onChange={(e) => {
+            setSearchText(e.target.value)
+            setCurrentPage(1)
+          }}
+          style={{ width: 260 }}
+          allowClear
         />
+
+        <Button icon={<ReloadOutlined />} onClick={loadDevices} loading={loading}>
+          刷新
+        </Button>
       </div>
 
       <Table
@@ -139,11 +119,16 @@ function GroupDeviceList({ groupName, onRefresh }) {
         rowKey="deviceId"
         loading={loading}
         pagination={{
-          current: 1,
-          pageSize: 10,
+          current: currentPage,
+          pageSize: pageSize,
           total: filteredDevices.length,
-          showSizeChanger: false,
-          showTotal: (total) => `共 ${total} 条`
+          showSizeChanger: true,
+          showQuickJumper: true,
+          onChange: (page, size) => {
+            setCurrentPage(page)
+            setPageSize(size)
+          },
+          showTotal: (total) => `共 ${total} 台在线设备`
         }}
       />
     </div>

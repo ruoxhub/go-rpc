@@ -8,6 +8,15 @@ import (
 	"strings"
 )
 
+// BaseDir returns the current working directory or "." on error.
+func BaseDir() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return cwd
+}
+
 // LoadDotEnv loads environment variables from .env in the current working
 // directory without overriding variables that are already set.
 func LoadDotEnv() error {

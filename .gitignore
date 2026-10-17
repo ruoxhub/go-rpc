@@ -57,7 +57,11 @@ sekiro-server
 
 # Environment files
 .env
+.env.1panel
 .omc/
+
+# Session artifacts
+.pi/
 graphify-out
 .omx/
 .cache
@@ -71,3 +75,6 @@ graphify-out
 .qoder
 .mcp.json
 .codebuddy
+open-source/
+.omo
+.codebase-memory

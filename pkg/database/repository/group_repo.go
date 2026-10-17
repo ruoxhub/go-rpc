@@ -148,7 +148,7 @@ func (r *groupRepository) GetGroupDeviceStats(name string, activeThreshold strin
 
 func (r *groupRepository) FindDevicesByGroup(name string) ([]model.GroupDevice, error) {
 	var devices []model.GroupDevice
-	if err := r.db.Where("group_name = ?", name).Find(&devices).Error; err != nil {
+	if err := r.db.Where("group_name = ?", name).Order("last_active_time DESC").Find(&devices).Error; err != nil {
 		return nil, fmt.Errorf("failed to list devices: %w", err)
 	}
 	return devices, nil
@@ -194,6 +194,14 @@ func (r *groupRepository) DeleteDevicesByGroup(name string) error {
 		return fmt.Errorf("failed to delete devices by group: %w", err)
 	}
 	return nil
+}
+
+func (r *groupRepository) DeleteOfflineDevicesByGroup(name string, before time.Time) (int64, error) {
+	result := r.db.Where("group_name = ? AND last_active_time < ?", name, before).Delete(&model.GroupDevice{})
+	if err := result.Error; err != nil {
+		return 0, fmt.Errorf("failed to delete offline devices by group: %w", err)
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *groupRepository) CountOnlineDevices(since string) (int64, error) {
@@ -286,61 +294,35 @@ func (r *groupRepository) DeleteActionsByGroup(name string) error {
 	return nil
 }
 
-// Anonymous group operations
-
-func (r *groupRepository) FindAnonymousDeviceGroups(activeThreshold string) ([]AnonymousGroupStats, error) {
-	type rawStat struct {
-		GroupName string
-		Total     int64
-		Active    int64
-		Disabled  int64
-	}
-
-	var rawStats []rawStat
-	if err := r.db.Table("group_device gd").
-		Select(`
-			gd.group_name,
-			COUNT(*) as total,
-			SUM(CASE WHEN gd.last_active_time > ? THEN 1 ELSE 0 END) as active,
-			SUM(CASE WHEN gd.last_active_time <= ? THEN 1 ELSE 0 END) as disabled
-		`, activeThreshold, activeThreshold).
-		Where("NOT EXISTS (SELECT 1 FROM group_config gc WHERE gc.group_name = gd.group_name)").
-		Group("gd.group_name").
-		Find(&rawStats).Error; err != nil {
-		return nil, fmt.Errorf("failed to find anonymous groups: %w", err)
-	}
-
-	stats := make([]AnonymousGroupStats, len(rawStats))
-	for i, s := range rawStats {
-		stats[i] = AnonymousGroupStats{
-			GroupName:        s.GroupName,
-			TotalClients:     s.Total,
-			AvailableClients: s.Active,
-			DisabledClients:  s.Disabled,
-		}
-	}
-	return stats, nil
-}
-
-func (r *groupRepository) IsAnonymousGroup(name string) (bool, error) {
-	var count int64
-	if err := r.db.Model(&model.GroupConfig{}).
-		Where("group_name = ?", name).
-		Count(&count).Error; err != nil {
-		return false, fmt.Errorf("failed to check anonymous group: %w", err)
-	}
-	return count == 0, nil
-}
-
-func (r *groupRepository) DeleteAnonymousGroupDevices(name string) (int64, error) {
-	result := r.db.Where("group_name = ?", name).Delete(&model.GroupDevice{})
-	if result.Error != nil {
-		return 0, fmt.Errorf("failed to delete anonymous group devices: %w", result.Error)
-	}
-	return result.RowsAffected, nil
-}
-
 // Convenience methods
+
+func (r *groupRepository) EnsureGroup(groupName string, userName string) (*model.GroupConfig, error) {
+	var group model.GroupConfig
+	err := r.db.Where("group_name = ?", groupName).First(&group).Error
+	if err == nil {
+		return &group, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("failed to lookup group %s: %w", groupName, err)
+	}
+
+	group = model.GroupConfig{
+		GroupName:         groupName,
+		UserName:          userName,
+		QuotaQpsGroup:     100,
+		QuotaQpsPerDevice: 10,
+		CreateDate:        time.Now(),
+	}
+	if err := r.db.Create(&group).Error; err != nil {
+		var existing model.GroupConfig
+		if r.db.Where("group_name = ?", groupName).First(&existing).Error == nil {
+			return &existing, nil
+		}
+		return nil, fmt.Errorf("failed to create group %s: %w", groupName, err)
+	}
+	return &group, nil
+}
+
 
 func (r *groupRepository) IsGroupRegistered(name string) (bool, error) {
 	var count int64
@@ -376,6 +358,10 @@ func (r *groupRepository) EnsureDefaultActions(groupName string) error {
 func (r *groupRepository) UpsertDevice(device *model.GroupDevice) error {
 	if err := r.db.
 		Where("group_name = ? AND device_id = ?", device.GroupName, device.DeviceID).
+		Assign(model.GroupDevice{
+			RemoteIP:       device.RemoteIP,
+			LastActiveTime: device.LastActiveTime,
+		}).
 		FirstOrCreate(device).Error; err != nil {
 		return fmt.Errorf("failed to upsert device: %w", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"go.uber.org/zap"

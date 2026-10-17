@@ -5,8 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/mrh30000/go-rpc/internal/config"
-	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
+	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/handler/errorcode"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
@@ -61,8 +60,8 @@ func HandleGetUserInfo(c *gin.Context) {
 func HandleSystemNotice(c *gin.Context) {
 	var systemNotice string
 	if cfgSvc, exists := c.Get("configService"); exists {
-		if svc, ok := cfgSvc.(pkgconfig.Service); ok {
-			systemNotice = svc.GetConfig(pkgconfig.ConfigKeySystemNotice)
+		if svc, ok := cfgSvc.(config.Service); ok {
+			systemNotice = svc.GetConfig(config.ConfigKeySystemNotice)
 		}
 	}
 	OK(c, systemNotice)
@@ -107,7 +106,7 @@ func HandleFrontendListGroup(c *gin.Context) {
 
 // listGroupViaRepo 使用 GroupRepository 查询分组列表（前端格式）
 func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
+	activeThreshold := time.Now().UTC().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
 	stats, err := groupRepo.GetGroupStats("", true, activeThreshold)
 	if err != nil {
 		InternalError(c, err.Error())
@@ -131,52 +130,6 @@ func listGroupViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
 	OK(c, vos)
 }
 
-// HandleFrontendAnonymousGroupList 获取匿名分组列表
-func HandleFrontendAnonymousGroupList(c *gin.Context) {
-	if clientManager, exists := c.Get("clientManager"); exists {
-		if cm, ok := clientManager.(anonymousClientManager); ok {
-			OK(c, buildAnonymousGroupVOs(cm))
-			return
-		}
-	}
-
-	// Use groupRepo if available in context
-	if groupRepo, exists := c.Get("groupRepo"); exists {
-		if gr, ok := groupRepo.(repository.GroupRepository); ok {
-			listAnonymousViaRepo(c, gr)
-			return
-		}
-	}
-	anonymousHandler := NewAnonymousGroupHandler(nil, nil, nil)
-	anonymousHandler.List(c)
-}
-
-// listAnonymousViaRepo 使用 GroupRepository 查询匿名分组列表
-func listAnonymousViaRepo(c *gin.Context, groupRepo repository.GroupRepository) {
-	activeThreshold := time.Now().Add(-ClientInactiveThreshold).Format("2006-01-02 15:04:05")
-	stats, err := groupRepo.FindAnonymousDeviceGroups(activeThreshold)
-	if err != nil {
-		InternalError(c, err.Error())
-		return
-	}
-
-	vos := make([]AnonymousGroupVO, len(stats))
-	for i, s := range stats {
-		vos[i] = AnonymousGroupVO{
-			GroupName:        s.GroupName,
-			AvailableClients: s.AvailableClients,
-			DisabledClients:  s.DisabledClients,
-			TotalClients:     s.TotalClients,
-		}
-	}
-
-	if len(vos) == 0 {
-		vos = []AnonymousGroupVO{}
-	}
-
-	OK(c, vos)
-}
-
 // HandleFrontendGroupDetail 获取分组详情
 func HandleFrontendGroupDetail(c *gin.Context) {
 	groupName := c.Query("groupName")
@@ -190,13 +143,13 @@ func HandleFrontendGroupDetail(c *gin.Context) {
 	// Use groupRepo if available in context
 	if groupRepo, exists := c.Get("groupRepo"); exists {
 		if gr, ok := groupRepo.(repository.GroupRepository); ok {
-			groupHandler := NewGroupHandler(gr, nil)
+			groupHandler := NewGroupHandler(gr, nil, nil)
 			groupHandler.GetDetail(c)
 			return
 		}
 	}
 
-	groupHandler := NewGroupHandler(nil, nil)
+	groupHandler := NewGroupHandler(nil, nil, nil)
 	groupHandler.GetDetail(c)
 }
 
@@ -303,11 +256,11 @@ func (h *LoginHandler) HandleLogin(c *gin.Context) {
 
 // HandleRegister handles user registration requests.
 func (h *LoginHandler) HandleRegister(c *gin.Context) {
-	var configSvc pkgconfig.Service
+	var configSvc config.Service
 	if cfgSvc, exists := c.Get("configService"); exists {
-		configSvc, _ = cfgSvc.(pkgconfig.Service)
+		configSvc, _ = cfgSvc.(config.Service)
 	}
-	if configSvc != nil && !configSvc.GetConfigBool(pkgconfig.ConfigKeyAllowRegister, true) {
+	if configSvc != nil && !configSvc.GetConfigBool(config.ConfigKeyAllowRegister, true) {
 		Fail(c, errorcode.RegisterDisabled, "当前不允许注册新用户")
 		return
 	}
@@ -334,7 +287,7 @@ func (h *LoginHandler) HandleRegister(c *gin.Context) {
 	}
 	defaultQps := 100.0
 	if configSvc != nil {
-		defaultQps = configSvc.GetConfigFloat(pkgconfig.ConfigKeyDefaultQuotaUser, 100.0)
+		defaultQps = configSvc.GetConfigFloat(config.ConfigKeyDefaultQuotaUser, 100.0)
 	}
 	user := model.UserInfo{
 		UserName:   req.UserName,

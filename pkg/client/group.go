@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 )
 
 // commandType represents types of group commands
@@ -44,6 +44,7 @@ type RpcGroup struct {
 	commandChan chan groupCommand
 	clients     map[string]*RpcClient
 	order       []string
+	cursor      uint64
 	wg          sync.WaitGroup
 	done        chan struct{}
 	closeOnce   sync.Once
@@ -119,36 +120,40 @@ func (g *RpcGroup) handleCommand(cmd groupCommand) {
 	}
 }
 
-// allocate 从 order 队头取可用客户端、用后旋转到队尾，实现队列轮询。
-// 三轮优先级：健康且在线 → 任意在线 → 任意客户端。
-// 每次分配后把已用客户端之前的元素（含自身）移到队尾，保持轮询公平。
+// allocate 从 order 队头取可用客户端，使用递增游标取模实现 O(1) 零内存分配轮询。
+// 两轮优先级：健康且在线 → 任意在线。
 func (g *RpcGroup) allocate() *RpcClient {
-	if len(g.order) == 0 {
+	n := len(g.order)
+	if n == 0 {
 		return nil
 	}
 
+	start := int(g.cursor % uint64(n))
+
 	// 第一轮：健康且在线
-	for i := 0; i < len(g.order); i++ {
-		id := g.order[i]
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		id := g.order[idx]
 		client, ok := g.clients[id]
 		if !ok {
 			continue
 		}
 		if client.GetStatus() == StatusOnline && client.GetHealthStatus() {
-			g.order = append(g.order[i+1:], g.order[:i+1]...)
+			g.cursor = uint64(idx + 1)
 			return client
 		}
 	}
 
 	// 第二轮：任意在线
-	for i := 0; i < len(g.order); i++ {
-		id := g.order[i]
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		id := g.order[idx]
 		client, ok := g.clients[id]
 		if !ok {
 			continue
 		}
 		if client.GetStatus() == StatusOnline {
-			g.order = append(g.order[i+1:], g.order[:i+1]...)
+			g.cursor = uint64(idx + 1)
 			return client
 		}
 	}

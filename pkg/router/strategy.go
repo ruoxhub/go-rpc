@@ -33,6 +33,8 @@ type RouteParams struct {
 	// Fuzzy enables substring matching on ClientID when true.
 	// Only effective when ClientID is also non-empty.
 	Fuzzy bool
+	// ExecutorType specifies the required executor type (e.g. "browser", "python").
+	ExecutorType string
 }
 
 // Strategy 路由策略接口
@@ -145,9 +147,9 @@ func (r *Router) resolveStrategy(groupName string) StrategyType {
 }
 
 // routeByConsistentHash routes based on consistent hash of the key, with ring caching.
-func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey string) *client.RpcClient {
-	// Get all clients from the group
-	clients := group.GetAllClients()
+func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey, executorType string) *client.RpcClient {
+	// Get all clients from the group, filtered by executorType if specified
+	clients := filterByExecutorType(group.GetAllClients(), executorType)
 	if len(clients) == 0 {
 		return nil
 	}
@@ -155,7 +157,11 @@ func (r *Router) routeByConsistentHash(group *client.RpcGroup, hashKey string) *
 	// Build fingerprint from sorted client IDs to detect changes
 	fingerprint := clientListFingerprint(clients)
 
-	ring := r.getOrBuildRing(group.Name(), clients, fingerprint)
+	cacheKey := group.Name()
+	if executorType != "" {
+		cacheKey = group.Name() + ":" + executorType
+	}
+	ring := r.getOrBuildRing(cacheKey, clients, fingerprint)
 
 	// Get the target physical client ID from hash ring
 	targetID := ring.Get(hashKey)
@@ -203,7 +209,11 @@ func (r *Router) getOrBuildRing(groupName string, clients []*client.RpcClient, f
 func (r *Router) InvalidateRingCache(groupName string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.ringCache, groupName)
+	for k := range r.ringCache {
+		if k == groupName || strings.HasPrefix(k, groupName+":") {
+			delete(r.ringCache, k)
+		}
+	}
 }
 
 // InvalidateAllRingCaches clears all cached hash rings.
@@ -225,8 +235,8 @@ func clientListFingerprint(clients []*client.RpcClient) string {
 }
 
 // routeByRoundRobin routes to clients in round-robin order
-func (r *Router) routeByRoundRobin(group *client.RpcGroup) *client.RpcClient {
-	clients := group.GetAllClients()
+func (r *Router) routeByRoundRobin(group *client.RpcGroup, executorType string) *client.RpcClient {
+	clients := filterByExecutorType(group.GetAllClients(), executorType)
 	if len(clients) == 0 {
 		return nil
 	}
@@ -239,10 +249,27 @@ func (r *Router) routeByRoundRobin(group *client.RpcGroup) *client.RpcClient {
 		eligible = clients
 	}
 
-	counter := r.counterForGroup(group.Name())
+	counterKey := group.Name()
+	if executorType != "" {
+		counterKey = group.Name() + ":" + executorType
+	}
+	counter := r.counterForGroup(counterKey)
 	index := int(atomic.AddUint64(counter, 1)-1) % len(eligible)
 
 	return eligible[index]
+}
+
+func filterByExecutorType(clients []*client.RpcClient, executorType string) []*client.RpcClient {
+	if executorType == "" {
+		return clients
+	}
+	filtered := make([]*client.RpcClient, 0, len(clients))
+	for _, c := range clients {
+		if c.GetExecutorType() == executorType {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
 }
 
 func filterEligibleClients(clients []*client.RpcClient, requireHealthy bool) []*client.RpcClient {

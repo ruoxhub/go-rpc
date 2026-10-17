@@ -4,7 +4,6 @@ import { Layout, Menu } from 'antd'
 import {
   HomeOutlined,
   TeamOutlined,
-  DashboardOutlined,
   LineChartOutlined,
   UserOutlined,
   SettingOutlined,
@@ -15,7 +14,7 @@ import {
 } from '@ant-design/icons'
 import { userApi } from '../utils/api'
 
-const { Sider, Content, Footer } = Layout
+const { Sider, Content } = Layout
 
 const menuItems = [
   {
@@ -27,11 +26,6 @@ const menuItems = [
     key: '/groups',
     icon: <TeamOutlined />,
     label: '分组列表'
-  },
-  {
-    key: '/anonymous-groups',
-    icon: <DashboardOutlined />,
-    label: '匿名分组'
   },
   {
     key: '/monitor',
@@ -131,9 +125,6 @@ function LayoutComponent() {
             <Outlet />
           </div>
         </Content>
-        <Footer style={{ textAlign: 'center' }}>
-          sekiro-系统框架 © 2023 因体信息公司 因体产品 | Majora | Rpc | Malenia
-        </Footer>
       </Layout>
     </Layout>
   )

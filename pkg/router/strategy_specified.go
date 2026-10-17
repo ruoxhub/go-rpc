@@ -1,6 +1,9 @@
 package router
 
 import (
+	"math/rand"
+	"strings"
+
 	"github.com/mrh30000/go-rpc/pkg/client"
 )
 
@@ -13,11 +16,51 @@ func (s *SpecifiedStrategy) Select(group *client.RpcGroup, params RouteParams) *
 		return nil
 	}
 
-	// Fuzzy=true：仅走模糊匹配（健康优先），与重构前语义一致
+	// Fuzzy=true：走模糊匹配（健康优先）
 	if params.Fuzzy {
-		return group.FindClientByFuzzy(params.ClientID)
+		if params.ExecutorType == "" {
+			return group.FindClientByFuzzy(params.ClientID)
+		}
+		return findFuzzyWithExecutorType(group, params.ClientID, params.ExecutorType)
 	}
 
-	// 精确匹配（GetClient 不按健康过滤，与重构前一致）
-	return group.GetClient(params.ClientID)
+	// 精确匹配
+	selected := group.GetClient(params.ClientID)
+	if selected == nil {
+		return nil
+	}
+	if params.ExecutorType != "" && selected.GetExecutorType() != params.ExecutorType {
+		return nil
+	}
+	return selected
+}
+
+func findFuzzyWithExecutorType(group *client.RpcGroup, substr, executorType string) *client.RpcClient {
+	clients := group.GetAllClients()
+	var healthy []*client.RpcClient
+	var online []*client.RpcClient
+
+	for _, c := range clients {
+		if !strings.Contains(c.ClientID, substr) {
+			continue
+		}
+		if executorType != "" && c.GetExecutorType() != executorType {
+			continue
+		}
+		if c.GetStatus() != client.StatusOnline {
+			continue
+		}
+		online = append(online, c)
+		if c.GetHealthStatus() {
+			healthy = append(healthy, c)
+		}
+	}
+
+	if len(healthy) > 0 {
+		return healthy[rand.Intn(len(healthy))]
+	}
+	if len(online) > 0 {
+		return online[rand.Intn(len(online))]
+	}
+	return nil
 }

@@ -126,9 +126,9 @@ class ExecutorTests(unittest.IsolatedAsyncioTestCase):
         bind = await asyncio.wait_for(self.state.bind, 1)
         response = await asyncio.wait_for(self.state.response, 1)
 
-        self.assertEqual(self.state.query, {"protocol_version": ["1"], "capabilities": ["invocation_context.v1"], "group": ["group-a"], "clientId": ["client-a"]})
+        self.assertEqual(self.state.query, {"protocol_version": ["1"], "capabilities": ["invocation_context.v1"], "group": ["group-a"], "clientId": ["client-a"], "executor_type": ["python"]})
         self.assertEqual(self.state.authorization, "Bearer secret")
-        self.assertEqual(bind, {"type": "bind", "actions": ["echo", "zeta"]})
+        self.assertEqual(bind, {"type": "bind", "actions": ["echo", "zeta"], "executor_type": "python"})
         self.assertEqual(seen["context"].sequence, "seq-1")
         self.assertEqual(seen["context"].action, "echo")
         self.assertFalse(seen["cancelled"])

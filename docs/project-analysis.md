@@ -748,7 +748,7 @@ go run main.go -port 5612
 
 # 6. 访问 Web 管理后台
 # 浏览器打开 http://localhost:5612
-# 默认用户：ruoxing / mrx123456（见 CLAUDE.md）
+# 默认用户：ruoxing / <默认管理员口令，部署必须改掉>（见 CLAUDE.md）
 
 # 7. 运行一个 RPC 客户端（业务端）
 go run cmd/client/main.go -server localhost:5612 -group test-group -client-id test-1

@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"go.uber.org/zap"

@@ -53,10 +53,11 @@ export const groupApi = {
   updateQps: (data) => api.put('/groups/qps', data),
   getDevices: (groupName) => api.get(`/groups/${groupName}/devices`),
   deleteDevice: (data) => api.delete('/groups/devices', { data }),
-  disableDevice: (data) => api.put('/groups/devices/disable', data),
   getActions: (groupName) => api.get(`/groups/${groupName}/actions`),
   addAction: (data) => api.post('/groups/actions', data),
-  deleteAction: (data) => api.delete('/groups/actions', { data })
+  deleteAction: (data) => api.delete('/groups/actions', { data }),
+  batchDelete: (groupNames) => api.post('/groups/batch/delete', { groupNames }),
+  batchUpdateQps: (data) => api.put('/groups/batch/qps', data)
 }
 
 export const userApi = {
@@ -75,11 +76,6 @@ export const sysConfigApi = {
   getNodes: () => api.get('/sysconfig/nodes'),
   getLogs: (params) => api.get('/sysconfig/logs', { params }),
   getAppLogs: (params) => api.get('/sysconfig/app-logs', { params })
-}
-
-export const anonymousGroupApi = {
-  list: () => api.get('/anonymous-groups'),
-  convert: (data) => api.post('/anonymous-groups/convert', data)
 }
 
 export const metricApi = {
@@ -108,7 +104,6 @@ export const alertApi = {
 
 export const frontendApi = {
   listGroup: () => api.get('/rpc-api/frontend/listGroup'),
-  anonymousGroupList: () => api.get('/rpc-api/frontend/anonymousGroupList'),
   groupDetail: (groupName) => api.get('/rpc-api/frontend/groupDetail', {
     params: { groupName }
   })

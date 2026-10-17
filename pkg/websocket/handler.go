@@ -12,7 +12,6 @@ import (
 	json "github.com/goccy/go-json"
 
 	"github.com/gorilla/websocket"
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
@@ -21,6 +20,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/protocol"
 	"github.com/mrh30000/go-rpc/pkg/transport"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
 )
 
 // ensureDefaultActions ensures default actions exist for a group
@@ -135,6 +135,9 @@ func (h *Handler) HandleConnectionWithRegistration(ctx context.Context, conn *we
 	}()
 	sekiroClient := client.NewRpcClient(group, clientID, wsTransport)
 	sekiroClient.SetProtocol(registration.ProtocolVersion, registration.Capabilities)
+	if registration.ExecutorType != "" {
+		sekiroClient.SetExecutorType(registration.ExecutorType)
+	}
 
 	if !registration.Legacy {
 		registered := &RpcMessage{
@@ -300,6 +303,10 @@ func (h *Handler) processMessage(ctx context.Context, sekiroClient *client.RpcCl
 
 // handleBind syncs the actions reported by a client into the registered group action list.
 func (h *Handler) handleBind(sekiroClient *client.RpcClient, msg *RpcMessage) {
+	if msg.ExecutorType != "" && sekiroClient != nil {
+		sekiroClient.SetExecutorType(msg.ExecutorType)
+	}
+
 	groupName := msg.Group
 	if groupName == "" {
 		groupName = sekiroClient.Group

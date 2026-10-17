@@ -34,13 +34,6 @@ type GroupStats struct {
 	DisabledClients   int64
 }
 
-// AnonymousGroupStats holds anonymous group statistics.
-type AnonymousGroupStats struct {
-	GroupName        string
-	TotalClients     int64
-	AvailableClients int64
-	DisabledClients  int64
-}
 
 // GroupRepository handles group, device, and action data access.
 type GroupRepository interface {
@@ -63,6 +56,7 @@ type GroupRepository interface {
 	UpdateDevice(groupName, deviceID string, updates map[string]interface{}) error
 	DeleteDevice(groupName, deviceID string) error
 	DeleteDevicesByGroup(name string) error
+	DeleteOfflineDevicesByGroup(name string, before time.Time) (int64, error)
 	CountOnlineDevices(since string) (int64, error)
 	CountDevicesByGroup(name string) (int64, error)
 
@@ -75,12 +69,8 @@ type GroupRepository interface {
 	DeleteAction(groupName, actionName string) error
 	DeleteActionsByGroup(name string) error
 
-	// Anonymous group operations
-	FindAnonymousDeviceGroups(activeThreshold string) ([]AnonymousGroupStats, error)
-	IsAnonymousGroup(name string) (bool, error)
-	DeleteAnonymousGroupDevices(name string) (int64, error)
-
 	// Convenience methods (replaces direct database.GetDB() calls in handler/websocket layers)
+	EnsureGroup(groupName string, userName string) (*model.GroupConfig, error)
 	IsGroupRegistered(name string) (bool, error)
 	EnsureDefaultActions(groupName string) error
 	UpsertDevice(device *model.GroupDevice) error

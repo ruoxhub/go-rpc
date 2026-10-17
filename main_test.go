@@ -13,9 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	gorillawebsocket "github.com/gorilla/websocket"
-	"github.com/mrh30000/go-rpc/internal/config"
 	"github.com/mrh30000/go-rpc/pkg/client"
-	pkgconfig "github.com/mrh30000/go-rpc/pkg/config"
+	"github.com/mrh30000/go-rpc/pkg/config"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
 	"github.com/mrh30000/go-rpc/pkg/handler"
@@ -25,7 +24,7 @@ import (
 	"github.com/mrh30000/go-rpc/pkg/websocket"
 )
 
-func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
+func TestRegisterRoutesV1NoRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	timeoutMgr := forwarder.NewTimeoutManager(nil)
@@ -52,15 +51,7 @@ func TestRegisterRoutesChatCompletionsAndV1NoRoute(t *testing.T) {
 	s.registerRoutes()
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions?group=g1", strings.NewReader(`{`))
-	req.Header.Set("Content-Type", "application/json")
-	httpServer.Engine().ServeHTTP(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("chat route status = %d, want 400", w.Code)
-	}
-
-	w = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/v1/unknown", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/unknown", nil)
 	httpServer.Engine().ServeHTTP(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("v1 noroute status = %d, want 404", w.Code)
@@ -172,6 +163,10 @@ func (f registerTokenLookupFunc) FindByToken(token string) (*model.UserInfo, err
 
 type registerGroupRepositoryStub struct {
 	repository.GroupRepository
+}
+
+func (registerGroupRepositoryStub) EnsureGroup(groupName, userName string) (*model.GroupConfig, error) {
+	return &model.GroupConfig{GroupName: groupName, UserName: userName}, nil
 }
 
 func newRegisterTestServer(t *testing.T, disableDatabase bool) *Server {
@@ -482,7 +477,7 @@ func TestAuthorizeRegisterAccess_DatabaseModeAuthorizationMatrix(t *testing.T) {
 			)
 			s := &Server{
 				serverConfig:  &config.ServerConfig{DisableDatabase: false},
-				configService: pkgconfig.NewService(),
+				configService: config.NewService(),
 				groupRepo:     &registerGroupRepositoryStub{},
 				authMW:        authMW,
 			}

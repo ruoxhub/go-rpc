@@ -499,3 +499,86 @@ func TestBuildConsistentHashKey(t *testing.T) {
 		t.Errorf("Expected 'group:action:null' for nil payload, got %s", key4)
 	}
 }
+
+func TestRouter_RouteByExecutorType(t *testing.T) {
+	router := NewRouter(nil)
+	group := client.NewRpcGroup("test-group")
+	defer group.Close()
+
+	b1 := client.NewRpcClient("test-group", "browser-1", nil)
+	b1.SetStatus(client.StatusOnline)
+	b1.SetExecutorType("browser")
+	group.Register(b1)
+
+	b2 := client.NewRpcClient("test-group", "browser-2", nil)
+	b2.SetStatus(client.StatusOnline)
+	b2.SetExecutorType("browser")
+	group.Register(b2)
+
+	p1 := client.NewRpcClient("test-group", "python-1", nil)
+	p1.SetStatus(client.StatusOnline)
+	p1.SetExecutorType("python")
+	group.Register(p1)
+
+	// 1. 指定 browser 轮询
+	for i := 0; i < 4; i++ {
+		res := router.Route(group, RouteParams{
+			GroupName:    "test-group",
+			ExecutorType: "browser",
+		})
+		if res == nil || res.GetExecutorType() != "browser" {
+			t.Fatalf("expected browser executor, got %v", res)
+		}
+	}
+
+	// 2. 指定 python 轮询
+	for i := 0; i < 4; i++ {
+		res := router.Route(group, RouteParams{
+			GroupName:    "test-group",
+			ExecutorType: "python",
+		})
+		if res == nil || res.GetExecutorType() != "python" {
+			t.Fatalf("expected python executor, got %v", res)
+		}
+	}
+
+	// 3. 指定不存在的类型返回 nil
+	none := router.Route(group, RouteParams{
+		GroupName:    "test-group",
+		ExecutorType: "unknown",
+	})
+	if none != nil {
+		t.Fatalf("expected nil for unknown executor type, got %v", none)
+	}
+
+	// 4. 精确指定 ClientID + ExecutorType 匹配
+	specMatch := router.Route(group, RouteParams{
+		GroupName:    "test-group",
+		ClientID:     "browser-1",
+		ExecutorType: "browser",
+	})
+	if specMatch == nil || specMatch.ClientID != "browser-1" {
+		t.Fatalf("expected browser-1, got %v", specMatch)
+	}
+
+	// 5. 精确指定 ClientID + ExecutorType 冲突时过滤
+	specMismatch := router.Route(group, RouteParams{
+		GroupName:    "test-group",
+		ClientID:     "browser-1",
+		ExecutorType: "python",
+	})
+	if specMismatch != nil {
+		t.Fatalf("expected nil when executor_type conflicts with client, got %v", specMismatch)
+	}
+
+	// 6. Fuzzy + ExecutorType 过滤
+	fuzzyMatch := router.Route(group, RouteParams{
+		GroupName:    "test-group",
+		ClientID:     "-1",
+		Fuzzy:        true,
+		ExecutorType: "python",
+	})
+	if fuzzyMatch == nil || fuzzyMatch.ClientID != "python-1" {
+		t.Fatalf("expected python-1 from fuzzy match with executor_type filter, got %v", fuzzyMatch)
+	}
+}

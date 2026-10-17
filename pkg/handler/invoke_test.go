@@ -3,15 +3,18 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mrh30000/go-rpc/pkg/client"
 	"github.com/mrh30000/go-rpc/pkg/database/repository"
 	"github.com/mrh30000/go-rpc/pkg/eventbus"
 	"github.com/mrh30000/go-rpc/pkg/forwarder"
+	"github.com/mrh30000/go-rpc/pkg/handler/errorcode"
 	"github.com/mrh30000/go-rpc/pkg/middleware"
 	"github.com/mrh30000/go-rpc/pkg/model"
 	"github.com/mrh30000/go-rpc/pkg/router"
@@ -83,7 +86,9 @@ type testAnonGroupRepo struct {
 
 func (testAnonGroupRepo) FindGroupByName(string) (*model.GroupConfig, error) { return nil, nil }
 func (testAnonGroupRepo) IsGroupRegistered(string) (bool, error)             { return false, nil }
-func (testAnonGroupRepo) IsAnonymousGroup(string) (bool, error)              { return true, nil }
+func (testAnonGroupRepo) EnsureGroup(groupName, userName string) (*model.GroupConfig, error) {
+	return &model.GroupConfig{GroupName: groupName, UserName: userName}, nil
+}
 
 func newTestAPIHandler(mockManager *MockClientManager) *APIHandler {
 	anonRepo := testAnonGroupRepo{}
@@ -488,5 +493,120 @@ func TestHandleKickClient_WholeGroup(t *testing.T) {
 	// group 仍存在（goroutine 未销毁）
 	if mockManager.GetGroup("g1") == nil {
 		t.Error("expected group g1 to still exist")
+	}
+}
+
+func TestExtendWriteDeadline(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/business/invoke", bytes.NewReader(nil))
+
+	// httptest.ResponseRecorder 不实现 SetWriteDeadline，ResponseController 会返回
+	// ErrNotSupported；这里断言不 panic 且不写出响应体。
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("extendWriteDeadline panicked: %v", r)
+		}
+	}()
+	extendWriteDeadline(c, 30*time.Second)
+
+	if w.Body.Len() != 0 {
+		t.Fatalf("extendWriteDeadline wrote body: %s", w.Body.String())
+	}
+}
+
+// 证明延长写超时确实能突破 http.Server.WriteTimeout：不调用 extendWriteDeadline
+// 时 500ms 的写预算会让 1.2s 后的响应写不出去。
+func TestExtendWriteDeadlineExceedsServerWriteTimeout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/slow", func(c *gin.Context) {
+		extendWriteDeadline(c, 2*time.Second)
+		time.Sleep(1200 * time.Millisecond)
+		c.String(http.StatusOK, "done")
+	})
+
+	srv := httptest.NewUnstartedServer(engine)
+	srv.Config.WriteTimeout = 500 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/slow", "application/json", nil)
+	if err != nil {
+		t.Fatalf("request failed despite extended deadline: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "done" {
+		t.Fatalf("status=%d body=%q, want 200 done", resp.StatusCode, string(body))
+	}
+}
+
+// 反向对照：不延长时，同样的处理函数会被 WriteTimeout 截断。
+func TestServerWriteTimeoutTruncatesWithoutExtension(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.POST("/slow", func(c *gin.Context) {
+		time.Sleep(1200 * time.Millisecond)
+		c.String(http.StatusOK, "done")
+	})
+
+	srv := httptest.NewUnstartedServer(engine)
+	srv.Config.WriteTimeout = 500 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/slow", "application/json", nil)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatalf("expected truncation without extension, got status %d", resp.StatusCode)
+	}
+}
+
+func TestHandleInvoke_ExecutorTypeFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	mockManager := newMockClientManager()
+	defer mockManager.Close()
+
+	b1 := client.NewRpcClient("test-group", "browser-1", nil)
+	b1.SetStatus(client.StatusOnline)
+	b1.SetExecutorType("browser")
+	p1 := client.NewRpcClient("test-group", "python-1", nil)
+	p1.SetStatus(client.StatusOnline)
+	p1.SetExecutorType("python")
+
+	mockManager.AddClient("test-group", b1)
+	mockManager.AddClient("test-group", p1)
+
+	handler := newTestAPIHandler(mockManager)
+	handler.router = newDefaultTestRouter()
+
+	router := gin.New()
+	router.Any("/business/invoke", handler.HandleInvoke)
+
+	// 1. 指定 executor_type=browser
+	w1 := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test&executor_type=browser", nil)
+	var result1 map[string]interface{}
+	json.NewDecoder(w1.Body).Decode(&result1)
+	if result1["clientId"] != "browser-1" {
+		t.Fatalf("Expected browser-1, got %v", result1["clientId"])
+	}
+
+	// 2. 指定 executor_type=python (POST JSON)
+	body := json.RawMessage(`{"group":"test-group","action":"test","executor_type":"python"}`)
+	w2 := performRequest(router, http.MethodPost, "/business/invoke", body)
+	var result2 map[string]interface{}
+	json.NewDecoder(w2.Body).Decode(&result2)
+	if result2["clientId"] != "python-1" {
+		t.Fatalf("Expected python-1, got %v", result2["clientId"])
+	}
+
+	// 3. 指定不存在的 executor_type=mobile
+	w3 := performRequest(router, http.MethodGet, "/business/invoke?group=test-group&action=test&executor_type=mobile", nil)
+	var result3 map[string]interface{}
+	json.NewDecoder(w3.Body).Decode(&result3)
+	if result3["code"] != float64(errorcode.NoClientAvailable) {
+		t.Fatalf("Expected NoClientAvailable code, got %v", result3)
 	}
 }

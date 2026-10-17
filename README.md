@@ -121,7 +121,7 @@ RPC_DB_PORT=5432
 RPC_DB_NAME=sekiro
 ```
 
-字段定义见 `internal/config/config.go`。
+字段定义见 `pkg/config/server_config.go`。
 
 ## 项目结构
 
@@ -133,25 +133,28 @@ go-rpc/
 ├── Dockerfile
 ├── deploy/postgres/migration.sql
 ├── docs/                       # 设计文档与实施计划
-├── internal/
-│   ├── config/                 # 环境变量与 .env 配置加载
-│   ├── prompt/                 # Prompt 模板
-│   ├── promptcompat/           # Prompt 兼容适配
-│   ├── toolcall/               # Tool Call 解析
-│   ├── util/                   # 通用工具
-│   └── utils/logger/           # zap 日志封装
 ├── pkg/
 │   ├── alert/                  # 告警评估引擎
 │   ├── client/                 # 客户端管理（RpcClient、RpcGroup、ClientManager）
 │   │   └── sdk/                # 客户端/调用端 SDK（供外部消费者使用）
 │   ├── compress/               # Gzip / Snappy / None 压缩
-│   ├── config/                 # 运行时配置服务（DB 缓存）
+│   ├── config/                 # 服务端配置加载与运行时配置服务（DB 缓存）
 │   ├── database/               # GORM 连接、迁移
 │   │   └── repository/         # Repository 接口与实现
+│   ├── deps/                   # 应用依赖容器
 │   ├── eventbus/               # 进程内事件总线
 │   ├── flow/                   # 流量控制、限流退避
 │   ├── forwarder/              # 调用超时管理、流式帧处理
 │   ├── handler/                # HTTP 处理器（/api、/rpc-api、/business 统一入口）
+│   ├── invocation/             # 调用上下文模型
+│   ├── metrics/                # 运行时指标收集
+│   ├── middleware/             # 认证、日志、限流、CORS 中间件
+│   ├── model/                  # 业务数据模型
+│   ├── protocol/               # 二进制/JSON 协议编解码
+│   ├── router/                 # 路由选择策略（轮询、哈希、指定客户端）
+│   ├── transport/              # 传输层抽象
+│   ├── utils/                  # 工具类（logger、traceid、password 等）
+│   └── websocket/              # WebSocket 连接管理与消息泵
 │   │   └── errorcode/          # 业务错误码定义
 │   ├── metrics/                # 指标采集与聚合
 │   ├── middleware/             # 认证、CORS、限流、追踪、路由替换
@@ -270,7 +273,6 @@ func main() {
 | `/business/invoke` | GET/POST/Any | RPC 调用 |
 | `/business/register` | GET → WebSocket | 客户端注册并升级到 WebSocket |
 | `/business/kick` | DELETE | 踢出客户端（支持单客户端或整组） |
-| `/v1/chat/completions` | POST | OpenAI 兼容接口 |
 
 ### 用户与前端兼容接口（`/rpc-api`）
 
@@ -302,6 +304,8 @@ func main() {
 | `/api/groups/devices/disable` | PUT | 禁用设备 |
 | `/api/groups/:groupName/actions` | GET | 动作列表 |
 | `/api/groups/actions` | POST/DELETE | 添加/删除动作 |
+| `/api/groups/batch/delete` | POST | 批量删除分组（部分成功，返回逐条明细） |
+| `/api/groups/batch/qps` | PUT | 批量调整分组 QPS（部分成功，返回逐条明细） |
 | `/api/anonymous-groups` | GET/DELETE | 匿名分组 |
 | `/api/anonymous-groups/convert` | POST | 转为正式分组 |
 | `/api/sysconfig` | GET/PUT | 系统配置（仅管理员） |

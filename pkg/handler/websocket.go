@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/mrh30000/go-rpc/internal/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/utils/logger"
+	"github.com/mrh30000/go-rpc/pkg/protocol"
 	wsHandler "github.com/mrh30000/go-rpc/pkg/websocket"
 )
 
@@ -68,8 +70,12 @@ func (h *WebSocketHandler) HandleRegister(c *gin.Context) {
 
 	logger.Debugf("WebSocket upgrade successful: %s", c.ClientIP())
 
+	executorType := strings.TrimSpace(c.Query("executor_type"))
+	reg := protocol.LegacyRegistration()
+	reg.ExecutorType = executorType
+
 	ctx := context.Background()
-	h.sekiroHandler.HandleConnection(ctx, wsConn, group, clientID)
+	h.sekiroHandler.HandleConnectionWithRegistration(ctx, wsConn, group, clientID, reg)
 }
 
 // upgradeWebSocket performs the WebSocket upgrade

@@ -1,12 +1,47 @@
-from .caller import AsyncRpcHTTPClient, RpcAPIError, RpcHTTPClient, RpcTransportError
+from . import caller
+from .caller import (
+    AsyncRpcHTTPClient,
+    BlockedRpcError,
+    InvalidRpcJsonError,
+    PermanentRpcError,
+    RateLimitedRpcError,
+    RetryableRpcError,
+    RetryBudget,
+    RpcAPIError,
+    RpcClient,
+    RpcError,
+    RpcHTTPClient,
+    RpcResponseTooLargeError,
+    RpcTransportError,
+    classify_http_status,
+    format_error,
+    full_jitter_delay,
+    redact_secrets,
+    retry_after_seconds,
+)
 from .executor import ExecutorClient
 from .protocol import InvocationContext
 
 __all__ = [
     "AsyncRpcHTTPClient",
+    "BlockedRpcError",
     "ExecutorClient",
+    "InvalidRpcJsonError",
     "InvocationContext",
+    "PermanentRpcError",
+    "RateLimitedRpcError",
+    "RetryableRpcError",
+    "RetryBudget",
     "RpcAPIError",
+    "RpcClient",
+    "RpcError",
     "RpcHTTPClient",
+    "RpcResponseTooLargeError",
     "RpcTransportError",
+    "caller",
+    "classify_http_status",
+    "format_error",
+    "full_jitter_delay",
+    "redact_secrets",
+    "retry_after_seconds",
 ]
