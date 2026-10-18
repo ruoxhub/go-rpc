@@ -1,0 +1,2 @@
+ALTER TABLE public.t_material_clean
+    ADD COLUMN IF NOT EXISTS is_delete SMALLINT NOT NULL DEFAULT 0;

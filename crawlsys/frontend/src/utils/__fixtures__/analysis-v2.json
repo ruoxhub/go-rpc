@@ -1,0 +1,210 @@
+{
+  "meta": {
+    "schema_version": null,
+    "prompt_version": null,
+    "model_name": null,
+    "model_version": null,
+    "analyzed_at": null,
+    "analysis_duration_ms": null,
+    "source_frames_count": null,
+    "confidence_overall": null,
+    "notes": null
+  },
+  "video_id": null,
+  "target_definition": {
+    "target_audience": null,
+    "platform": null,
+    "platform_tone_match": null,
+    "content_purpose": null,
+    "primary_kpi": null,
+    "video_length_target": null,
+    "target_audience_profile": null,
+    "success_criteria": null
+  },
+  "creative_concept": {
+    "theme": null,
+    "conflict": null,
+    "hook_strategy": null,
+    "memory_hook": null,
+    "story_arc": null,
+    "creative_tags": null
+  },
+  "basic_info": {
+    "duration": null,
+    "resolution": null,
+    "aspect_ratio": null,
+    "language": null,
+    "has_subtitle": null,
+    "has_voice": null
+  },
+  "person": {
+    "description": null,
+    "clothing": null,
+    "actions": null,
+    "face_expression_curve": null,
+    "gaze_direction": null,
+    "gaze_changes": null,
+    "body_pose": null,
+    "body_orientation": null,
+    "hand_actions": null,
+    "gait_or_stance": null,
+    "body_type": null,
+    "identity_consistency_risk": null
+  },
+  "product": {
+    "description": null,
+    "display_actions": null,
+    "category": null,
+    "material": null,
+    "fabric_thickness": null,
+    "elasticity": null,
+    "size_recommendation": null,
+    "price_range": null,
+    "suitable_season": null,
+    "suitable_scene": null,
+    "craft_details": null,
+    "color_options_visible": null
+  },
+  "scene": {
+    "background": null,
+    "lighting": null,
+    "color": null,
+    "visual_quality": null,
+    "camera": null,
+    "composition": null,
+    "shot_size": null,
+    "shooting_angle": null,
+    "camera_movement": null,
+    "time_of_day": null,
+    "weather": null,
+    "space_type": null,
+    "space_depth": null,
+    "light_direction": null,
+    "light_temperature": null,
+    "light_contrast": null,
+    "color_grading": null,
+    "style_genre": null,
+    "style_keywords": null,
+    "style_reference": null
+  },
+  "timeline": [],
+  "emotion_arc": {
+    "opening_emotion": null,
+    "middle_emotion": null,
+    "ending_emotion": null,
+    "peak_emotion": null,
+    "peak_timestamp": null,
+    "intensity_curve": null,
+    "arc_type": null
+  },
+  "conversion_points": [],
+  "viral_points": [],
+  "selling_points": [],
+  "viral_logic": {
+    "why_retention": null,
+    "why_click": null,
+    "why_conversion": null,
+    "why_viral": null,
+    "core_selling_point": null,
+    "key_conversion_action": null
+  },
+  "viral_formula": {
+    "formula_id": null,
+    "pattern_type": null,
+    "formula_template": null,
+    "template_variables": null,
+    "replicability_score": null,
+    "success_predictors": null,
+    "similar_reference_count": null
+  },
+  "ai_video_prompt": {
+    "subject_prompt": null,
+    "scene_prompt": null,
+    "action_prompt": null,
+    "style_prompt": null,
+    "full_prompt_zh": null,
+    "full_prompt_en": null,
+    "negative_prompt": null,
+    "style_anchors": null,
+    "key_frames": null,
+    "consistency_constraints": null,
+    "recommended_model": null,
+    "recommended_params": null
+  },
+  "iteration": {
+    "round_number": null,
+    "verification_target": null,
+    "issues": null,
+    "revised_prompt": null,
+    "revision_focus": null,
+    "passed": null
+  },
+  "post_production": {
+    "rhythm": null,
+    "subtitles": null,
+    "voiceover_script": null,
+    "bgm": null,
+    "sound_effects": null,
+    "final_format": null,
+    "platform_adaptations": null
+  },
+  "scoring": {
+    "hook": {
+      "score": null,
+      "reason": null
+    },
+    "selling_point": {
+      "score": null,
+      "reason": null
+    },
+    "conversion": {
+      "score": null,
+      "reason": null
+    },
+    "human_action": {
+      "score": null,
+      "reason": null
+    },
+    "composition": {
+      "score": null,
+      "reason": null
+    },
+    "camera_language": {
+      "score": null,
+      "reason": null
+    },
+    "editing_rhythm": {
+      "score": null,
+      "reason": null
+    },
+    "visual_quality": {
+      "score": null,
+      "reason": null
+    },
+    "product_display": {
+      "score": null,
+      "reason": null
+    },
+    "overall": {
+      "score": null,
+      "reason": null
+    },
+    "emotion_impact": {
+      "score": null,
+      "reason": null
+    },
+    "style_consistency": {
+      "score": null,
+      "reason": null
+    },
+    "platform_fit": {
+      "score": null,
+      "reason": null
+    },
+    "replicability": {
+      "score": null,
+      "reason": null
+    }
+  },
+  "technical_analysis": null
+}

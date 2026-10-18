@@ -1,0 +1,44 @@
+{
+  "data": {
+    "search_by_raw_query": {
+      "search_timeline": {
+        "timeline": {
+          "instructions": [
+            {
+              "type": "TimelineAddEntries",
+              "entries": [
+                {
+                  "entryId": "tweet-2056602750427844804",
+                  "content": {
+                    "itemContent": {
+                      "tweet_results": {
+                        "result": {
+                          "rest_id": "2056602750427844804",
+                          "legacy": {
+                            "full_text": "Life is short I use python",
+                            "created_at": "Thu Jul 31 00:00:00 +0000 2026"
+                          },
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "rest_id": "743780794997547008",
+                                "legacy": {
+                                  "screen_name": "PythonDvz",
+                                  "name": "Python Developer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,289 @@
+{
+  "meta": {
+    "schema_version": "v3.0",
+    "observation_prompt_version": null,
+    "evaluation_prompt_version": null,
+    "observation_model_name": null,
+    "observation_model_version": null,
+    "evaluation_model_name": null,
+    "evaluation_model_version": null,
+    "analyzed_at": null,
+    "source_frames_count": null,
+    "confidence_overall": null,
+    "timings": {
+      "observation_duration_ms": null,
+      "evaluation_duration_ms": null,
+      "total_duration_ms": null,
+      "observation_attempts": 1,
+      "evaluation_attempts": 1
+    }
+  },
+  "evidence_card": {
+    "source_id": null,
+    "source_sha256": null,
+    "technical_metadata": {
+      "duration_seconds": null,
+      "width": null,
+      "height": null,
+      "aspect_ratio": null,
+      "fps": null,
+      "has_audio_stream": null,
+      "format_name": null,
+      "size_bytes": null
+    },
+    "input_mode": null,
+    "sampled_frame_count": 0,
+    "sampled_timestamps": [],
+    "observed_ranges": [],
+    "unobserved_ranges": [],
+    "coverage_limitations": [],
+    "product_reference": {
+      "status": "NOT_PROVIDED",
+      "detail": null
+    },
+    "publishing_context": {
+      "status": "NOT_PROVIDED",
+      "detail": null
+    },
+    "performance_metrics": {
+      "status": "NOT_PROVIDED",
+      "detail": null
+    },
+    "task_constraints": {
+      "status": "NOT_PROVIDED",
+      "detail": null
+    },
+    "evidence_complete": false,
+    "official_scoring_ready": false,
+    "missing_evidence": [],
+    "limitations": []
+  },
+  "content_classification": {
+    "primary_type": "PRODUCT_DEMONSTRATION",
+    "secondary_types": [],
+    "topology": "LINEAR",
+    "evidence_timecodes": [],
+    "confidence": null
+  },
+  "observation": {
+    "facts": {
+      "summary": null,
+      "subjects": [],
+      "person_facts": [],
+      "product_facts": [],
+      "scene_facts": []
+    },
+    "timeline": [],
+    "claim_evidence_chains": [],
+    "business_logic": {
+      "audience_and_need": null,
+      "hook_and_retention": null,
+      "product_recognition": null,
+      "selling_point": null,
+      "visible_proof": null,
+      "rhythm_and_density": null,
+      "memory_and_product_binding": null,
+      "trust_objection_and_action": null
+    },
+    "defects": []
+  },
+  "evaluation": {
+    "review_route": "G",
+    "evidence_review": {
+      "evidence_complete": false,
+      "missing_evidence": [],
+      "limitations": [],
+      "confidence": null
+    },
+    "g0_assessment": {
+      "findings": []
+    },
+    "common_score_c": {
+      "dimensions": [
+        {
+          "dimension_id": "C1",
+          "name": "受众与购买需求",
+          "awarded_points": null,
+          "max_points": 6.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C2",
+          "name": "钩子停留能力",
+          "awarded_points": null,
+          "max_points": 10.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C3",
+          "name": "商品识别与曝光",
+          "awarded_points": null,
+          "max_points": 6.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C4",
+          "name": "卖点选择",
+          "awarded_points": null,
+          "max_points": 8.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C5",
+          "name": "可见证据链",
+          "awarded_points": null,
+          "max_points": 12.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C6",
+          "name": "节奏与信息密度",
+          "awarded_points": null,
+          "max_points": 8.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C7",
+          "name": "记忆点与商品绑定",
+          "awarded_points": null,
+          "max_points": 6.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "C8",
+          "name": "信任、顾虑与行动",
+          "awarded_points": null,
+          "max_points": 4.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        }
+      ]
+    },
+    "specialized_score_r": null,
+    "specialized_score_g": {
+      "dimensions": [
+        {
+          "dimension_id": "G1",
+          "name": "商品一致性",
+          "awarded_points": null,
+          "max_points": 12.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": "Missing product reference evidence",
+          "confidence": null
+        },
+        {
+          "dimension_id": "G2",
+          "name": "人物身份与服装层级",
+          "awarded_points": null,
+          "max_points": 5.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "G3",
+          "name": "动作完整性与力量感",
+          "awarded_points": null,
+          "max_points": 8.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "G4",
+          "name": "物理、接触与回弹",
+          "awarded_points": null,
+          "max_points": 6.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "G5",
+          "name": "镜头与构图连续性",
+          "awarded_points": null,
+          "max_points": 4.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "G6",
+          "name": "技术画质",
+          "awarded_points": null,
+          "max_points": 3.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        },
+        {
+          "dimension_id": "G7",
+          "name": "背景、灯光与声音联动",
+          "awarded_points": null,
+          "max_points": 2.0,
+          "reason": null,
+          "evidence_timestamps": [],
+          "scorable": false,
+          "unscorable_reason": null,
+          "confidence": null
+        }
+      ]
+    },
+    "supplemental_evidence": [],
+    "evidence_conflicts": [],
+    "partial_points": 0.0,
+    "partial_max_points": 0.0,
+    "diagnostic_total": null
+  },
+  "decision": {
+    "gate_status": "INSUFFICIENT_EVIDENCE",
+    "scoring_status": "UNAVAILABLE",
+    "formal_grade": null,
+    "system_disposition": "OWNER_REVIEW_REQUIRED",
+    "reasons": []
+  },
+  "technical_analysis": null
+}

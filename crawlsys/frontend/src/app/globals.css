@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens —— 严格对应 DESIGN.md
+ * 浅色 / 深色双主题，全部通过语义化 CSS 变量解析，禁止硬编码颜色。
+ */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-strong: var(--success-strong);
+  --color-warning: var(--warning);
+  --color-warning-strong: var(--warning-strong);
+  --color-info: var(--info);
+  --color-info-strong: var(--info-strong);
+  --color-brand-purple: var(--brand-purple);
+  --color-brand-cyan: var(--brand-cyan);
+  --color-gradient-foreground: var(--gradient-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-accent: var(--sidebar-accent);
+
+  /* 一套 Suisseintl 承载全部 UI；DIN 负责数字 */
+  --font-sans: Suisseintl, ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+  --font-numeric: DIN, Suisseintl, ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+}
+
+:root {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.145 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.145 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.71 0.17 294);
+  --primary: oklch(0.71 0.17 294);
+  --primary-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --success: oklch(0.65 0.2 145);
+  --warning: oklch(0.75 0.18 70);
+  --info: oklch(0.6 0.18 250);
+  /* 语义色的可读前景（浅色 tint 背景上使用，保证 4.5:1 对比度） */
+  --success-strong: oklch(0.48 0.15 145);
+  --warning-strong: oklch(0.5 0.14 70);
+  --info-strong: oklch(0.45 0.15 250);
+  --brand-purple: oklch(0.74 0.17 3);
+  --brand-cyan: oklch(0.71 0.17 294);
+  --gradient-foreground: oklch(0.985 0 0);
+  --sidebar: color-mix(in oklch, var(--background) 97%, var(--brand-cyan));
+  --sidebar-accent: color-mix(in oklch, var(--background) 88%, var(--brand-cyan));
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.145 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.145 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.708 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.74 0.17 3);
+    --primary: oklch(0.74 0.17 3);
+    --primary-foreground: oklch(0.145 0 0);
+    --destructive-foreground: oklch(0.985 0 0);
+    --sidebar: color-mix(in oklch, var(--background) 93%, var(--brand-cyan));
+    --sidebar-accent: color-mix(in oklch, var(--background) 86%, var(--brand-cyan));
+    --success-strong: oklch(0.8 0.15 145);
+    --warning-strong: oklch(0.82 0.14 70);
+    --info-strong: oklch(0.8 0.14 250);
+    color-scheme: dark;
+  }
+}
+
+/* 品牌渐变（紫 → 青），仅用于 DESIGN.md 定义的五类角色 */
+@utility bg-gradient-back {
+  background-image: linear-gradient(
+    to right in oklch,
+    var(--brand-purple),
+    var(--brand-cyan)
+  );
+}
+
+/* 1px 渐变边框（padding-box / border-box 技法），每屏最多一个 featured card 使用 */
+@utility gradient-border {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--card), var(--card)) padding-box,
+    linear-gradient(to right in oklch, var(--brand-purple), var(--brand-cyan))
+      border-box;
+}
+
+@layer base {
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (any-pointer: coarse) {
+    button,
+    input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]),
+    select,
+    textarea,
+    summary {
+      min-height: 44px;
+    }
+
+    .touch-target {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+}

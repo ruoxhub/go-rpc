@@ -1,0 +1,13 @@
+**
+!app/
+!app/**
+!main.py
+!pyproject.toml
+!uv.lock
+!README.md
+!config.docker.toml
+!scripts/
+!scripts/migrate_llm_provider_formats.sql
+!scripts/migrate_llm_provider_credentials.py
+**/__pycache__/
+**/*.py[cod]

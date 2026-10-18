@@ -1,0 +1,389 @@
+{
+  "expected": {
+    "gate": "INSUFFICIENT_EVIDENCE",
+    "scoring_status": "UNAVAILABLE",
+    "route": "R",
+    "diagnostic_total": "unavailable",
+    "conflict_count": 0
+  },
+  "request": {
+    "source": "fixture-video.mp4",
+    "model": "fixture-model",
+    "review_route": "R"
+  },
+  "artifacts": {
+    "local_video_path": "fixture-video.mp4",
+    "downloaded": false,
+    "mime_type": "video/mp4",
+    "metadata": {
+      "duration": 10.0,
+      "width": 1080,
+      "height": 1920,
+      "fps": 30.0,
+      "has_audio_stream": true
+    },
+    "timestamps": [],
+    "frames": [],
+    "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "source_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "coverage": {
+      "input_mode": "FULL_VIDEO",
+      "sampled_timestamps": [],
+      "observed_ranges": [
+        {
+          "start_seconds": 0.0,
+          "end_seconds": 10.0,
+          "start_inclusive": true,
+          "end_inclusive": true
+        }
+      ],
+      "unobserved_ranges": [],
+      "limitations": []
+    },
+    "evidence_text": "synthetic offline fixture evidence"
+  },
+  "observation": {
+    "content_classification": {
+      "primary_type": "FUNCTIONAL_PROOF",
+      "secondary_types": [],
+      "topology": "ONE_TAKE",
+      "evidence_timecodes": [],
+      "confidence": null
+    },
+    "observation": {
+      "facts": {
+        "summary": null,
+        "subjects": [],
+        "person_facts": [],
+        "product_facts": [],
+        "scene_facts": []
+      },
+      "timeline": [],
+      "claim_evidence_chains": [],
+      "business_logic": {
+        "audience_and_need": null,
+        "hook_and_retention": null,
+        "product_recognition": null,
+        "selling_point": null,
+        "visible_proof": null,
+        "rhythm_and_density": null,
+        "memory_and_product_binding": null,
+        "trust_objection_and_action": null
+      },
+      "defects": []
+    }
+  },
+  "evaluation": {
+    "review_route": "R",
+    "evidence_review": {
+      "evidence_complete": true,
+      "missing_evidence": [],
+      "limitations": [],
+      "confidence": 0.9
+    },
+    "g0_assessment": {
+      "findings": [
+        {
+          "category": "CAMERA",
+          "description": "no blocking issue",
+          "triggered": false,
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "confidence": 0.8
+        }
+      ]
+    },
+    "common_score_c": {
+      "dimensions": [
+        {
+          "dimension_id": "C1",
+          "name": "受众与购买需求",
+          "awarded_points": 3.0,
+          "max_points": 6.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C2",
+          "name": "钩子停留能力",
+          "awarded_points": 5.0,
+          "max_points": 10.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C3",
+          "name": "商品识别与曝光",
+          "awarded_points": 3.0,
+          "max_points": 6.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C4",
+          "name": "卖点选择",
+          "awarded_points": 4.0,
+          "max_points": 8.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C5",
+          "name": "可见证据链",
+          "awarded_points": 6.0,
+          "max_points": 12.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C6",
+          "name": "节奏与信息密度",
+          "awarded_points": 4.0,
+          "max_points": 8.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C7",
+          "name": "记忆点与商品绑定",
+          "awarded_points": 3.0,
+          "max_points": 6.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "C8",
+          "name": "信任、顾虑与行动",
+          "awarded_points": 2.0,
+          "max_points": 4.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        }
+      ]
+    },
+    "specialized_score_r": {
+      "dimensions": [
+        {
+          "dimension_id": "R1",
+          "name": "时间线与结构可拆解性",
+          "awarded_points": 4.0,
+          "max_points": 8.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "R2",
+          "name": "AI 复刻友好度",
+          "awarded_points": 5.0,
+          "max_points": 10.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "R3",
+          "name": "可迁移变量丰富度",
+          "awarded_points": 4.0,
+          "max_points": 8.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "R4",
+          "name": "换成我方商品的安全性",
+          "awarded_points": 3.0,
+          "max_points": 6.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "R5",
+          "name": "生产成本与稳定性",
+          "awarded_points": 2.0,
+          "max_points": 4.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        },
+        {
+          "dimension_id": "R6",
+          "name": "差异化潜力",
+          "awarded_points": 2.0,
+          "max_points": 4.0,
+          "reason": "hand-checked",
+          "evidence_timestamps": [
+            {
+              "source": "VIDEO",
+              "timestamp": 1.25,
+              "time_range": null,
+              "description": "fixture evidence",
+              "positive": true
+            }
+          ],
+          "scorable": true,
+          "unscorable_reason": null,
+          "confidence": 0.9
+        }
+      ]
+    },
+    "specialized_score_g": null,
+    "supplemental_evidence": [],
+    "evidence_conflicts": []
+  },
+  "timings": {
+    "observation_duration_ms": 100,
+    "evaluation_duration_ms": 50,
+    "total_duration_ms": 150,
+    "observation_attempts": 1,
+    "evaluation_attempts": 1
+  }
+}
+

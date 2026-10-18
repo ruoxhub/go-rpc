@@ -1,0 +1,17 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Follow",
+    "description": "用户关联模型",
+    "type": "object",
+    "properties": {
+        "id": {"type": "integer", "description": "主键 ID"},
+        "datatype": {"type": "string", "maxLength": 10, "default": "0", "description": "数据类型"},
+        "created_time": {"type": "string", "format": "date-time", "description": "系统创建时间"},
+        "updated_time": {"type": "string", "format": "date-time", "description": "系统更新时间"},
+        "user_id": {"type": "string", "maxLength": 64, "description": "用户 ID"},
+        "follow_id": {"type": "string", "maxLength": 64, "description": "关注或粉丝的 ID"},
+        "follow_name": {"type": "string", "maxLength": 255, "description": "关注或粉丝的名称"},
+        "platform": {"type": "string", "maxLength": 50, "description": "所属平台"},
+    },
+    "required": ["id"],
+}

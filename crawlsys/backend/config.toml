@@ -1,0 +1,118 @@
+[postgresql]
+username = "ruoxing"
+password = "mrx123456"
+host = "127.0.0.1"
+port = 5432
+database = "local_dev"
+
+[redis]
+username = ""
+password = "mrx123456"
+host = "127.0.0.1"
+port = 6379
+
+[minio]
+username = "ruoxing"
+password = "mrx123456"
+host = "127.0.0.1"
+port = 9000
+
+[scheduler]
+worker_id = "scheduler-local-01"
+poll_interval_ms = 1000
+default_loop_interval_seconds = 3600
+batch_size = 10
+zombie_reap_after_seconds = 600
+graceful_shutdown_seconds = 30
+
+[scheduler.rpc]
+base_url = "http://127.0.0.1:5612"
+timeout_seconds = 60
+
+[llm]
+format = "openai"
+model = "gemini-3.8-flash-tiered"
+api_key = "sk-44e79f0f920d48b3ae03e5827a7ea10d"
+base_url = "http://127.0.0.1:8045/v1"
+request_path = "chat"
+max_tokens = 65536
+temperature = 0.0
+enable_thinking = true
+
+[analysis.video]
+# OpenAI-compatible proxy rejects video_url; use sampled frames (image_url).
+is_base64 = false
+# interval | count | timestamps | scene_guided
+frame_sampling_strategy = "scene_guided"
+# Shared extraction budget for all strategies (2-512).
+max_frames = 32
+# Interval cadence in seconds (minimum 0.001).
+frame_interval_seconds = 5.0
+frame_timestamps = []
+
+
+[web]
+host = "0.0.0.0"
+port = 8081
+mode = "debugger"
+debugger = true
+
+[proxy]
+url = "http://127.0.0.1:17890"
+
+[mcp]
+enabled = true
+allowed_hosts = ["192.168.1.5", "192.168.1.5:*", "localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
+allowed_origins = []
+inline_object_limit_bytes = 10485760
+inline_object_hard_limit_bytes = 52428800
+presigned_expiry_minutes = 15
+
+[parser_configuration]
+sample_bucket = "crawler-parser-samples"
+sample_max_response_bytes = 10485760
+json_max_depth = 64
+json_max_nodes = 100000
+ai_max_bytes = 262144
+ai_max_array_items = 20
+sample_global_limit_per_minute = 30
+sample_action_limit_per_minute = 5
+assist_global_limit_per_minute = 10
+assist_action_limit_per_minute = 2
+assist_receipt_ttl_seconds = 900
+preview_max_records = 20
+preview_max_errors = 200
+object_sse_enabled = false
+
+# ============== 视频素材清洗 (cleaner) ==============
+# 供随 main.py 启动的 video_clean Worker 使用；一次性 CLI 也复用同一配置。
+# 清洗逻辑：扫描 t_busi_content，用 grade 规则对候选视频分级，
+# 通过 P1/P2/P3 的写入 t_material_clean（已清洗的素材清单）。
+[cleaner]
+enabled = true
+poll_interval = 3600.0
+batch_size = 1000
+max_batches_per_platform = 20
+ttl_days = 14
+watermark_key = "cleaner:grade:watermark"
+suspect_seconds = 120.0
+
+# grade.<platform> 下的 p1/p2/p3 为分级规则（按 P1→P2→P3 瀑布判定）。
+# 每条规则命中条件：发布时长(小时) <= max_hours 且 播放量 >= min_views。
+[grade.tiktok]
+[[grade.tiktok.filters]]
+field = "extend_data.aigcLabelType"
+operator = ">"
+value = 0
+[[grade.tiktok.p1]]
+max_hours = 24.0
+min_views = 3000
+[[grade.tiktok.p1]]
+max_hours = 72.0
+min_views = 20000
+[[grade.tiktok.p2]]
+max_hours = 24.0
+min_views = 2500
+[[grade.tiktok.p3]]
+max_hours = 168.0
+min_views = 40000

@@ -1,0 +1,25 @@
+{
+  "itemInfo": {
+    "itemStruct": {
+      "id": "7666334648967925006",
+      "desc": "Fixture video",
+      "author": {
+        "id": "7511810578566939691",
+        "uniqueId": "cookdealz",
+        "nickname": "cookdealz"
+      },
+      "video": {
+        "cover": "https://example.test/cover.jpg",
+        "playAddr": "https://example.test/video.mp4"
+      },
+      "music": {
+        "playUrl": "https://example.test/audio.mp3"
+      },
+      "statsV2": {
+        "diggCount": "13",
+        "playCount": "3749",
+        "commentCount": "0"
+      }
+    }
+  }
+}
